@@ -202,14 +202,14 @@ class DataPackagerApp(tk.Tk):
                 # Process images and rows
                 rows = [self.extract_image(row, sheet, images_dir, raw_base_url) for row in raw_rows]
                 
-                # Save sheet JSON
+                # Save sheet JSON with explicit UTF-8 encoding
                 out_path = out_dir / f"{sheet}.json"
-                out_path.write_text(json.dumps(rows, separators=(",", ":"), ensure_ascii=False))
+                out_path.write_text(json.dumps(rows, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
                 self.log(f"Saved {out_path.name} ({len(rows)} rows)", level="SUCCESS")
 
-            # Save Manifest
+            # Save Manifest with explicit UTF-8 encoding
             manifest_path = out_dir / "manifest.json"
-            manifest_path.write_text(json.dumps(manifest, indent=2))
+            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
             self.log(f"Saved {manifest_path.name}", level="SUCCESS")
             
             # Print Summary
