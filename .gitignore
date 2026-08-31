@@ -1,0 +1,7 @@
+# Ignore the generated data folder and zip file
+dist/
+beyblade-data.zip
+
+# Python standard ignores
+__pycache__/
+*.py[cod]
