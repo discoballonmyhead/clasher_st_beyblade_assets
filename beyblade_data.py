@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Packages the Beyblade dataset (from your Apps Script fullchunk endpoint)
-into a folder of plain JSON + real image files, ready to upload to R2.
-No third-party packages needed — Python standard library only (uses Tkinter for GUI).
+Packages the Beyblade dataset from Apps Script into two separate zips:
+1. Metadata Only (All data, but image fields are set to null)
+2. Images Only (Only data IDs + image filenames, plus the actual image files)
 """
 
 import base64
@@ -17,6 +17,7 @@ import threading
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
 from pathlib import Path
+import shutil
 
 TRACKED_SHEETS = ["blades", "ratchets", "bits", "lockChips", "mainBlades", "assistBlades"]
 CHUNK_SIZE = 10  # Reduced chunk size for better stability
@@ -32,17 +33,13 @@ CONTENT_TYPE_EXT = {
 }
 
 def fetch_json_stream(url, log_func, attempt=1):
-    """
-    Fetches JSON by streaming the response in chunks.
-    Includes exponential backoff retry logic if the connection drops or times out.
-    """
+    """Fetches JSON by streaming the response in chunks with retries."""
     try:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
             raw_bytes = bytearray()
             last_kb = 0
             
-            # Read in 64KB blocks so we can log live progress
             while True:
                 chunk = resp.read(1024 * 64)
                 if not chunk:
@@ -51,7 +48,6 @@ def fetch_json_stream(url, log_func, attempt=1):
                 raw_bytes.extend(chunk)
                 current_kb = len(raw_bytes) // 1024
                 
-                # Update UI every ~250KB downloaded to show it isn't frozen
                 if current_kb - last_kb >= 250:
                     log_func(f"       ... receiving data: {current_kb} KB")
                     last_kb = current_kb
@@ -69,7 +65,7 @@ def fetch_json_stream(url, log_func, attempt=1):
             raise Exception(f"Failed after {MAX_RETRIES} attempts. Last error: {str(e)}")
 
 def fetch_all_rows(base_url, sheet, log_func, stats):
-    """Fetches all chunks for a sheet, tracking network download size and progress."""
+    """Fetches all chunks for a sheet, tracking network download size."""
     rows = []
     offset = 0
     while True:
@@ -94,12 +90,24 @@ def fetch_all_rows(base_url, sheet, log_func, stats):
         offset += len(data["rows"])
     return rows
 
-def extract_images(row, sheet, out_dir, log_func, stats):
-    """Extracts base64 images, saves them to disk, updates the row, and tracks missing images."""
+def extract_images(row, sheet, img_dir, log_func, stats):
+    """
+    Splits the row into two dictionaries:
+    1. row_meta: All data, but image fields are set to null.
+    2. row_images: Only the ID fields and the generated image filenames.
+    """
     has_image = False
     
-    # Try multiple common ID fields so we have a reliable name for the log
+    # Identify the primary ID for naming the file
     row_id = row.get("dataID") or row.get("dataId") or row.get("code") or row.get("name") or "unknown_id"
+    
+    row_meta = dict(row)
+    row_images = {}
+    
+    # Ensure the images package keeps the identifier keys so users can join the data later
+    for id_key in ["dataID", "dataId", "code", "name"]:
+        if id_key in row:
+            row_images[id_key] = row[id_key]
     
     for key, value in list(row.items()):
         if isinstance(value, str) and value.startswith("data:"):
@@ -111,10 +119,13 @@ def extract_images(row, sheet, out_dir, log_func, stats):
             filename = f"{sheet}-{row_id}.{ext}"
             img_bytes = base64.b64decode(b64data)
             
-            (out_dir / filename).write_bytes(img_bytes)
-            row[key] = filename
+            # Save the physical image to the images directory
+            (img_dir / filename).write_bytes(img_bytes)
             
-            # Track and log the image extraction
+            # SPLIT THE DATA
+            row_meta[key] = None          # Metadata gets null instead of base64
+            row_images[key] = filename    # Images package gets the filename
+            
             stats["image_count"] += 1
             stats["image_bytes"] += len(img_bytes)
             log_func(f"    -> Extracted: {filename} ({len(img_bytes) / 1024:.1f} KB)")
@@ -124,7 +135,7 @@ def extract_images(row, sheet, out_dir, log_func, stats):
         stats["missing_images"].append(warning_msg)
         log_func(f"    [WARNING] No image data found for row: {row_id}")
             
-    return row
+    return row_meta, row_images
 
 class BeybladePackagerGUI:
     def __init__(self, root):
@@ -133,24 +144,20 @@ class BeybladePackagerGUI:
         self.root.geometry("750x650")
         self.root.resizable(False, False)
 
-        # URL Input
         tk.Label(root, text="Apps Script Web App URL:", font=("Arial", 10, "bold")).pack(pady=(10, 0), padx=10, anchor="w")
         
         self.url_var = tk.StringVar()
         self.url_entry = tk.Entry(root, textvariable=self.url_var, width=90)
         self.url_entry.pack(pady=5, padx=10)
         
-        # Action Button
         self.run_btn = tk.Button(root, text="Package Data", command=self.start_packaging, bg="#4CAF50", fg="white", font=("Arial", 10, "bold"))
         self.run_btn.pack(pady=10)
         
-        # Log Output
         tk.Label(root, text="Console Output:", font=("Arial", 10, "bold")).pack(padx=10, anchor="w")
         self.log_area = scrolledtext.ScrolledText(root, height=27, width=90, state=tk.DISABLED, bg="#f4f4f4", font=("Consolas", 9))
         self.log_area.pack(padx=10, pady=5)
 
     def log(self, message):
-        """Thread-safe logging to the text area."""
         self.root.after(0, self._append_log, message)
 
     def _append_log(self, message):
@@ -165,31 +172,34 @@ class BeybladePackagerGUI:
             messagebox.showwarning("Invalid URL", "Please enter a valid HTTP/HTTPS URL.")
             return
 
-        # Disable button and clear log
         self.run_btn.config(state=tk.DISABLED, text="Packaging...")
         self.log_area.config(state=tk.NORMAL)
         self.log_area.delete(1.0, tk.END)
         self.log_area.config(state=tk.DISABLED)
         
-        # Run process in a background thread to prevent UI freezing
         thread = threading.Thread(target=self.process_data, args=(url,), daemon=True)
         thread.start()
 
     def process_data(self, base_url):
         try:
-            self.log("=== Starting Data Packaging ===")
-            self.log(f"Config: Chunk Size = {CHUNK_SIZE}, Max Retries = {MAX_RETRIES}, Timeout = {TIMEOUT_SECONDS}s\n")
+            self.log("=== Starting Data Split Packaging ===")
             
+            # Setup separate directories for Meta and Images
             out_dir = Path("dist")
-            out_dir.mkdir(exist_ok=True)
-            manifest = {"sheets": {}}
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
+                
+            meta_dir = out_dir / "meta"
+            img_dir = out_dir / "images"
+            meta_dir.mkdir(parents=True, exist_ok=True)
+            img_dir.mkdir(parents=True, exist_ok=True)
+            
+            manifest_meta = {"sheets": {}}
+            manifest_img = {"sheets": {}}
             
             stats = {
-                "network_bytes": 0,
-                "image_count": 0,
-                "image_bytes": 0,
-                "json_bytes": 0,
-                "row_count": 0,
+                "network_bytes": 0, "image_count": 0, "image_bytes": 0,
+                "meta_json_bytes": 0, "img_json_bytes": 0, "row_count": 0,
                 "missing_images": []
             }
             
@@ -197,31 +207,54 @@ class BeybladePackagerGUI:
                 self.log(f"\n--- Fetching Data: {sheet.upper()} ---")
                 raw_rows = fetch_all_rows(base_url, sheet, self.log, stats)
                 
-                self.log(f"\n  Processing {len(raw_rows)} rows and extracting images...")
-                rows = [extract_images(row, sheet, out_dir, self.log, stats) for row in raw_rows]
-                stats["row_count"] += len(rows)
-
-                out_path = out_dir / f"{sheet}.json"
-                json_data = json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode('utf-8')
-                out_path.write_bytes(json_data)
+                self.log(f"\n  Splitting {len(raw_rows)} rows...")
+                meta_rows = []
+                image_rows = []
                 
-                stats["json_bytes"] += len(json_data)
-                manifest["sheets"][sheet] = {"rowCount": len(rows)}
-                self.log(f"  -> Wrote JSON: {out_path.name} ({len(json_data) / 1024:.1f} KB)")
+                for row in raw_rows:
+                    r_meta, r_img = extract_images(row, sheet, img_dir, self.log, stats)
+                    meta_rows.append(r_meta)
+                    image_rows.append(r_img)
+                    
+                stats["row_count"] += len(raw_rows)
 
-            # Write manifest
-            manifest_path = out_dir / "manifest.json"
-            manifest_data = json.dumps(manifest, indent=2).encode('utf-8')
-            manifest_path.write_bytes(manifest_data)
-            stats["json_bytes"] += len(manifest_data)
+                # Write Meta JSON
+                meta_path = meta_dir / f"{sheet}.json"
+                meta_json_data = json.dumps(meta_rows, separators=(",", ":"), ensure_ascii=False).encode('utf-8')
+                meta_path.write_bytes(meta_json_data)
+                stats["meta_json_bytes"] += len(meta_json_data)
+                
+                # Write Images JSON
+                img_path = img_dir / f"{sheet}.json"
+                img_json_data = json.dumps(image_rows, separators=(",", ":"), ensure_ascii=False).encode('utf-8')
+                img_path.write_bytes(img_json_data)
+                stats["img_json_bytes"] += len(img_json_data)
+
+                manifest_meta["sheets"][sheet] = {"rowCount": len(meta_rows)}
+                manifest_img["sheets"][sheet] = {"rowCount": len(image_rows)}
+                
+                self.log(f"  -> Wrote split JSONs for {sheet}")
+
+            # Write manifests
+            (meta_dir / "manifest.json").write_bytes(json.dumps(manifest_meta, indent=2).encode('utf-8'))
+            (img_dir / "manifest.json").write_bytes(json.dumps(manifest_img, indent=2).encode('utf-8'))
             
-            self.log("\n--- Zipping Everything ---")
-            zip_path = Path("beyblade-data.zip")
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for f in sorted(out_dir.iterdir()):
-                    zf.write(f, arcname=f.name)
+            self.log("\n--- Zipping Packages ---")
+            meta_zip_path = Path("beyblade-metadata-only.zip")
+            img_zip_path = Path("beyblade-images-only.zip")
+            
+            # Zip Metadata
+            with zipfile.ZipFile(meta_zip_path, "w", zipfile.ZIP_DEFLATED) as zf_meta:
+                for f in sorted(meta_dir.iterdir()):
+                    zf_meta.write(f, arcname=f.name)
+                    
+            # Zip Images
+            with zipfile.ZipFile(img_zip_path, "w", zipfile.ZIP_DEFLATED) as zf_img:
+                for f in sorted(img_dir.iterdir()):
+                    zf_img.write(f, arcname=f.name)
 
-            final_zip_size = zip_path.stat().st_size
+            meta_zip_size = meta_zip_path.stat().st_size
+            img_zip_size = img_zip_path.stat().st_size
             
             # Print Summary
             self.log("\n==========================================")
@@ -230,10 +263,9 @@ class BeybladePackagerGUI:
             self.log(f"Total Rows Processed:    {stats['row_count']}")
             self.log(f"Total Images Extracted:  {stats['image_count']}")
             self.log(f"Total Network Download:  {stats['network_bytes'] / (1024*1024):.2f} MB")
-            self.log(f"Raw Image Disk Size:     {stats['image_bytes'] / (1024*1024):.2f} MB")
-            self.log(f"Raw JSON Disk Size:      {stats['json_bytes'] / (1024*1024):.2f} MB")
-            self.log(f"Uncompressed Total Size: {(stats['image_bytes'] + stats['json_bytes']) / (1024*1024):.2f} MB")
-            self.log(f"FINAL ZIP FILE SIZE:     {final_zip_size / (1024*1024):.2f} MB")
+            self.log("------------------------------------------")
+            self.log(f"META ZIP (Text Only):    {meta_zip_size / (1024*1024):.3f} MB")
+            self.log(f"IMAGES ZIP (Media+IDs):  {img_zip_size / (1024*1024):.2f} MB")
             
             if stats["missing_images"]:
                 self.log("\n!!! ROWS MISSING IMAGES !!!")
@@ -243,13 +275,14 @@ class BeybladePackagerGUI:
                 self.log("\nRows Missing Images:     0 (Perfect extraction!)")
                 
             self.log("==========================================")
-            self.log(f"\nSUCCESS: Data saved to {zip_path.resolve()}")
+            self.log(f"\nSUCCESS: Data saved locally.")
             
-            # Update popup message to mention missing images if any
-            popup_msg = f"Data packaged successfully!\n\nExtracted {stats['image_count']} images.\nFinal Zip Size: {final_zip_size / (1024*1024):.2f} MB\n"
+            popup_msg = f"Data packaged successfully!\n\n"
+            popup_msg += f"Metadata Package: {meta_zip_size / 1024:.1f} KB\n"
+            popup_msg += f"Images Package: {img_zip_size / (1024*1024):.2f} MB\n"
+            
             if stats["missing_images"]:
                 popup_msg += f"\nWarning: {len(stats['missing_images'])} rows were missing images (Check logs)."
-            popup_msg += f"\n\nSaved to:\n{zip_path.resolve()}"
             
             self.root.after(0, lambda: messagebox.showinfo("Finished", popup_msg))
             
@@ -263,8 +296,6 @@ class BeybladePackagerGUI:
 if __name__ == "__main__":
     root = tk.Tk()
     app = BeybladePackagerGUI(root)
-    
     if len(sys.argv) > 1:
         app.url_var.set(sys.argv[1])
-        
     root.mainloop()

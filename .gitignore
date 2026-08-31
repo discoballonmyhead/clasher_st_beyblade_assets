@@ -1,7 +1,18 @@
-# Ignore the generated data folder and zip file
+# Ignore generated data folders
 dist/
+dist_metadata/
+dist_assets/
+
+# Ignore generated zip files
 beyblade-data.zip
+beyblade-metadata-only.zip
+beyblade-images-only.zip
+
+# (Optional) If you also created the lite/full zips from the previous test:
+beyblade-metadata-lite.zip
+beyblade-data-full.zip
 
 # Python standard ignores
 __pycache__/
 *.py[cod]
+*$py.class
