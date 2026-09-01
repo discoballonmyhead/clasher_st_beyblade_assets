@@ -10,7 +10,7 @@ from tkinter import ttk, scrolledtext, messagebox
 from datetime import datetime, timezone
 from pathlib import Path
 
-TRACKED_SHEETS = ["blades", "ratchets", "bits", "lockChips", "mainBlades", "assistBlades"]
+TRACKED_SHEETS = ["blades", "ratchets", "bits", "lockChips", "overBlades", "metalBlades", "mainBlades", "assistBlades"]
 CHUNK_SIZE = 9  # Locked to 9 for optimal performance
 CONTENT_TYPE_EXT = {
     "image/png": "png",
@@ -178,7 +178,7 @@ class DataPackagerApp(tk.Tk):
             self.run_btn.config(state="normal")
             return
 
-        raw_base_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/data/"
+        raw_base_url = f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/data/"
 
         out_dir = Path("data")
         images_dir = out_dir / "images"
