@@ -1,12 +1,12 @@
 {
-  "publishedAt": "2026-09-01T00:59:56.270640+00:00",
+  "publishedAt": "2026-09-01T02:06:09.973634+00:00",
   "sheets": {
     "blades": {
-      "latestUpdatedAt": "2026-09-01T00:04:01.441Z",
+      "latestUpdatedAt": "2026-09-01T01:51:25.049Z",
       "rowCount": 269
     },
     "ratchets": {
-      "latestUpdatedAt": null,
+      "latestUpdatedAt": "2026-09-01T01:51:25.049Z",
       "rowCount": 93
     },
     "bits": {
@@ -14,24 +14,24 @@
       "rowCount": 98
     },
     "lockChips": {
-      "latestUpdatedAt": "2026-08-31T23:48:57.113Z",
+      "latestUpdatedAt": "2026-09-01T01:21:25.360Z",
       "rowCount": 25
     },
     "overBlades": {
-      "latestUpdatedAt": null,
-      "rowCount": 0
+      "latestUpdatedAt": "2026-09-01T01:21:36.737Z",
+      "rowCount": 6
     },
     "metalBlades": {
-      "latestUpdatedAt": "2026-08-31T21:00:50.916Z",
+      "latestUpdatedAt": "2026-09-01T01:21:43.450Z",
       "rowCount": 6
     },
     "mainBlades": {
-      "latestUpdatedAt": "2026-09-01T00:03:38.419Z",
+      "latestUpdatedAt": "2026-09-01T01:22:00.021Z",
       "rowCount": 15
     },
     "assistBlades": {
-      "latestUpdatedAt": "2026-09-01T00:05:21.382Z",
-      "rowCount": 19
+      "latestUpdatedAt": "2026-09-01T01:22:32.886Z",
+      "rowCount": 20
     }
   }
 }
