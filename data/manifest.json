@@ -1,37 +1,70 @@
 {
-  "publishedAt": "2026-09-02T05:28:35.020230+00:00",
+  "packagedAt": "2026-09-05T09:08:40.476367+00:00",
   "sheets": {
     "blades": {
-      "latestUpdatedAt": "2026-09-01T01:51:25.049Z",
-      "rowCount": 269
+      "rowCount": 269,
+      "withImage": 267,
+      "withoutImage": 2
     },
     "ratchets": {
-      "latestUpdatedAt": "2026-09-01T01:51:25.049Z",
-      "rowCount": 93
+      "rowCount": 93,
+      "withImage": 93,
+      "withoutImage": 0
     },
     "bits": {
-      "latestUpdatedAt": "2026-08-31T20:58:57.861Z",
-      "rowCount": 98
+      "rowCount": 98,
+      "withImage": 98,
+      "withoutImage": 0
     },
     "lockChips": {
-      "latestUpdatedAt": "2026-09-01T01:21:25.360Z",
-      "rowCount": 25
+      "rowCount": 25,
+      "withImage": 17,
+      "withoutImage": 8
     },
     "overBlades": {
-      "latestUpdatedAt": "2026-09-01T01:21:36.737Z",
-      "rowCount": 6
+      "rowCount": 6,
+      "withImage": 5,
+      "withoutImage": 1
     },
     "metalBlades": {
-      "latestUpdatedAt": "2026-09-01T01:21:43.450Z",
-      "rowCount": 6
+      "rowCount": 6,
+      "withImage": 5,
+      "withoutImage": 1
     },
     "mainBlades": {
-      "latestUpdatedAt": "2026-09-02T04:45:24.164Z",
-      "rowCount": 15
+      "rowCount": 15,
+      "withImage": 12,
+      "withoutImage": 3
     },
     "assistBlades": {
-      "latestUpdatedAt": "2026-09-01T01:22:32.886Z",
-      "rowCount": 20
+      "rowCount": 19,
+      "withImage": 16,
+      "withoutImage": 3
+    },
+    "products": {
+      "rowCount": 1,
+      "withImage": 0,
+      "withoutImage": 1
+    },
+    "accessories": {
+      "rowCount": 1,
+      "withImage": 0,
+      "withoutImage": 1
+    },
+    "productContents": {
+      "rowCount": 1
+    }
+  },
+  "imagesByGeneration": {
+    "X": {
+      "blades": 267,
+      "ratchets": 93,
+      "bits": 98,
+      "lockChips": 17,
+      "overBlades": 5,
+      "metalBlades": 5,
+      "mainBlades": 12,
+      "assistBlades": 16
     }
   }
 }

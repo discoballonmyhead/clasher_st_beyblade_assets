@@ -16,3 +16,11 @@ beyblade-data-full.zip
 __pycache__/
 *.py[cod]
 *$py.class
+
+data_store_master.xlsx
+
+auto_insert_images.py
+create_release.py
+image_to_png.py
+png_towebp.py
+_release_zips/
