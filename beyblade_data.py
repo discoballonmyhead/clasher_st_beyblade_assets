@@ -57,19 +57,29 @@ def extract_embedded_images(ws, id_col_1idx: int, img_col_1idx: int, min_col_1id
             result.setdefault(row, {})["min"] = raw
     return result
 
+def build_jsdelivr_url(username: str, repo: str, branch: str = "main") -> str:
+    """Constructed from three plain, separately-validated pieces --
+    never hand-typed as one long URL, which is exactly how a stray
+    character (a pasted newline, a typo) ends up baked into every single
+    image URL in the output JSON without anyone noticing until images
+    fail to load."""
+    return f"https://cdn.jsdelivr.net/gh/{username}/{repo}@{branch}/data/"
+
 # --- UI Application ---
 
 class PackagerEmbeddedApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Offline Packager (From Embedded Images)")
-        self.root.geometry("750x600")
-        self.root.minsize(650, 450)
+        self.root.geometry("750x650")
+        self.root.minsize(650, 500)
 
         # Variables
         self.excel_path_var = tk.StringVar()
         self.output_dir_var = tk.StringVar()
-        self.base_url_var = tk.StringVar(value="https://cdn.jsdelivr.net/gh/owner/repo@main/data/")
+        self.github_username_var = tk.StringVar()
+        self.github_repo_var = tk.StringVar()
+        self.github_branch_var = tk.StringVar(value="main")
 
         self._build_ui()
 
@@ -88,9 +98,24 @@ class PackagerEmbeddedApp:
         ttk.Entry(config_frame, textvariable=self.output_dir_var, width=50).grid(row=1, column=1, sticky=tk.EW, padx=5)
         ttk.Button(config_frame, text="Browse...", command=self._browse_output).grid(row=1, column=2, padx=5)
 
-        # 3. Base URL
-        ttk.Label(config_frame, text="Raw Base URL:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(config_frame, textvariable=self.base_url_var, width=50).grid(row=2, column=1, columnspan=2, sticky=tk.EW, padx=5, pady=5)
+        # 3. GitHub Username / Repo / Branch -- three small, plain fields
+        # instead of one long URL field. The jsDelivr URL gets built
+        # programmatically from these; nothing here is ever hand-typed
+        # as a single complex string.
+        ttk.Label(config_frame, text="GitHub Username:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(config_frame, textvariable=self.github_username_var, width=30).grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+
+        ttk.Label(config_frame, text="Repo Name:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(config_frame, textvariable=self.github_repo_var, width=30).grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+
+        ttk.Label(config_frame, text="Branch:").grid(row=4, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(config_frame, textvariable=self.github_branch_var, width=15).grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+
+        self.preview_label = ttk.Label(config_frame, text="", font=("", 8), foreground="#0066cc", wraplength=600)
+        self.preview_label.grid(row=5, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0, 5))
+        for var in (self.github_username_var, self.github_repo_var, self.github_branch_var):
+            var.trace_add("write", lambda *_: self._update_preview())
+        self._update_preview()
 
         config_frame.columnconfigure(1, weight=1)
 
@@ -110,6 +135,15 @@ class PackagerEmbeddedApp:
         self.log_text = ScrolledText(log_frame, state='disabled', bg="#f4f4f4", wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
+    def _update_preview(self):
+        username = self.github_username_var.get().strip()
+        repo = self.github_repo_var.get().strip()
+        branch = self.github_branch_var.get().strip() or "main"
+        if username and repo:
+            self.preview_label.config(text=f"Resulting URL prefix: {build_jsdelivr_url(username, repo, branch)}")
+        else:
+            self.preview_label.config(text="Enter username and repo to preview the resulting URL.")
+
     def _browse_excel(self):
         path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")])
         if path: self.excel_path_var.set(path)
@@ -128,9 +162,33 @@ class PackagerEmbeddedApp:
         self.root.after(0, append)
 
     def _start_processing(self):
-        if not all([self.excel_path_var.get(), self.output_dir_var.get(), self.base_url_var.get()]):
-            messagebox.showerror("Missing Inputs", "Please provide all folder paths and the base URL.")
+        # Raw values, checked BEFORE any stripping -- this is the actual
+        # fix. Checking post-strip values (what was here before) can
+        # never catch anything: a trailing newline is exactly what
+        # .strip() removes, so by the time you compare a stripped value
+        # against itself, the evidence is already gone.
+        raw_username = self.github_username_var.get()
+        raw_repo = self.github_repo_var.get()
+        raw_branch = self.github_branch_var.get()
+
+        for label, raw_value in (("username", raw_username), ("repo", raw_repo), ("branch", raw_branch)):
+            if raw_value and (raw_value != raw_value.strip() or "\n" in raw_value or "\r" in raw_value):
+                messagebox.showerror(
+                    "Suspicious Input",
+                    f"The {label} field has a newline or leading/trailing whitespace in it -- this would "
+                    f"corrupt every image URL in the output. Please retype it directly instead of pasting."
+                )
+                return
+
+        username = raw_username.strip()
+        repo = raw_repo.strip()
+        branch = raw_branch.strip() or "main"
+
+        if not all([self.excel_path_var.get(), self.output_dir_var.get(), username, repo]):
+            messagebox.showerror("Missing Inputs", "Please provide the Excel file, output folder, GitHub username, and repo name.")
             return
+
+        base_url = build_jsdelivr_url(username, repo, branch)
 
         # Prepare UI
         self.run_btn.config(state=tk.DISABLED)
@@ -140,20 +198,21 @@ class PackagerEmbeddedApp:
         self.log_text.delete(1.0, tk.END)
         self.log_text.configure(state='disabled')
 
-        # Run script in background thread
-        threading.Thread(target=self._run_script, daemon=True).start()
+        self.log(f"Using base URL: {base_url}")
 
-    def _run_script(self):
+        # Run script in background thread
+        threading.Thread(target=self._run_script, args=(base_url,), daemon=True).start()
+
+    def _run_script(self, base_url: str):
         try:
             excel_path = Path(self.excel_path_var.get())
             out_dir = Path(self.output_dir_var.get())
-            base_url = self.base_url_var.get()
 
             self._package(excel_path, out_dir, base_url, self.log)
-            
+
             self.log("\nSUCCESS: Packaging completed successfully.")
             self.root.after(0, lambda: messagebox.showinfo("Done", "Packaging completed successfully!"))
-        
+
         except Exception as e:
             import traceback
             err = traceback.format_exc()
@@ -174,11 +233,11 @@ class PackagerEmbeddedApp:
 
         ws = wb[sheet_name]
         headers = [str(c.value) if c.value else "" for c in ws[1]]
-        
+
         if id_field not in headers or img_field not in headers or min_field not in headers:
             self.log(f"  SKIP {sheet_name}: missing expected columns")
             return
-            
+
         id_col = headers.index(id_field) + 1
         img_col = headers.index(img_field) + 1
         min_col = headers.index(min_field) + 1
@@ -193,7 +252,7 @@ class PackagerEmbeddedApp:
             data_id = row.get(id_field)
             if data_id is None:
                 continue
-            
+
             sheet_row_1idx = i + 2  # +2: header is row 1, rows list is 0-indexed from row 2
             images = images_by_row.get(sheet_row_1idx, {})
 
@@ -236,7 +295,7 @@ class PackagerEmbeddedApp:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         log(f"Loading workbook (this may take a moment): {xlsx_path.name}...")
-        
+
         # data_only=True is required so formula cells are resolved to their values.
         wb = openpyxl.load_workbook(xlsx_path, data_only=True)
         manifest = {"packagedAt": datetime.now(timezone.utc).isoformat(), "sheets": {}}
