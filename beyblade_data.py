@@ -1,32 +1,39 @@
 #!/usr/bin/env python3
+"""
+Offline packager: turns the human-managed workbooks into data/*.json + data/images/*.webp.
+
+Inputs (any combination; a single legacy master workbook also works):
+    beyblade_parts.xlsx      Parts_<Gen>_<Type> sheets      -> blades.json, burstLayers.json, ...
+    beyblade_products.xlsx   Products / Accessories /
+                             ProductContents / CodeSeries   -> products.json, accessories.json, ...
+    beyblade_tcg.xlsx        TCG_Sets / TCG_Cards           -> tcgSets.json, tcgCards.json
+
+Images are PNGs embedded in the image columns of each row (anchored to that row's cell).
+
+GUI:  python beyblade_data.py
+CLI:  python beyblade_data.py --parts beyblade_parts.xlsx --products beyblade_products.xlsx \
+          --tcg beyblade_tcg.xlsx --out data --user discoballonmyhead --repo clasher_st_beyblade_assets
+"""
+import argparse
+import datetime as dt
 import hashlib
 import io
 import json
+import sys
 import threading
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from tkinter.scrolledtext import ScrolledText
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
+
 import openpyxl
 from PIL import Image as PILImage
 
-# --- Constants ---
-PREFIX_TO_SHEET = {
-    "blades": "Parts_X_Blades", "ratchets": "Parts_X_Ratchets", "bits": "Parts_X_Bits",
-    "lockChips": "Parts_X_LockChips", "overBlades": "Parts_X_OverBlades",
-    "metalBlades": "Parts_X_MetalBlades", "mainBlades": "Parts_X_MainBlades",
-    "assistBlades": "Parts_X_AssistBlades",
-}
-SHEET_SETTINGS = {
-    "Products": ("productID", "boxImageUrl", "minifiedBoxImage", "products"),
-    "Accessories": ("dataID", "imageUrl", "minifiedImage", "accessories"),
-}
-NO_IMAGE_SHEETS = {"ProductContents": "productContents"}
+import beyblade_schema as S
 
 WEBP_QUALITY = 85
+NO_IMAGE_SHEETS = {name: cfg["json"] for name, cfg in S.SHEETS.items() if not cfg["images"]}
 
 # --- Core Logic Helpers ---
+
 
 def read_sheet_rows(ws):
     """Stops at the first fully-blank row."""
@@ -35,8 +42,9 @@ def read_sheet_rows(ws):
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not any(v not in (None, "") for v in row):
             break
-        rows.append(dict(zip(headers, row)))
+        rows.append({h: v for h, v in zip(headers, row) if h})
     return rows
+
 
 def png_bytes_to_webp(png_bytes: bytes) -> bytes:
     img = PILImage.open(io.BytesIO(png_bytes)).convert("RGBA")
@@ -44,283 +52,278 @@ def png_bytes_to_webp(png_bytes: bytes) -> bytes:
     img.save(buf, format="WEBP", quality=WEBP_QUALITY)
     return buf.getvalue()
 
-def extract_embedded_images(ws, id_col_1idx: int, img_col_1idx: int, min_col_1idx: int):
-    """Returns {row_number_1idx: {'full': png_bytes, 'min': png_bytes}}"""
+
+def extract_embedded_images(ws, img_col_1idx: int, min_col_1idx: int):
+    """Returns {row_number_1idx: {'full': bytes, 'min': bytes}}"""
     result = {}
     for img in ws._images:
         row = img.anchor._from.row + 1
         col = img.anchor._from.col + 1
-        raw = img._data()
         if col == img_col_1idx:
-            result.setdefault(row, {})["full"] = raw
+            result.setdefault(row, {})["full"] = img._data()
         elif col == min_col_1idx:
-            result.setdefault(row, {})["min"] = raw
+            result.setdefault(row, {})["min"] = img._data()
     return result
 
+
 def build_jsdelivr_url(username: str, repo: str, branch: str = "main") -> str:
-    """Constructed from three plain, separately-validated pieces --
-    never hand-typed as one long URL, which is exactly how a stray
-    character (a pasted newline, a typo) ends up baked into every single
-    image URL in the output JSON without anyone noticing until images
-    fail to load."""
+    """Built from three separately-validated pieces, never hand-typed as one long URL."""
     return f"https://cdn.jsdelivr.net/gh/{username}/{repo}@{branch}/data/"
+
+
+def _json_default(v):
+    if isinstance(v, (dt.datetime, dt.date)):
+        return v.date().isoformat() if isinstance(v, dt.datetime) and v.time() == dt.time() else v.isoformat()
+    if isinstance(v, dt.time):
+        return v.isoformat()
+    return str(v)
+
+
+def _dump(path: Path, rows):
+    path.write_text(json.dumps(rows, separators=(",", ":"), ensure_ascii=False, default=_json_default),
+                    encoding="utf-8")
+
+
+def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, base_url,
+                        images_by_generation, manifest, log):
+    headers = [str(c.value) if c.value else "" for c in ws[1]]
+    missing = [f for f in (id_field, img_field, min_field) if f not in headers]
+    if missing:
+        log(f"  SKIP {ws.title}: missing columns {missing}")
+        return
+    img_col, min_col = headers.index(img_field) + 1, headers.index(min_field) + 1
+    raw_rows = read_sheet_rows(ws)
+    images_by_row = extract_embedded_images(ws, img_col, min_col)
+    out_images_dir = out_dir / "images"
+    out_images_dir.mkdir(parents=True, exist_ok=True)
+
+    rows, seen_ids = [], set()
+    with_image = without_image = no_id = 0
+    for i, row in enumerate(raw_rows):
+        data_id = row.get(id_field)
+        if data_id in (None, ""):
+            no_id += 1
+            continue
+        if str(data_id) in seen_ids:
+            log(f"  WARNING {ws.title}: duplicate {id_field} {data_id!r} (row {i + 2})")
+        seen_ids.add(str(data_id))
+        images = images_by_row.get(i + 2, {})  # header is row 1
+        row.pop(img_field, None)
+        row.pop(min_field, None)
+
+        if "full" in images:
+            webp = png_bytes_to_webp(images["full"])
+            name = f"{prefix}-{data_id}.webp"
+            (out_images_dir / name).write_bytes(webp)
+            row["imageUrl"] = f"{base_url}images/{name}"
+            row["imageHash"] = hashlib.sha1(webp).hexdigest()[:12]
+            with_image += 1
+            gen = row.get("hobbyGeneration") or "unknown"
+            images_by_generation.setdefault(gen, {}).setdefault(prefix, []).append(str(data_id))
+        else:
+            row["imageUrl"] = None
+            row["imageHash"] = None
+            without_image += 1
+
+        if "min" in images:
+            webp = png_bytes_to_webp(images["min"])
+            name = f"{prefix}-{data_id}-min.webp"
+            (out_images_dir / name).write_bytes(webp)
+            row["minifiedImageUrl"] = f"{base_url}images/{name}"
+            row["minifiedImageHash"] = hashlib.sha1(webp).hexdigest()[:12]
+        else:
+            row["minifiedImageUrl"] = None
+            row["minifiedImageHash"] = None
+        rows.append(row)
+
+    _dump(out_dir / f"{prefix}.json", rows)
+    manifest["sheets"][prefix] = {"rowCount": len(rows), "withImage": with_image, "withoutImage": without_image}
+    extra = f", {no_id} rows without {id_field} skipped" if no_id else ""
+    log(f"  {ws.title} -> {prefix}.json: {len(rows)} rows ({with_image} with image, {without_image} without{extra})")
+
+
+def package(workbooks, out_dir: Path, base_url: str, log=print):
+    """workbooks: list of xlsx paths (parts / products / tcg, or one legacy master)."""
+    if not base_url.endswith("/"):
+        base_url += "/"
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {"packagedAt": datetime.now(timezone.utc).isoformat(), "workbooks": [], "sheets": {}}
+    images_by_generation = {}
+    done = {}
+
+    for path in [Path(p) for p in workbooks if p]:
+        log(f"Loading workbook (this may take a moment): {path.name}...")
+        wb = openpyxl.load_workbook(path, data_only=True)  # data_only: formulas -> values
+        manifest["workbooks"].append(path.name)
+        for name in wb.sheetnames:
+            if name in done:
+                log(f"  WARNING: sheet {name} also in {done[name]} - skipped the copy in {path.name}")
+                continue
+            ws = wb[name]
+            part = S.parse_part_sheet(name)
+            if part:
+                gen, key, _ = part
+                process_image_sheet(ws, S.part_json_prefix(gen, key), "dataID", *S.PART_IMAGE_COLS,
+                                    out_dir, base_url, images_by_generation, manifest, log)
+            elif name in S.SHEETS and S.SHEETS[name]["images"]:
+                cfg = S.SHEETS[name]
+                process_image_sheet(ws, cfg["json"], cfg["id"], *cfg["images"],
+                                    out_dir, base_url, images_by_generation, manifest, log)
+            elif name in NO_IMAGE_SHEETS:
+                rows = read_sheet_rows(ws)
+                _dump(out_dir / f"{NO_IMAGE_SHEETS[name]}.json", rows)
+                manifest["sheets"][NO_IMAGE_SHEETS[name]] = {"rowCount": len(rows)}
+                log(f"  {name} -> {NO_IMAGE_SHEETS[name]}.json: {len(rows)} rows (no images)")
+            else:
+                continue  # README, Lists, _scrape_log, ...
+            done[name] = path.name
+
+    manifest["imagesByGeneration"] = {g: {k: len(v) for k, v in s.items()} for g, s in images_by_generation.items()}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (out_dir / "_images_by_generation.json").write_text(json.dumps(images_by_generation), encoding="utf-8")
+    log(f"\nDone. Output in {out_dir}")
+    return manifest
+
+
+def validate_piece(label, raw):
+    """Catch pasted newlines / whitespace BEFORE stripping (after .strip() the evidence is gone)."""
+    if raw and (raw != raw.strip() or "\n" in raw or "\r" in raw):
+        return (f"The {label} field has a newline or leading/trailing whitespace in it -- this would "
+                f"corrupt every image URL in the output. Please retype it directly instead of pasting.")
+    return None
 
 # --- UI Application ---
 
-class PackagerEmbeddedApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Offline Packager (From Embedded Images)")
-        self.root.geometry("750x650")
-        self.root.minsize(650, 500)
 
-        # Variables
-        self.excel_path_var = tk.StringVar()
-        self.output_dir_var = tk.StringVar()
-        self.github_username_var = tk.StringVar()
-        self.github_repo_var = tk.StringVar()
-        self.github_branch_var = tk.StringVar(value="main")
+def run_gui():
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+    from tkinter.scrolledtext import ScrolledText
 
-        self._build_ui()
+    root = tk.Tk()
+    root.title("Offline Packager (From Embedded Images)")
+    root.geometry("800x700")
+    v = {k: tk.StringVar() for k in ("parts", "products", "tcg", "out", "user", "repo")}
+    v["branch"] = tk.StringVar(value="main")
+    for k, fn in S.BOOK_FILES.items():
+        if Path(fn).exists():
+            v[k].set(str(Path(fn).resolve()))
 
-    def _build_ui(self):
-        # --- Config Frame ---
-        config_frame = ttk.LabelFrame(self.root, text="Configuration", padding=(10, 10))
-        config_frame.pack(fill=tk.X, padx=10, pady=10)
+    cf = ttk.LabelFrame(root, text="Configuration", padding=10)
+    cf.pack(fill=tk.X, padx=10, pady=10)
+    r = 0
+    for k, label in (("parts", "Parts workbook:"), ("products", "Products workbook:"), ("tcg", "TCG workbook:")):
+        ttk.Label(cf, text=label).grid(row=r, column=0, sticky=tk.W, pady=3)
+        ttk.Entry(cf, textvariable=v[k], width=55).grid(row=r, column=1, sticky=tk.EW, padx=5)
+        ttk.Button(cf, text="Browse...", command=lambda k=k: v[k].set(
+            filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx")]) or v[k].get())).grid(row=r, column=2)
+        r += 1
+    ttk.Label(cf, text="(leave any empty; a single old master workbook also works in any slot)",
+              font=("", 8)).grid(row=r, column=1, sticky=tk.W)
+    r += 1
+    ttk.Label(cf, text="Output Folder:").grid(row=r, column=0, sticky=tk.W, pady=3)
+    ttk.Entry(cf, textvariable=v["out"], width=55).grid(row=r, column=1, sticky=tk.EW, padx=5)
+    ttk.Button(cf, text="Browse...", command=lambda: v["out"].set(filedialog.askdirectory() or v["out"].get())
+               ).grid(row=r, column=2)
+    r += 1
+    for k, label in (("user", "GitHub Username:"), ("repo", "Repo Name:"), ("branch", "Branch:")):
+        ttk.Label(cf, text=label).grid(row=r, column=0, sticky=tk.W, pady=3)
+        ttk.Entry(cf, textvariable=v[k], width=30).grid(row=r, column=1, sticky=tk.W, padx=5)
+        r += 1
+    preview = ttk.Label(cf, text="", font=("", 8), foreground="#0066cc", wraplength=650)
+    preview.grid(row=r, column=0, columnspan=3, sticky=tk.W)
 
-        # 1. Excel File
-        ttk.Label(config_frame, text="Master Excel File:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(config_frame, textvariable=self.excel_path_var, width=50).grid(row=0, column=1, sticky=tk.EW, padx=5)
-        ttk.Button(config_frame, text="Browse...", command=self._browse_excel).grid(row=0, column=2, padx=5)
+    def upd(*_):
+        u, rp, b = v["user"].get().strip(), v["repo"].get().strip(), v["branch"].get().strip() or "main"
+        preview.config(text=f"Resulting URL prefix: {build_jsdelivr_url(u, rp, b)}" if u and rp
+                       else "Enter username and repo to preview the resulting URL.")
+    for k in ("user", "repo", "branch"):
+        v[k].trace_add("write", upd)
+    upd()
+    cf.columnconfigure(1, weight=1)
 
-        # 2. Output Folder
-        ttk.Label(config_frame, text="Output Folder:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(config_frame, textvariable=self.output_dir_var, width=50).grid(row=1, column=1, sticky=tk.EW, padx=5)
-        ttk.Button(config_frame, text="Browse...", command=self._browse_output).grid(row=1, column=2, padx=5)
+    af = ttk.Frame(root)
+    af.pack(fill=tk.X, padx=10)
+    run_btn = ttk.Button(af, text="Run Packager")
+    run_btn.pack(side=tk.LEFT)
+    progress = ttk.Progressbar(af, mode="indeterminate")
+    lf = ttk.LabelFrame(root, text="Logs", padding=10)
+    lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    log_text = ScrolledText(lf, state="disabled", bg="#f4f4f4", wrap=tk.WORD)
+    log_text.pack(fill=tk.BOTH, expand=True)
 
-        # 3. GitHub Username / Repo / Branch -- three small, plain fields
-        # instead of one long URL field. The jsDelivr URL gets built
-        # programmatically from these; nothing here is ever hand-typed
-        # as a single complex string.
-        ttk.Label(config_frame, text="GitHub Username:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(config_frame, textvariable=self.github_username_var, width=30).grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
-
-        ttk.Label(config_frame, text="Repo Name:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(config_frame, textvariable=self.github_repo_var, width=30).grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
-
-        ttk.Label(config_frame, text="Branch:").grid(row=4, column=0, sticky=tk.W, pady=5)
-        ttk.Entry(config_frame, textvariable=self.github_branch_var, width=15).grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
-
-        self.preview_label = ttk.Label(config_frame, text="", font=("", 8), foreground="#0066cc", wraplength=600)
-        self.preview_label.grid(row=5, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0, 5))
-        for var in (self.github_username_var, self.github_repo_var, self.github_branch_var):
-            var.trace_add("write", lambda *_: self._update_preview())
-        self._update_preview()
-
-        config_frame.columnconfigure(1, weight=1)
-
-        # --- Action Frame ---
-        action_frame = ttk.Frame(self.root)
-        action_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        self.run_btn = ttk.Button(action_frame, text="Run Packager", command=self._start_processing)
-        self.run_btn.pack(side=tk.LEFT)
-
-        self.progress = ttk.Progressbar(action_frame, mode='indeterminate')
-
-        # --- Log Frame ---
-        log_frame = ttk.LabelFrame(self.root, text="Logs", padding=(10, 10))
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        self.log_text = ScrolledText(log_frame, state='disabled', bg="#f4f4f4", wrap=tk.WORD)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-
-    def _update_preview(self):
-        username = self.github_username_var.get().strip()
-        repo = self.github_repo_var.get().strip()
-        branch = self.github_branch_var.get().strip() or "main"
-        if username and repo:
-            self.preview_label.config(text=f"Resulting URL prefix: {build_jsdelivr_url(username, repo, branch)}")
-        else:
-            self.preview_label.config(text="Enter username and repo to preview the resulting URL.")
-
-    def _browse_excel(self):
-        path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")])
-        if path: self.excel_path_var.set(path)
-
-    def _browse_output(self):
-        path = filedialog.askdirectory(title="Select Output Data Folder")
-        if path: self.output_dir_var.set(path)
-
-    def log(self, message):
-        """Thread-safe UI logging."""
+    def log(msg):
         def append():
-            self.log_text.configure(state='normal')
-            self.log_text.insert(tk.END, message + "\n")
-            self.log_text.see(tk.END)
-            self.log_text.configure(state='disabled')
-        self.root.after(0, append)
+            log_text.configure(state="normal")
+            log_text.insert(tk.END, msg + "\n")
+            log_text.see(tk.END)
+            log_text.configure(state="disabled")
+        root.after(0, append)
 
-    def _start_processing(self):
-        # Raw values, checked BEFORE any stripping -- this is the actual
-        # fix. Checking post-strip values (what was here before) can
-        # never catch anything: a trailing newline is exactly what
-        # .strip() removes, so by the time you compare a stripped value
-        # against itself, the evidence is already gone.
-        raw_username = self.github_username_var.get()
-        raw_repo = self.github_repo_var.get()
-        raw_branch = self.github_branch_var.get()
+    def stop():
+        progress.stop()
+        progress.pack_forget()
+        run_btn.config(state=tk.NORMAL)
 
-        for label, raw_value in (("username", raw_username), ("repo", raw_repo), ("branch", raw_branch)):
-            if raw_value and (raw_value != raw_value.strip() or "\n" in raw_value or "\r" in raw_value):
-                messagebox.showerror(
-                    "Suspicious Input",
-                    f"The {label} field has a newline or leading/trailing whitespace in it -- this would "
-                    f"corrupt every image URL in the output. Please retype it directly instead of pasting."
-                )
+    def start():
+        for k in ("user", "repo", "branch"):
+            err = validate_piece(k, v[k].get())
+            if err:
+                messagebox.showerror("Suspicious Input", err)
                 return
-
-        username = raw_username.strip()
-        repo = raw_repo.strip()
-        branch = raw_branch.strip() or "main"
-
-        if not all([self.excel_path_var.get(), self.output_dir_var.get(), username, repo]):
-            messagebox.showerror("Missing Inputs", "Please provide the Excel file, output folder, GitHub username, and repo name.")
+        books = [v[k].get().strip() for k in ("parts", "products", "tcg") if v[k].get().strip()]
+        if not (books and v["out"].get() and v["user"].get().strip() and v["repo"].get().strip()):
+            messagebox.showerror("Missing Inputs", "Provide at least one workbook, the output folder, "
+                                                   "GitHub username and repo name.")
             return
+        base = build_jsdelivr_url(v["user"].get().strip(), v["repo"].get().strip(),
+                                  v["branch"].get().strip() or "main")
+        run_btn.config(state=tk.DISABLED)
+        progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
+        progress.start(15)
+        log(f"Using base URL: {base}")
 
-        base_url = build_jsdelivr_url(username, repo, branch)
+        def job():
+            try:
+                package(books, Path(v["out"].get()), base, log)
+                log("\nSUCCESS: Packaging completed successfully.")
+                root.after(0, lambda: messagebox.showinfo("Done", "Packaging completed successfully!"))
+            except Exception as e:
+                import traceback
+                log(f"\nERROR:\n{traceback.format_exc()}")
+                root.after(0, lambda e=e: messagebox.showerror("Error", f"An error occurred:\n{e}"))
+            finally:
+                root.after(0, stop)
+        threading.Thread(target=job, daemon=True).start()
 
-        # Prepare UI
-        self.run_btn.config(state=tk.DISABLED)
-        self.progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
-        self.progress.start(15)
-        self.log_text.configure(state='normal')
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.configure(state='disabled')
+    run_btn.config(command=start)
+    root.mainloop()
 
-        self.log(f"Using base URL: {base_url}")
 
-        # Run script in background thread
-        threading.Thread(target=self._run_script, args=(base_url,), daemon=True).start()
+def run_cli(argv):
+    ap = argparse.ArgumentParser(description="Package Beyblade workbooks into data/*.json + images")
+    ap.add_argument("--parts")
+    ap.add_argument("--products")
+    ap.add_argument("--tcg")
+    ap.add_argument("--workbook", action="append", default=[], help="any other / legacy master workbook")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--user", required=True)
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--branch", default="main")
+    a = ap.parse_args(argv)
+    for label in ("user", "repo", "branch"):
+        err = validate_piece(label, getattr(a, label))
+        if err:
+            sys.exit(err)
+    books = [b for b in (a.parts, a.products, a.tcg) if b] + a.workbook
+    if not books:
+        sys.exit("Give at least one workbook (--parts / --products / --tcg / --workbook).")
+    package(books, Path(a.out), build_jsdelivr_url(a.user, a.repo, a.branch))
 
-    def _run_script(self, base_url: str):
-        try:
-            excel_path = Path(self.excel_path_var.get())
-            out_dir = Path(self.output_dir_var.get())
-
-            self._package(excel_path, out_dir, base_url, self.log)
-
-            self.log("\nSUCCESS: Packaging completed successfully.")
-            self.root.after(0, lambda: messagebox.showinfo("Done", "Packaging completed successfully!"))
-
-        except Exception as e:
-            import traceback
-            err = traceback.format_exc()
-            self.log(f"\nERROR:\n{err}")
-            self.root.after(0, lambda: messagebox.showerror("Error", f"An error occurred:\n{e}"))
-        finally:
-            self.root.after(0, self._stop_processing)
-
-    def _stop_processing(self):
-        self.progress.stop()
-        self.progress.pack_forget()
-        self.run_btn.config(state=tk.NORMAL)
-
-    def _process_sheet(self, wb, sheet_name, prefix, id_field, img_field, min_field, out_dir, raw_base_url, images_by_generation, manifest):
-        if sheet_name not in wb.sheetnames:
-            self.log(f"  SKIP (not in workbook): {sheet_name}")
-            return
-
-        ws = wb[sheet_name]
-        headers = [str(c.value) if c.value else "" for c in ws[1]]
-
-        if id_field not in headers or img_field not in headers or min_field not in headers:
-            self.log(f"  SKIP {sheet_name}: missing expected columns")
-            return
-
-        id_col = headers.index(id_field) + 1
-        img_col = headers.index(img_field) + 1
-        min_col = headers.index(min_field) + 1
-
-        rows = read_sheet_rows(ws)
-        images_by_row = extract_embedded_images(ws, id_col, img_col, min_col)
-        out_images_dir = out_dir / "images"
-        out_images_dir.mkdir(parents=True, exist_ok=True)
-
-        with_image = without_image = 0
-        for i, row in enumerate(rows):
-            data_id = row.get(id_field)
-            if data_id is None:
-                continue
-
-            sheet_row_1idx = i + 2  # +2: header is row 1, rows list is 0-indexed from row 2
-            images = images_by_row.get(sheet_row_1idx, {})
-
-            row.pop(img_field, None)
-            row.pop(min_field, None)
-
-            if "full" in images:
-                webp_bytes = png_bytes_to_webp(images["full"])
-                full_name = f"{prefix}-{data_id}.webp"
-                (out_images_dir / full_name).write_bytes(webp_bytes)
-                row["imageUrl"] = f"{raw_base_url}images/{full_name}"
-                row["imageHash"] = hashlib.sha1(webp_bytes).hexdigest()[:12]
-                with_image += 1
-                generation = row.get("hobbyGeneration", "unknown")
-                images_by_generation.setdefault(generation, {}).setdefault(prefix, []).append(str(data_id))
-            else:
-                row["imageUrl"] = None
-                row["imageHash"] = None
-                without_image += 1
-
-            if "min" in images:
-                webp_bytes = png_bytes_to_webp(images["min"])
-                min_name = f"{prefix}-{data_id}-min.webp"
-                (out_images_dir / min_name).write_bytes(webp_bytes)
-                row["minifiedImageUrl"] = f"{raw_base_url}images/{min_name}"
-                row["minifiedImageHash"] = hashlib.sha1(webp_bytes).hexdigest()[:12]
-            else:
-                row["minifiedImageUrl"] = None
-                row["minifiedImageHash"] = None
-
-        out_path = out_dir / f"{prefix}.json"
-        out_path.write_text(json.dumps(rows, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
-        manifest["sheets"][prefix] = {"rowCount": len(rows), "withImage": with_image, "withoutImage": without_image}
-        self.log(f"  {sheet_name} -> {out_path.name}: {len(rows)} rows ({with_image} with image, {without_image} without)")
-
-    def _package(self, xlsx_path: Path, out_dir: Path, raw_base_url: str, log):
-        """The core package logic adapted from the script."""
-        if not raw_base_url.endswith("/"):
-            raw_base_url += "/"
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        log(f"Loading workbook (this may take a moment): {xlsx_path.name}...")
-
-        # data_only=True is required so formula cells are resolved to their values.
-        wb = openpyxl.load_workbook(xlsx_path, data_only=True)
-        manifest = {"packagedAt": datetime.now(timezone.utc).isoformat(), "sheets": {}}
-        images_by_generation = {}
-
-        for prefix, sheet_name in PREFIX_TO_SHEET.items():
-            self._process_sheet(wb, sheet_name, prefix, "dataID", "image", "minifiedImage", out_dir, raw_base_url, images_by_generation, manifest)
-
-        for sheet_name, (id_field, img_field, min_field, prefix) in SHEET_SETTINGS.items():
-            self._process_sheet(wb, sheet_name, prefix, id_field, img_field, min_field, out_dir, raw_base_url, images_by_generation, manifest)
-
-        for sheet_name, short_key in NO_IMAGE_SHEETS.items():
-            if sheet_name not in wb.sheetnames:
-                continue
-            rows = read_sheet_rows(wb[sheet_name])
-            (out_dir / f"{short_key}.json").write_text(json.dumps(rows, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
-            manifest["sheets"][short_key] = {"rowCount": len(rows)}
-            log(f"  {sheet_name} -> {short_key}.json: {len(rows)} rows (no images)")
-
-        manifest["imagesByGeneration"] = {g: {k: len(v) for k, v in s.items()} for g, s in images_by_generation.items()}
-        (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        (out_dir / "_images_by_generation.json").write_text(json.dumps(images_by_generation), encoding="utf-8")
-        log(f"\nDone. Output in {out_dir}")
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = PackagerEmbeddedApp(root)
-    root.mainloop()
+    if len(sys.argv) > 1:
+        run_cli(sys.argv[1:])
+    else:
+        run_gui()

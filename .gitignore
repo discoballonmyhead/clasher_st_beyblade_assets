@@ -34,3 +34,9 @@ scraped_master.xlsx
 scraped_master.xlsx.bak
 *.tmp.xlsx
 scraper_config.json
+
+# local data store workbooks (samples/ stays tracked)
+/beyblade_parts.xlsx
+/beyblade_products.xlsx
+/beyblade_tcg.xlsx
+*.xlsx.bak

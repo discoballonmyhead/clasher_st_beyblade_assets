@@ -1,48 +1,38 @@
 #!/usr/bin/env python3
 """
-Polite, resumable Beyblade Fandom scraper that writes a workbook in the
-exact layout beyblade_data.py (the packager) reads:
+Polite, resumable Beyblade Fandom scraper that fills the three human-managed workbooks
+(layout in beyblade_schema.py, packaged by beyblade_data.py):
 
-    sheet  Parts_X_<Key>   (Parts_X_Blades, Parts_X_Ratchets, Parts_X_Bits, ...)
-    cols   dataID, parentPartId, variantLabel, manufacturer, hobbyName,
-           hobbyGeneration, code, name, edition, <part specific...>, mass,
-           wbolegality, incompleteData, updated_at, deleted,
-           image, minifiedImage        <- PNGs embedded/anchored in these cells
+    beyblade_parts.xlsx     targets parts:<Gen>:<part>   e.g. parts:X:blades, parts:Burst:layers
+    beyblade_products.xlsx  targets products:<Gen>       every release incl. launchers, stadiums, sets
+                            + "update" mode: reads the store, finds the last release code per series and
+                              manufacturer (e.g. BX-54) and checks BX-55, BX-56 ... until a gap
+    beyblade_tcg.xlsx       targets tcg:sets, tcg:cards
 
-Run it one KEY at a time (blades, ratchets, bits, lockChips, ...). Every key
-fills its own sheet in the SAME workbook, so you can do `blades` today and
-`ratchets` tomorrow. Re-running a key resumes where it stopped, never
-duplicates rows (rows are matched by wiki page title) and never overwrites
-cells you edited by hand (unless --overwrite).
+The workbooks ARE the store: anything already in them (matched by wiki title, name+code, sku,
+card number) is skipped before its page is even downloaded, so re-runs only pull what is new.
+Cells you edited by hand are never overwritten (unless --overwrite).
 
-Why the previous version timed out / risked an IP ban, and what changed:
-  * 4 image threads downloaded in parallel with NO delay   -> one request at a
-    time, globally, with a minimum gap + random jitter (API *and* images).
-  * Downloaded 1600px thumbnails / full originals          -> 600px thumbs
-    (a fraction of the bytes), minified 128px made locally (no extra request).
-  * 50 full page sources per request (slow, big responses) -> 20 per batch.
-  * Retries ignored Retry-After and hammered on 429/503     -> honours
-    Retry-After + maxlag, exponential backoff with jitter, and a circuit
-    breaker that STOPS (and saves) after repeated throttling. HTTP 403 stops
-    immediately, because that is what a block looks like.
-  * Nothing was saved until the very end                   -> progress, page
-    cache, image cache and workbook are checkpointed as it goes. Ctrl+C /
-    Stop is safe; just run again to continue.
-  * Per-run request budget (--max-requests) so a big wiki can be done in
-    several short sessions instead of one long hammering run.
-  * GUI wrote to Tk from a worker thread (freezes)          -> queue-based log.
+Safety (why the old version timed out / risked an IP ban):
+  * one request at a time globally (API + images), min gap + random jitter, 20 pages per batch
+  * honours Retry-After + maxlag, exponential backoff, circuit breaker stops after repeated
+    throttling, HTTP 403 stops immediately; per-run request budget
+  * 600px thumbnails, minified image made locally; page/image cache + checkpoints -> resumable
 
-Usage (CLI):
-    python fandom_scraper.py --status
-    python fandom_scraper.py --find-categories ratchet     # discover category names
-    python fandom_scraper.py --key ratchets --list-only     # see which pages match
-    python fandom_scraper.py --key ratchets --inspect 5     # see infobox field names
-    python fandom_scraper.py --key ratchets                 # scrape into the sheet
-    python fandom_scraper.py --next                         # next unfinished key
-Run with no arguments to open the GUI (needs tkinter).
-
-Tune categories / title prefixes / field aliases in scraper_config.json
-(created on first run next to this file).
+Usage:
+    python fandom_scraper.py --list-targets
+    python fandom_scraper.py --find-categories "lock chip"
+    python fandom_scraper.py --target parts:X:ratchets --list-only
+    python fandom_scraper.py --target parts:X:ratchets --inspect 5
+    python fandom_scraper.py --target parts:X:ratchets
+    python fandom_scraper.py --scope parts --generation X          # every X part sheet, one after another
+    python fandom_scraper.py --scope products --generation X       # list-based product scrape
+    python fandom_scraper.py --update                              # next release codes for every series
+    python fandom_scraper.py --update --series BX UX               # only these series
+    python fandom_scraper.py --update --series BX --from-code BX-40
+    python fandom_scraper.py --scope tcg
+    python fandom_scraper.py --next / --status
+No arguments -> GUI (needs tkinter).
 """
 import argparse
 import copy
@@ -56,131 +46,146 @@ import sys
 import threading
 import time
 from collections import Counter, OrderedDict
-from datetime import datetime, timezone
 
 import mwparserfromhell
 import requests
 from mwparserfromhell.nodes import Comment, ExternalLink, HTMLEntity, Tag, Template, Text, Wikilink
 from PIL import Image
 
+import beyblade_schema as S
+from beyblade_store import Book, norm_name
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "scraper_config.json")
+CONFIG_VERSION = 3
 
 # =============================================================================
 # CONFIG
 # =============================================================================
 
-COMMON_HEAD = ["dataID", "parentPartId", "variantLabel", "manufacturer", "hobbyName",
-               "hobbyGeneration", "code", "name", "edition"]
-COMMON_TAIL = ["mass", "wbolegality", "incompleteData", "updated_at", "deleted"]
-BLADE_STATS = ["type", "spinDir", "attack", "defense", "stamina"]
-
-# Column orders mirror data/*.json exactly (what the packager produced from the master sheet).
-SHEET_COLUMNS = {
-    "blades":       COMMON_HEAD + BLADE_STATS + ["integratedRatchet"] + COMMON_TAIL,
-    "ratchets":     COMMON_HEAD + ["protrusions", "heightMm", "attack", "defense", "stamina"] + COMMON_TAIL,
-    "bits":         COMMON_HEAD + ["baseName", "movementStyle", "attack", "defense", "stamina", "dash",
-                                   "burstRes", "twoStat", "integratedRatchet"] + COMMON_TAIL,
-    "lockChips":    COMMON_HEAD + COMMON_TAIL,
-    "overBlades":   COMMON_HEAD + BLADE_STATS + COMMON_TAIL,
-    "metalBlades":  COMMON_HEAD + BLADE_STATS + COMMON_TAIL,
-    "mainBlades":   COMMON_HEAD + BLADE_STATS + COMMON_TAIL,
-    "assistBlades": COMMON_HEAD + BLADE_STATS + COMMON_TAIL,
-}
-SHEET_NAMES = {  # same as PREFIX_TO_SHEET in beyblade_data.py
-    "blades": "Parts_X_Blades", "ratchets": "Parts_X_Ratchets", "bits": "Parts_X_Bits",
-    "lockChips": "Parts_X_LockChips", "overBlades": "Parts_X_OverBlades",
-    "metalBlades": "Parts_X_MetalBlades", "mainBlades": "Parts_X_MainBlades",
-    "assistBlades": "Parts_X_AssistBlades",
-}
-IMAGE_COL, MIN_IMAGE_COL = "image", "minifiedImage"
-
-# Infobox field names are matched after normalising (lowercase, spaces/_/- collapsed).
-COMMON_ALIASES = {
-    "name":    ["name", "english name", "part name", "title"],
-    "code":    ["product code", "code", "product", "product number", "release", "first release",
-                "debut", "released with", "beyblade"],
+# infobox field names (normalised: lowercase, spaces/_/- collapsed) that feed each column
+COLUMN_ALIASES = {
+    "name": ["name", "english name", "part name", "title"],
+    "code": ["product code", "code", "product number", "product", "release", "first release",
+             "released with", "debut", "beyblade", "sku", "number"],
     "edition": ["edition", "release", "first release", "released with", "debut", "beyblade", "product"],
-    "mass":    ["weight", "mass"],
-}
-BLADE_ALIASES = {
-    "type":    ["type", "beyblade type", "class"],
+    "mass": ["weight", "mass"],
+    "type": ["type", "beyblade type", "class"],
+    "movementStyle": ["type", "movement", "movement style"],
     "spinDir": ["spin direction", "spin", "rotation", "spin dir"],
-    "attack":  ["attack", "atk"],
+    "attack": ["attack", "atk"],
     "defense": ["defense", "defence", "def"],
     "stamina": ["stamina", "sta"],
+    "dash": ["dash", "xtreme dash", "x dash"],
+    "burstRes": ["burst resistance", "burst", "burst res"],
+    "system": ["system", "series", "line"],
+    "layerComponent": ["component", "layer type", "part type"],
+    "discType": ["disc type", "type"],
+    "heightMm": ["height", "height mm"],
+    "protrusions": ["protrusions", "number of protrusions", "contact points"],
+    "baseName": ["abbreviation", "short name", "initial", "symbol", "bit code"],
+    # products
+    "productName": ["name", "english name", "product name", "title"],
+    "productType": ["product type", "type", "category", "release type"],
+    "releaseDate": ["release date", "released", "japanese release", "jp release", "release date japan",
+                    "release", "date", "us release"],
+    "itemCost": ["price", "retail price", "cost", "msrp", "srp"],
+    "manufacturer": ["manufacturer", "company", "brand", "distributor"],
+    "hasbroItem": ["hasbro code", "hasbro product code", "hasbro", "item number", "upc"],
+    "description": ["description", "contents", "includes", "comes with"],
+    # tcg
+    "setCode": ["set code", "code", "set", "series code"],
+    "setName": ["name", "english name", "set name", "title"],
+    "cardCount": ["cards", "card count", "number of cards", "total cards"],
+    "cardNumber": ["card number", "number", "no", "card no", "id"],
+    "rarity": ["rarity"],
+    "cardType": ["card type", "type"],
+    "attribute": ["attribute", "element", "color", "colour"],
+    "cost": ["cost"],
+    "power": ["power", "attack", "atk"],
+    "effectText": ["effect", "ability", "text", "card text", "effect text"],
+    "illustrator": ["illustrator", "artist", "illustration"],
 }
 
-def _part(categories, prefixes, extra_aliases=None, exclude=None):
-    aliases = copy.deepcopy(COMMON_ALIASES)
-    aliases.update(copy.deepcopy(extra_aliases or {}))
-    return {"categories": categories, "title_prefixes": prefixes,
-            "exclude_title_regex": exclude or r"(?i)(/gallery|/anime|\(disambiguation\))$",
-            "aliases": aliases}
+_EXCLUDE = r"(?i)(/gallery|/anime|/manga|\(disambiguation\))$"
+_PRODUCT_CATS = {
+    "Plastic": ["Bakuten Shoot Beyblade products", "Plastic Generation products"],
+    "HMS": ["HMS products", "Heavy Metal System products"],
+    "MetalFight": ["Metal Fight Beyblade products", "Metal Saga products"],
+    "ZeroG": ["Zero-G products", "Shogun Steel products"],
+    "Burst": ["Beyblade Burst products", "Burst products"],
+    "X": ["Beyblade X products", "Beyblade X Products"],
+}
+_GEN_FILTER = {  # pages listed by shared category names (e.g. "Attack Rings") are kept only if they match
+    "Plastic": {"exclude_category_regex": r"(?i)\b(hms|heavy metal)\b"},
+    "HMS": {"include_category_regex": r"(?i)\b(hms|heavy metal)\b"},
+}
+
+
+def default_sources():
+    src = OrderedDict()
+    for gen, key, p in S.all_part_targets():
+        src[f"parts:{gen}:{key}"] = dict({
+            "categories": p["categories"], "title_prefixes": [p["label"] + " - "],
+            "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}, **_GEN_FILTER.get(gen, {}))
+    for gen in S.GENERATIONS:
+        src[f"products:{gen}"] = {"categories": _PRODUCT_CATS.get(gen, []), "title_prefixes": [],
+                                  "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+    src["tcg:sets"] = {"categories": ["Beyblade X Trading Card Game sets", "TCG Sets"], "title_prefixes": [],
+                       "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+    src["tcg:cards"] = {"categories": ["Beyblade X Trading Card Game cards", "TCG Cards"], "title_prefixes": [],
+                        "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+    return src
+
 
 DEFAULT_CONFIG = {
+    "config_version": CONFIG_VERSION,
     "wiki": "beyblade",
-    # Fandom/Wikimedia etiquette: identify yourself. PUT A WAY TO CONTACT YOU HERE.
-    "user_agent": "ClasherBeybladeAssetsScraper/2.0 (personal hobby project; contact: CHANGE_ME)",
-    "output_workbook": "scraped_master.xlsx",
+    # Fandom etiquette: identify yourself. PUT A WAY TO CONTACT YOU HERE.
+    "user_agent": "ClasherBeybladeAssetsScraper/3.0 (personal hobby project; contact: CHANGE_ME)",
+    "workbooks": dict(S.BOOK_FILES),
     "state_dir": "scrape_state",
     "politeness": {
-        "delay_seconds": 2.0,          # minimum gap between ANY two requests
-        "jitter_seconds": 1.0,         # + random 0..jitter on top
-        "batch_size": 20,              # page sources per API call (max 50)
-        "connect_timeout": 10,
-        "read_timeout": 45,
-        "max_retries": 5,              # per request
-        "backoff_base_seconds": 10,
-        "backoff_max_seconds": 300,
-        "max_consecutive_failures": 4, # circuit breaker: stop the run, resume later
-        "max_requests_per_run": 1500,  # budget; 0 = unlimited
-        "maxlag": 5,
-        "image_width": 600,            # px of the thumbnail requested from the wiki
-        "min_image_width": 128,        # px of the locally made minified image
-        "save_every": 15,              # save workbook every N processed pages
+        "delay_seconds": 2.0, "jitter_seconds": 1.0, "batch_size": 20, "connect_timeout": 10,
+        "read_timeout": 45, "max_retries": 5, "backoff_base_seconds": 10, "backoff_max_seconds": 300,
+        "max_consecutive_failures": 4, "max_requests_per_run": 1500, "maxlag": 5,
+        "image_width": 600, "min_image_width": 128, "save_every": 15,
     },
-    "row_defaults": {"manufacturer": "Takara-Tomy", "hobbyName": "Beyblade", "hobbyGeneration": "X",
-                     "incompleteData": 1, "wbolegality": None, "updated_at": None, "deleted": None},
-    "image_field_regex": r"^(image|img|picture|photo)\s*\d*$",
-    "parts": {
-        "blades":       _part(["Beyblade X Blades", "Blades (Beyblade X)"], ["Blade - "], BLADE_ALIASES),
-        "ratchets":     _part(["Ratchets", "Beyblade X Ratchets"], ["Ratchet - "],
-                              {"protrusions": ["protrusions", "number of protrusions", "contact points"],
-                               "heightMm": ["height", "height mm"],
-                               "attack": ["attack"], "defense": ["defense", "defence"], "stamina": ["stamina"]}),
-        "bits":         _part(["Bits", "Beyblade X Bits"], ["Bit - "],
-                              {"baseName": ["abbreviation", "short name", "initial", "symbol", "bit code"],
-                               "movementStyle": ["type", "movement", "movement style"],
-                               "attack": ["attack"], "defense": ["defense", "defence"], "stamina": ["stamina"],
-                               "dash": ["dash", "xtreme dash", "x dash"],
-                               "burstRes": ["burst resistance", "burst", "burst res"]}),
-        "lockChips":    _part(["Lock Chips", "Beyblade X Lock Chips"], ["Lock Chip - "]),
-        "mainBlades":   _part(["Main Blades", "Beyblade X Main Blades"], ["Main Blade - "], BLADE_ALIASES),
-        "assistBlades": _part(["Assist Blades", "Beyblade X Assist Blades"], ["Assist Blade - "], BLADE_ALIASES),
-        "metalBlades":  _part(["Metal Blades", "Beyblade X Metal Blades"], ["Metal Blade - "], BLADE_ALIASES),
-        "overBlades":   _part(["Over Blades", "Beyblade X Over Blades"], ["Over Blade - "], BLADE_ALIASES),
+    "update": {
+        "miss_limit": 3,             # stop a series after this many codes in a row are not found
+        "max_codes_per_series": 40,  # per run
+        "search_hits": 4,            # wiki search results checked per code
     },
+    "row_defaults": {"hobbyName": S.HOBBY_NAME, "incompleteData": 1, "wbolegality": None,
+                     "updated_at": None, "deleted": None},
+    "image_field_regex": r"^(image|img|picture|photo|box|box image|box art)\s*\d*$",
+    "sources": default_sources(),
 }
-KEY_ORDER = list(SHEET_NAMES)
 
 
 def load_config(path=CONFIG_PATH):
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
     if not os.path.exists(path):
-        write_json(path, DEFAULT_CONFIG, indent=2)
-        log(f"Created {os.path.basename(path)} with default settings - edit categories/aliases there.")
-        return copy.deepcopy(DEFAULT_CONFIG)
+        write_json(path, cfg, indent=2)
+        log(f"Created {os.path.basename(path)} - edit categories/aliases there.")
+        return cfg
     with open(path, encoding="utf-8") as f:
         user = json.load(f)
-    cfg = copy.deepcopy(DEFAULT_CONFIG)
-    for k, v in user.items():  # shallow merge, one level deeper for dict sections
-        if isinstance(v, dict) and isinstance(cfg.get(k), dict) and k != "parts":
+    if "parts" in user and "sources" not in user:  # v2 config: parts.<key> -> sources["parts:X:<key>"]
+        user["sources"] = {f"parts:X:{k}": v for k, v in user.pop("parts").items()}
+        user.pop("output_workbook", None)
+        log("Upgraded old scraper_config.json layout (X part settings kept).")
+    for k, v in user.items():
+        if k == "sources":
+            for sk, sv in v.items():
+                cfg["sources"].setdefault(sk, {}).update(sv)
+        elif isinstance(v, dict) and isinstance(cfg.get(k), dict):
             cfg[k].update(v)
-        elif k == "parts":
-            for pk, pv in v.items():
-                cfg["parts"].setdefault(pk, {}).update(pv)
         else:
             cfg[k] = v
+    if user.get("config_version") != CONFIG_VERSION:
+        cfg["config_version"] = CONFIG_VERSION
+        write_json(path, cfg, indent=2)  # add new targets/settings, keep the user's values
     return cfg
 
 # =============================================================================
@@ -387,6 +392,11 @@ class PoliteClient:
         d = self.api_get(action="query", list="search", srsearch=term, srnamespace="14", srlimit="50")
         return [(h["title"], h.get("size")) for h in d["query"]["search"]]
 
+    def search_pages(self, term, limit=5):
+        d = self.api_get(action="query", list="search", srsearch=term, srnamespace="0", srlimit=str(limit),
+                         srwhat="text")
+        return [h["title"] for h in d["query"]["search"]]
+
     def revids(self, titles):
         out = {}
         for batch in chunks(titles, 50):
@@ -520,99 +530,6 @@ def parse_page(wikitext, image_re):
             fields[key] = v
     return str(box.name).strip(), fields, files
 
-# =============================================================================
-# FIELD MAPPING -> packager columns
-# =============================================================================
-
-CODE_RE = re.compile(r"\b((?:BXG|UXG|CXG|BX|UX|CX)-\d{2,3})\b", re.I)
-NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
-RATCHET_RE = re.compile(r"\b(\d{1,2})-(\d{2,3})\b")
-TYPES = ("attack", "defense", "stamina", "balance")
-
-
-def to_number(v):
-    if v is None:
-        return None
-    s = str(v).strip()
-    if re.fullmatch(r"-?\d+(\.\d+)?", s):
-        f = float(s)
-        return int(f) if f.is_integer() else f
-    return s or None  # keep things like "30-55" exactly as the master sheet does
-
-
-def first_number(v):
-    m = NUM_RE.search(str(v or "").replace(",", "."))
-    if not m:
-        return None
-    f = float(m.group())
-    return int(f) if f.is_integer() else f
-
-
-def norm_type(v):
-    low = str(v or "").lower()
-    if "defen" in low:
-        return "defense"
-    for t in TYPES:
-        if t in low:
-            return t
-    return None
-
-
-def norm_spin(v):
-    low = str(v or "").lower()
-    has_r, has_l = "right" in low, "left" in low
-    if has_r and has_l:
-        return "both"
-    return "right" if has_r else "left" if has_l else None
-
-
-def title_to_name(title, prefixes):
-    name = title
-    for pre in prefixes:
-        if name.lower().startswith(pre.lower()):
-            name = name[len(pre):]
-            break
-    return re.sub(r"\s*\((?:Beyblade X|X|Blade|Ratchet|Bit|part)\)\s*$", "", name, flags=re.I).strip()
-
-
-def map_row(key, part_cfg, title, fields):
-    aliases = {col: [norm_key(a) for a in names] for col, names in part_cfg["aliases"].items()}
-
-    def pick(col):
-        for a in aliases.get(col, []):
-            if fields.get(a):
-                return fields[a]
-        return None
-
-    row = {}
-    row["name"] = title_to_name(title, part_cfg.get("title_prefixes", [])) or pick("name")
-    code_src = " ".join(filter(None, [pick("code")] + [fields.get(a) for a in aliases.get("edition", [])]))
-    m = CODE_RE.search(code_src)
-    row["code"] = m.group(1).upper() if m else None
-    ed = pick("edition")
-    row["edition"] = ed.split(";")[0].strip()[:120] if ed else None
-    row["mass"] = first_number(pick("mass"))
-
-    if "type" in SHEET_COLUMNS[key]:
-        row["type"] = norm_type(pick("type"))
-    if "spinDir" in SHEET_COLUMNS[key]:
-        row["spinDir"] = norm_spin(pick("spinDir"))
-    for stat in ("attack", "defense", "stamina", "dash", "burstRes"):
-        if stat in SHEET_COLUMNS[key]:
-            v = pick(stat)
-            row[stat] = to_number(v.split(";")[0]) if v else None
-    if key == "ratchets":
-        rm = RATCHET_RE.search(row["name"] or "")
-        row["protrusions"] = first_number(pick("protrusions")) or (int(rm.group(1)) if rm else None)
-        row["heightMm"] = first_number(pick("heightMm")) or (int(rm.group(2)) if rm else None)
-    if key == "bits":
-        row["movementStyle"] = norm_type(pick("movementStyle"))
-        bn = pick("baseName")
-        if not bn:  # "Flat (F)" style names
-            pm = re.search(r"\(([A-Z][A-Za-z]{0,3})\)", title)
-            bn = pm.group(1) if pm else None
-        row["baseName"] = bn
-    return {k: v for k, v in row.items() if k in SHEET_COLUMNS[key]}
 
 # =============================================================================
 # IMAGES
@@ -628,205 +545,319 @@ def to_png(content, max_width):
     im.save(buf, "PNG", optimize=True)
     return buf.getvalue()
 
+
 # =============================================================================
-# WORKBOOK (upsert into the packager's layout)
+# VALUE PARSING
 # =============================================================================
 
-class MasterWorkbook:
-    def __init__(self, path):
-        import openpyxl
-        self.path = path
-        if os.path.exists(path):
-            self.wb = openpyxl.load_workbook(path)  # keeps already-embedded images
-            for ws in self.wb.worksheets:
-                for img in ws._images:
-                    self._pin(img, img._data())
-        else:
-            self.wb = openpyxl.Workbook()
-            self.wb.remove(self.wb.active)
-        self.backed_up = False
+NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
+RATCHET_RE = re.compile(r"\b(\d{1,2})-(\d{2,3})\b")
+X_COMBO_RE = re.compile(r"([A-Z][A-Za-z.'\s]*?[A-Za-z])\s+(\d{1,2}-\d{2,3})\s*([A-Z][A-Za-z]{0,3})\b")
+MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august",
+                                      "september", "october", "november", "december"], 1)}
+PRODUCT_TYPE_WORDS = [  # first match wins, so specific before generic
+    ("random booster", "Random Booster"), ("starter deck", "TCG Starter Deck"), ("booster pack", "TCG Booster"),
+    ("launcher grip", "Launcher Grip"), ("grip", "Launcher Grip"), ("launcher", "Launcher"),
+    ("stadium", "Stadium"), ("battle set", "Battle Set"), ("deck set", "Deck Set"), ("entry", "Entry Set"),
+    ("customize", "Customize Set"), ("custom set", "Customize Set"), ("starter", "Starter"),
+    ("booster", "Booster"), ("case", "Case"), ("tool", "Tool"), ("prize", "Prize"), ("limited", "Limited"),
+    ("set", "Set"),
+]
 
-    @staticmethod
-    def _pin(img, data):
-        """openpyxl closes an image's buffer on save, so a 2nd save (checkpoints!) would crash.
-        Pin the bytes so the workbook can be saved any number of times."""
-        img._data = lambda data=data: data
 
-    def sheet(self, key):
-        from openpyxl.styles import Font, PatternFill
-        name = SHEET_NAMES[key]
-        wanted = SHEET_COLUMNS[key] + [IMAGE_COL, MIN_IMAGE_COL]
-        if name not in self.wb.sheetnames:
-            ws = self.wb.create_sheet(name)
-            ws.append(wanted)
-            for c in ws[1]:
-                c.font = Font(bold=True, color="FFFFFF")
-                c.fill = PatternFill("solid", fgColor="1F3864")
-            ws.freeze_panes = "B2"
-            for i, col in enumerate(wanted, 1):
-                ws.column_dimensions[ws.cell(1, i).column_letter].width = \
-                    18 if col == IMAGE_COL else 10 if col == MIN_IMAGE_COL else 14
-        ws = self.wb[name]
-        headers = [c.value for c in ws[1]]
-        for col in wanted:  # add any missing column at the end, never reorder user's sheet
-            if col not in headers:
-                ws.cell(1, len(headers) + 1, col)
-                headers.append(col)
-        return ws
+def to_number(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    if re.fullmatch(r"-?\d+(\.\d+)?", s):
+        f = float(s)
+        return int(f) if f.is_integer() else f
+    return s or None  # keep things like "30-55" exactly as the master sheet does
 
-    def log_sheet(self):
-        if "_scrape_log" not in self.wb.sheetnames:
-            ws = self.wb.create_sheet("_scrape_log")
-            ws.append(["key", "dataID", "wikiTitle", "url", "revid", "infobox", "imageFile", "scrapedAt"])
-        return self.wb["_scrape_log"]
 
-    def title_index(self, key):
-        """wiki title -> sheet row number, from the _scrape_log sheet."""
-        ws, lg = self.sheet(key), self.log_sheet()
-        headers = [c.value for c in ws[1]]
-        id_col = headers.index("dataID") + 1
-        id_to_row = {}
-        for r in range(2, ws.max_row + 1):
-            v = ws.cell(r, id_col).value
-            if v not in (None, ""):
-                id_to_row[str(v)] = r
-        idx = {}
-        for row in lg.iter_rows(min_row=2, values_only=True):
-            if row and row[0] == key and str(row[1]) in id_to_row:
-                idx[row[2]] = id_to_row[str(row[1])]
-        return idx
+def first_number(v):
+    m = NUM_RE.search(str(v or "").replace(",", ""))
+    if not m:
+        return None
+    f = float(m.group())
+    return int(f) if f.is_integer() else f
 
-    def next_row_and_id(self, ws):
-        headers = [c.value for c in ws[1]]
-        id_col = headers.index("dataID") + 1
-        last, max_id = 1, 0
-        for r in range(2, ws.max_row + 1):
-            vals = [ws.cell(r, c).value for c in range(1, len(headers) + 1)]
-            if not any(v not in (None, "") for v in vals):
-                break  # packager stops at first blank row, so we must stay contiguous
-            last = r
-            try:
-                max_id = max(max_id, int(ws.cell(r, id_col).value))
-            except (TypeError, ValueError):
-                pass
-        return last + 1, max_id + 1
 
-    def has_image(self, ws, row, col):
-        for img in ws._images:
-            a = img.anchor
-            if hasattr(a, "_from") and a._from.row + 1 == row and a._from.col + 1 == col:
-                return True
-        return False
+def norm_type(v):
+    low = str(v or "").lower()
+    if "defen" in low:
+        return "defense"
+    for t in S.BEY_TYPES:
+        if t in low:
+            return t
+    return None
 
-    def add_image(self, ws, row, col, png, display_w):
-        from openpyxl.drawing.image import Image as XLImage
-        from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
-        from openpyxl.drawing.xdr import XDRPositiveSize2D
-        from openpyxl.utils.units import pixels_to_EMU
-        img = XLImage(io.BytesIO(png))
-        ratio = display_w / img.width if img.width else 1
-        img.width, img.height = display_w, max(1, int(img.height * ratio))
-        # explicit anchor object (not "J5" string) so has_image() also sees images added this run
-        img.anchor = OneCellAnchor(_from=AnchorMarker(col=col - 1, row=row - 1),
-                                   ext=XDRPositiveSize2D(pixels_to_EMU(img.width), pixels_to_EMU(img.height)))
-        self._pin(img, png)
-        ws.add_image(img)
-        cur = ws.row_dimensions[row].height or 15
-        ws.row_dimensions[row].height = max(cur, img.height * 0.75 + 4)
 
-    def upsert(self, key, title, row_values, defaults, full_png, min_png, meta, overwrite=False):
-        ws = self.sheet(key)
-        headers = [c.value for c in ws[1]]
-        col = {h: i + 1 for i, h in enumerate(headers)}
-        idx = self.title_index(key)
-        if title in idx:
-            r = idx[title]
-            data_id = ws.cell(r, col["dataID"]).value
-            new = False
-        else:
-            r, data_id = self.next_row_and_id(ws)
-            ws.cell(r, col["dataID"], data_id)
-            new = True
-        values = dict(defaults) if new else {}
-        values.update({k: v for k, v in row_values.items() if v not in (None, "")})
-        for k, v in values.items():
-            if k not in col or k == "dataID":
+def norm_spin(v):
+    low = str(v or "").lower()
+    has_r, has_l = "right" in low, "left" in low
+    if has_r and has_l:
+        return "both"
+    return "right" if has_r else "left" if has_l else None
+
+
+def norm_manufacturer(v):
+    low = str(v or "").lower()
+    if "takara" in low or "tomy" in low:
+        return "Takara-Tomy"
+    if "hasbro" in low:
+        return "Hasbro"
+    if "sonokong" in low:
+        return "Sonokong"
+    return None
+
+
+def parse_date(v):
+    """first date in text -> 'YYYY-MM-DD' / 'YYYY-MM' / 'YYYY'"""
+    s = str(v or "")
+    m = re.search(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b", s)
+    if m:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    mon = "|".join(MONTHS)
+    m = re.search(rf"\b({mon})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+(\d{{4}})", s, re.I)
+    if m:
+        return f"{m.group(3)}-{MONTHS[m.group(1).lower()]:02d}-{int(m.group(2)):02d}"
+    m = re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({mon})\.?,?\s+(\d{{4}})", s, re.I)
+    if m:
+        return f"{m.group(3)}-{MONTHS[m.group(2).lower()]:02d}-{int(m.group(1)):02d}"
+    m = re.search(rf"\b({mon})\.?,?\s+(\d{{4}})", s, re.I)
+    if m:
+        return f"{m.group(2)}-{MONTHS[m.group(1).lower()]:02d}"
+    m = re.search(r"\b(19|20)\d{2}\b", s)
+    return m.group(0) if m else None
+
+
+def parse_price(v):
+    s = str(v or "")
+    if not s:
+        return None, None
+    cur = ("JPY" if re.search(r"¥|yen|円", s, re.I) else "USD" if "$" in s or "usd" in s.lower()
+           else "EUR" if "€" in s else "GBP" if "£" in s else None)
+    return first_number(s), cur
+
+
+def product_type_from(*texts):
+    for t in texts:
+        low = str(t or "").lower()
+        for word, label in PRODUCT_TYPE_WORDS:
+            if re.search(rf"\b{re.escape(word)}", low):
+                return label
+    return None
+
+
+def title_to_name(title, prefixes=(), label=None):
+    name = title
+    for pre in prefixes or ():
+        if name.lower().startswith(pre.lower()):
+            name = name[len(pre):]
+            break
+    if label:  # "Ratchet - 3-60", "Ratchet: 3-60" even when no prefix is configured
+        name = re.sub(rf"^{re.escape(label)}\s*[-–:]\s*", "", name, flags=re.I)
+    # drop disambiguators like "(Beyblade X)", "(Burst)", "(Layer)" but keep short ones like "(F)"
+    return re.sub(r"\s*\(([^)]{4,})\)\s*$", "", name).strip()
+
+
+def make_picker(fields, src_aliases):
+    def pick(col, keys_only=None):
+        names = (src_aliases or {}).get(col) or COLUMN_ALIASES.get(col, [])
+        for a in names:
+            a = norm_key(a)
+            if keys_only and a not in keys_only:
                 continue
-            cell = ws.cell(r, col[k])
-            if new or overwrite or cell.value in (None, ""):
-                cell.value = v
-        if full_png and not self.has_image(ws, r, col[IMAGE_COL]):
-            self.add_image(ws, r, col[IMAGE_COL], full_png, 120)
-        if min_png and not self.has_image(ws, r, col[MIN_IMAGE_COL]):
-            self.add_image(ws, r, col[MIN_IMAGE_COL], min_png, 48)
-        if new:
-            self.log_sheet().append([key, data_id, title, meta.get("url"), meta.get("revid"),
-                                     meta.get("infobox"), meta.get("imageFile"),
-                                     datetime.now(timezone.utc).isoformat(timespec="seconds")])
-        return data_id, new
+            if fields.get(a):
+                return fields[a]
+        return None
+    return pick
 
-    def save(self):
-        if os.path.exists(self.path) and not self.backed_up:
-            import shutil
-            shutil.copy2(self.path, self.path + ".bak")
-            self.backed_up = True
-        tmp = self.path + ".tmp.xlsx"
-        self.wb.save(tmp)
-        os.replace(tmp, self.path)
+# =============================================================================
+# ROW MAPPING -> workbook columns
+# =============================================================================
+
+def map_part(gen, key, title, fields, src):
+    cols = S.GENERATIONS[gen]["parts"][key]["columns"]
+    pick = make_picker(fields, src.get("aliases"))
+    label = S.GENERATIONS[gen]["parts"][key]["label"]
+    row = {"hobbyGeneration": gen, "name": title_to_name(title, src.get("title_prefixes"), label) or pick("name")}
+    code_src = " ".join(filter(None, [pick("code"), pick("edition")]))
+    c = S.parse_code(code_src)
+    row["code"] = c["code"] if c else None
+    row["manufacturer"] = norm_manufacturer(pick("manufacturer")) or "Takara-Tomy"
+    ed = pick("edition")
+    row["edition"] = ed.split(";")[0].strip()[:120] if ed else None
+    row["mass"] = first_number(pick("mass"))
+    if "type" in cols:
+        row["type"] = norm_type(pick("type"))
+    if "movementStyle" in cols:
+        row["movementStyle"] = norm_type(pick("movementStyle"))
+    if "spinDir" in cols:
+        row["spinDir"] = norm_spin(pick("spinDir"))
+    for stat in ("attack", "defense", "stamina", "dash", "burstRes"):
+        if stat in cols:
+            v = pick(stat)
+            row[stat] = to_number(v.split(";")[0]) if v else None
+    for col in ("system", "layerComponent", "discType"):
+        if col in cols:
+            row[col] = pick(col)
+    if "heightMm" in cols:
+        row["heightMm"] = first_number(pick("heightMm"))
+    if key == "ratchets":
+        rm = RATCHET_RE.search(row["name"] or "")
+        row["protrusions"] = first_number(pick("protrusions")) or (int(rm.group(1)) if rm else None)
+        row["heightMm"] = row.get("heightMm") or (int(rm.group(2)) if rm else None)
+    if key == "bits":
+        bn = pick("baseName")
+        if not bn:
+            pm = re.search(r"\(([A-Z][A-Za-z]{0,3})\)", title)
+            bn = pm.group(1) if pm else None
+        row["baseName"] = bn
+    return {k: v for k, v in row.items() if k in cols}
+
+
+def map_product(gen, title, fields, src, manufacturer_hint=None):
+    pick = make_picker(fields, src.get("aliases"))
+    prefixes = {s[0] for s in S.CODE_SERIES if s[2] == gen} or None
+    code = (S.parse_code(" ".join(filter(None, [pick("code"), title])), prefixes)
+            or S.parse_code(" ".join(filter(None, [pick("code"), title]))))
+    hasbro = S.parse_hasbro_item(pick("hasbroItem") or "")
+    manu = norm_manufacturer(pick("manufacturer")) or manufacturer_hint or \
+        ("Hasbro" if hasbro and not code else "Takara-Tomy")
+    sku = code["code"] if code else None
+    if manu == "Hasbro" and hasbro:
+        sku = hasbro
+    name = title_to_name(title)
+    if code and name.upper().startswith(code["code"]):
+        name = name[len(code["code"]):].strip(" -:")
+    price, cur = parse_price(pick("itemCost"))
+    row = {
+        "manufacturer": manu, "hobbyName": S.HOBBY_NAME, "hobbyGeneration": gen,
+        "productName": name or pick("productName"),
+        "productType": product_type_from(pick("productType"), title) or "Other",
+        "releaseDate": parse_date(pick("releaseDate")), "itemCost": price,
+        "currency": cur or ("JPY" if manu == "Takara-Tomy" else "USD" if manu == "Hasbro" else None),
+        "sku": sku, "region": "JP" if manu == "Takara-Tomy" else "US" if manu == "Hasbro" else None,
+        "description": (pick("description") or "")[:500] or None, "incompleteData": 1,
+    }
+    if code and code["sub"]:
+        row["variantLabel"] = code["sub"]
+    return row, code
+
+
+def map_tcg_set(title, fields, src):
+    pick = make_picker(fields, src.get("aliases"))
+    return {"setCode": pick("setCode"), "setName": title_to_name(title) or pick("setName"),
+            "manufacturer": norm_manufacturer(pick("manufacturer")) or "Takara-Tomy", "hobbyName": S.HOBBY_NAME,
+            "hobbyGeneration": "X", "releaseDate": parse_date(pick("releaseDate")),
+            "cardCount": first_number(pick("cardCount")), "description": (pick("description") or "")[:500] or None,
+            "incompleteData": 1}
+
+
+def map_tcg_card(title, fields, src):
+    pick = make_picker(fields, src.get("aliases"))
+    num = pick("cardNumber") or ""
+    m = S.TCG_CARD_NUMBER_RE.search(num) or S.TCG_CARD_NUMBER_RE.search(title)
+    return {"cardNumber": m.group(0) if m else (num or None), "setCode": m.group(1) if m else pick("setCode"),
+            "name": title_to_name(title) or pick("name"), "manufacturer": norm_manufacturer(pick("manufacturer"))
+            or "Takara-Tomy", "hobbyName": S.HOBBY_NAME, "hobbyGeneration": "X", "cardType": pick("cardType"),
+            "rarity": pick("rarity"), "attribute": pick("attribute"), "cost": to_number(pick("cost")),
+            "power": to_number(pick("power")), "effectText": pick("effectText"),
+            "illustrator": pick("illustrator"), "incompleteData": 1}
 
 # =============================================================================
 # SCRAPE ENGINE
 # =============================================================================
 
+def target_kind(target):
+    return target.split(":")[0]
+
+
+def target_gen_key(target):
+    parts = target.split(":")
+    return (parts[1] if len(parts) > 1 else None), (parts[2] if len(parts) > 2 else None)
+
+
 class Scraper:
-    def __init__(self, cfg, stop_event=None, overwrite=False, no_images=False, relist=False):
+    def __init__(self, cfg, stop_event=None, overwrite=False, no_images=False, relist=False, refresh_existing=False):
         self.cfg = cfg
         self.client = PoliteClient(cfg, stop_event)
         self.overwrite, self.no_images, self.relist = overwrite, no_images, relist
-        self.state_dir = os.path.join(HERE, cfg["state_dir"]) if not os.path.isabs(cfg["state_dir"]) else cfg["state_dir"]
+        self.refresh_existing = refresh_existing
+        sd = cfg["state_dir"]
+        self.state_dir = sd if os.path.isabs(sd) else os.path.join(HERE, sd)
         os.makedirs(os.path.join(self.state_dir, "images"), exist_ok=True)
         self.progress_path = os.path.join(self.state_dir, "progress.json")
         self.pages_path = os.path.join(self.state_dir, "pages.json")
         self.progress = read_json(self.progress_path, {})
         self.pages = read_json(self.pages_path, {})
         self.image_re = re.compile(cfg["image_field_regex"], re.I)
-        out = cfg["output_workbook"]
-        self.wb_path = out if os.path.isabs(out) else os.path.join(HERE, out)
+        self._books = {}
+        self.processed = 0
 
-    # --- state ---------------------------------------------------------------
-    def kstate(self, key):
-        return self.progress.setdefault(key, {"titles": None, "done": {}, "failed": {}, "complete": False})
+    # ---- store ----------------------------------------------------------------------
+    def book_path(self, kind):
+        p = self.cfg["workbooks"][kind]
+        return p if os.path.isabs(p) else os.path.join(HERE, p)
+
+    def book(self, kind):
+        if kind not in self._books:
+            self._books[kind] = Book(self.book_path(kind), kind)
+        return self._books[kind]
+
+    def save_all(self):
+        for b in self._books.values():
+            b.save()
+        self.save_state()
 
     def save_state(self):
         write_json(self.progress_path, self.progress)
         write_json(self.pages_path, self.pages)
 
-    # --- steps ---------------------------------------------------------------
-    def list_titles(self, key):
-        st = self.kstate(key)
+    def checkpoint(self):
+        self.processed += 1
+        if self.processed % max(1, int(self.cfg["politeness"]["save_every"])) == 0:
+            self.save_all()
+            log(f"  -- checkpoint saved ({self.processed} this run, {self.client.count} requests)")
+
+    def kstate(self, target):
+        return self.progress.setdefault(target, {"titles": None, "done": {}, "failed": {}, "complete": False})
+
+    def targets(self):
+        order = {g: i for i, g in enumerate(["X"] + [g for g in S.GENERATIONS if g != "X"])}
+        kinds = {"parts": 0, "products": 1, "tcg": 2}
+
+        def sort_key(t):
+            k = target_kind(t)
+            gen, _ = target_gen_key(t)
+            return (order.get(gen, 0) if k != "tcg" else 0, kinds.get(k, 9))
+        return sorted(self.cfg["sources"], key=sort_key)
+
+    # ---- wiki access ----------------------------------------------------------------
+    def list_titles(self, target):
+        st = self.kstate(target)
         if st["titles"] is not None and not self.relist:
             return st["titles"]
-        part = self.cfg["parts"][key]
+        src = self.cfg["sources"][target]
         titles = []
-        for cat in part.get("categories", []):
-            got = self.client.category_members(cat, depth=part.get("category_depth", 1))
+        for cat in src.get("categories", []):
+            got = self.client.category_members(cat, depth=src.get("category_depth", 1))
             log(f"  Category:{cat} -> {len(got)} pages")
             titles += got
-        for pre in part.get("title_prefixes", []):
+        for pre in src.get("title_prefixes", []):
             got = self.client.prefix_pages(pre)
             log(f"  prefix '{pre}' -> {len(got)} pages")
             titles += got
-        for t in part.get("extra_titles", []):
-            titles.append(t)
-        ex = re.compile(part["exclude_title_regex"]) if part.get("exclude_title_regex") else None
-        titles = [t for t in OrderedDict.fromkeys(titles) if not (ex and ex.search(t))]
-        st["titles"] = titles
+        titles += src.get("extra_titles", [])
+        ex = re.compile(src["exclude_title_regex"]) if src.get("exclude_title_regex") else None
+        st["titles"] = [t for t in OrderedDict.fromkeys(titles) if not (ex and ex.search(t))]
         st["complete"] = False
         self.save_state()
-        return titles
+        return st["titles"]
 
     def get_pages(self, titles):
-        """Page sources, from cache when unchanged. Batched + checkpointed."""
         missing = [t for t in titles if t not in self.pages]
         if self.relist:
             cached = [t for t in titles if t in self.pages]
@@ -835,106 +866,407 @@ class Scraper:
                 missing += [t for t in cached if live.get(t) and live[t] != self.pages[t].get("revid")]
         bs = max(1, min(50, int(self.cfg["politeness"]["batch_size"])))
         for i, batch in enumerate(chunks(missing, bs), 1):
-            got = self.client.fetch_pages(batch)
-            for t, pg in got.items():
+            for t, pg in self.client.fetch_pages(batch).items():
                 if "wikitext" in pg:
                     self.pages[t] = pg
             write_json(self.pages_path, self.pages)
             log(f"  page sources {min(i * bs, len(missing))}/{len(missing)}")
         return {t: self.pages[t] for t in titles if t in self.pages}
 
-    def image_for(self, filename, url):
-        cache = os.path.join(self.state_dir, "images", hashlib.sha1(filename.encode()).hexdigest()[:16])
-        full_p, min_p = cache + ".png", cache + "-min.png"
-        if os.path.exists(full_p) and os.path.exists(min_p):
-            with open(full_p, "rb") as a, open(min_p, "rb") as b:
-                return a.read(), b.read()
-        if not url:
-            return None, None
-        raw = self.client.request(url, binary=True)
-        if not raw:
-            return None, None
-        p = self.cfg["politeness"]
-        full, mini = to_png(raw, p["image_width"]), to_png(raw, p["min_image_width"])
-        with open(full_p, "wb") as a, open(min_p, "wb") as b:
-            a.write(full)
-            b.write(mini)
-        return full, mini
+    def _img_cache(self, filename):
+        return os.path.join(self.state_dir, "images", hashlib.sha1(filename.encode()).hexdigest()[:16])
 
-    def run_key(self, key, limit=None):
-        if key not in self.cfg["parts"]:
-            raise SystemExit(f"Unknown key '{key}'. Known: {', '.join(self.cfg['parts'])}")
-        part, st = self.cfg["parts"][key], self.kstate(key)
-        log(f"\n=== {key} -> sheet {SHEET_NAMES[key]} in {os.path.basename(self.wb_path)} ===")
-        log("1) listing pages")
-        titles = self.list_titles(key)
-        todo = [t for t in titles if t not in st["done"]]
-        log(f"  {len(titles)} pages for this key, {len(titles) - len(todo)} already done, {len(todo)} to go")
+    def images_for_pages(self, parsed):
+        """parsed: {title: (pg, infobox, fields, files)} -> {title: (full_png, min_png)}"""
+        out = {}
+        if self.no_images:
+            return out
+        need = {f[0] for (_, _, _, f) in parsed.values() if f and not os.path.exists(self._img_cache(f[0]) + ".png")}
+        urls = self.client.resolve_files(need) if need else {}
+        p = self.cfg["politeness"]
+        for t, (_, _, _, files) in parsed.items():
+            if not files:
+                continue
+            c = self._img_cache(files[0])
+            if os.path.exists(c + ".png") and os.path.exists(c + "-min.png"):
+                with open(c + ".png", "rb") as a, open(c + "-min.png", "rb") as b:
+                    out[t] = (a.read(), b.read())
+                continue
+            url = urls.get(files[0])
+            raw = self.client.request(url, binary=True) if url else None
+            if not raw:
+                continue
+            try:
+                full, mini = to_png(raw, p["image_width"]), to_png(raw, p["min_image_width"])
+            except Exception as e:
+                log(f"    image convert failed for {files[0]}: {e}")
+                continue
+            with open(c + ".png", "wb") as a, open(c + "-min.png", "wb") as b:
+                a.write(full)
+                b.write(mini)
+            out[t] = (full, mini)
+        return out
+
+    def parse(self, pages, titles):
+        parsed = {}
+        for t in titles:
+            pg = pages.get(t)
+            if not pg:
+                continue
+            infobox, fields, files = parse_page(pg.get("wikitext"), self.image_re)
+            if not files and pg.get("page_image"):
+                files = [norm_file(pg["page_image"].split("/revision/")[0].rsplit("/", 1)[-1].replace("%20", " "))]
+            parsed[t] = (pg, infobox, fields, files[:1])
+        return parsed
+
+    # ---- store lookups (skip what we already have) ----------------------------------
+    def existing_match(self, target, title, row=None):
+        """-> (sheet_ws, row_number) of an existing row for this page, or (ws, None)."""
+        kind = target_kind(target)
+        if kind == "parts":
+            gen, key = target_gen_key(target)
+            book = self.book("parts")
+            ws = book.part_sheet(gen, key)
+            hit = book.log_index(target).get(title)
+            if hit:
+                r, _ = book.find(ws, lambda x: str(x.get("dataID")) == str(hit[1]))
+                if r:
+                    return ws, r
+            label = S.GENERATIONS[gen]["parts"][key]["label"]
+            name = norm_name((row or {}).get("name") or
+                             title_to_name(title, self.cfg["sources"][target].get("title_prefixes"), label))
+            code = (row or {}).get("code")
+            best = None
+            for r, x in book.rows(ws):
+                if norm_name(x.get("name")) == name:
+                    if code and x.get("code") == code:
+                        return ws, r
+                    if best is None and not x.get("parentPartId"):
+                        best = r
+            return ws, best
+        if kind == "products":
+            book = self.book("products")
+            ws = book.named_sheet("Products")
+            hit = book.log_index("products").get(title)
+            if hit:
+                r, _ = book.find(ws, lambda x: str(x.get("productID")) == str(hit[1]))
+                if r:
+                    return ws, r
+            if row and row.get("sku"):
+                c = S.parse_code(row["sku"])
+                sequential = c and c["number"] != 0
+                for r, x in book.rows(ws):
+                    if str(x.get("sku") or "") == row["sku"] and x.get("manufacturer") == row.get("manufacturer"):
+                        if sequential or norm_name(x.get("productName")) == norm_name(row.get("productName")):
+                            return ws, r
+            return ws, None
+        book = self.book("tcg")
+        sheet = "TCG_Sets" if target == "tcg:sets" else "TCG_Cards"
+        ws = book.named_sheet(sheet)
+        hit = book.log_index(target).get(title)
+        if hit:
+            idc = S.SHEETS[sheet]["id"]
+            r, _ = book.find(ws, lambda x: str(x.get(idc)) == str(hit[1]))
+            if r:
+                return ws, r
+        if row:
+            for r, x in book.rows(ws):
+                if sheet == "TCG_Sets" and row.get("setCode") and x.get("setCode") == row["setCode"]:
+                    return ws, r
+                if (sheet == "TCG_Cards" and row.get("cardNumber") and x.get("cardNumber") == row["cardNumber"]
+                        and not x.get("parentCardId")):
+                    return ws, r
+        return ws, None
+
+    def find_part(self, gen, key, name=None, code=None, base_name=None):
+        if key not in S.GENERATIONS[gen]["parts"]:
+            return None
+        book = self.book("parts")
+        ws = book.part_sheet(gen, key)
+        n = norm_name(name)
+        cands = [x for _, x in book.rows(ws)
+                 if (n and norm_name(x.get("name")) == n) or (base_name and x.get("baseName") == base_name)]
+        if not cands:
+            return None
+        for x in cands:
+            if code and x.get("code") == code:
+                return x.get("dataID")
+        base = [x for x in cands if not x.get("parentPartId")]
+        return (base or cands)[0].get("dataID")
+
+    # ---- handlers -------------------------------------------------------------------
+    def handle_part(self, target, title, pg, infobox, fields, files, imgs):
+        gen, key = target_gen_key(target)
+        src = self.cfg["sources"][target]
+        cats = " ".join(pg.get("categories", []))
+        if src.get("include_category_regex") and not re.search(src["include_category_regex"], cats):
+            return "filtered (category)"
+        if src.get("exclude_category_regex") and re.search(src["exclude_category_regex"], cats):
+            return "filtered (category)"
+        row = map_part(gen, key, title, fields, src)
+        book = self.book("parts")
+        ws, r = self.existing_match(target, title, row)
+        defaults = dict(self.cfg["row_defaults"])
+        r, rid, new = book.write(ws, row, "dataID", row=r, overwrite=self.overwrite, defaults=defaults)
+        full, mini = imgs.get(title, (None, None))
+        book.set_image(ws, r, "image", full)
+        book.set_image(ws, r, "minifiedImage", mini, "min")
+        if new or not book.log_index(target).get(title):
+            book.add_log(target, ws.title, rid, title, pg.get("url"), pg.get("revid"), files[0] if files else None)
+        return f"{'new' if new else 'upd'} #{rid}" + ("" if full or self.no_images else " (no image)")
+
+    def handle_product(self, gen, title, pg, infobox, fields, files, imgs, manufacturer_hint=None):
+        src = self.cfg["sources"].get(f"products:{gen}", {})
+        row, code = map_product(gen, title, fields, src, manufacturer_hint)
+        book = self.book("products")
+        prods = book.named_sheet("Products")
+        ws, r = self.existing_match("products", title, row)
+        if code and code["sub"] and r is None:  # variant of a random booster etc.
+            pr, parent = book.find(prods, lambda x: x.get("sku") == code["base"] and
+                                   x.get("manufacturer") == row["manufacturer"])
+            if parent:
+                row["parentProductId"] = parent.get("productID")
+        r, pid, new = book.write(prods, row, "productID", "P", row=r, overwrite=self.overwrite)
+        full, mini = imgs.get(title, (None, None))
+        book.set_image(prods, r, "boxImageUrl", full)
+        book.set_image(prods, r, "minifiedBoxImage", mini, "min")
+        if new or not book.log_index("products").get(title):
+            book.add_log("products", "Products", pid, title, pg.get("url"), pg.get("revid"), files[0] if files else None)
+        links = self.link_contents(gen, pid, row, fields, title, full, mini)
+        return f"{'new' if new else 'upd'} {pid} {row.get('sku') or ''} [{row['productType']}]" + \
+               (f" +{links} contents" if links else "")
+
+    def add_content(self, pid, part_type, part_id, qty=1):
+        book = self.book("products")
+        pc = book.named_sheet("ProductContents")
+        r, _ = book.find(pc, lambda x: str(x.get("productID")) == str(pid) and x.get("partType") == part_type
+                         and str(x.get("partDataID")) == str(part_id))
+        if r is None:
+            book.write(pc, {"productID": pid, "partType": part_type, "partDataID": part_id, "quantity": qty})
+            return 1
+        return 0
+
+    def link_contents(self, gen, pid, prow, fields, title, full, mini):
+        n = 0
+        book = self.book("products")
+        acc_type = S.ACCESSORY_PRODUCT_TYPES.get(prow["productType"])
+        if acc_type:  # launcher / stadium / grip ... is itself an accessory
+            acc = book.named_sheet("Accessories")
+            r, x = book.find(acc, lambda x: norm_name(x.get("name")) == norm_name(prow["productName"])
+                             and x.get("manufacturer") == prow["manufacturer"])
+            vals = {"accessoryType": acc_type, "manufacturer": prow["manufacturer"], "hobbyName": S.HOBBY_NAME,
+                    "hobbyGeneration": gen, "code": prow.get("sku"), "name": prow["productName"],
+                    "itemCost": prow.get("itemCost"), "incompleteData": 1}
+            r, aid, _ = book.write(acc, vals, "dataID", row=r, overwrite=self.overwrite)
+            book.set_image(acc, r, "imageUrl", full)
+            book.set_image(acc, r, "minifiedImage", mini, "min")
+            n += self.add_content(pid, "Accessories", aid)
+        # parts named in the infobox, e.g. |blade=DranSword |ratchet=3-60 |bit=Flat
+        for key, p in S.GENERATIONS[gen]["parts"].items():
+            for word in p["words"]:
+                v = fields.get(norm_key(word))
+                if not v:
+                    continue
+                for name in [s.strip() for s in re.split(r";|,|/", v) if s.strip()][:3]:
+                    did = self.find_part(gen, key, name, prow.get("sku"))
+                    if did is not None:
+                        n += self.add_content(pid, S.part_sheet(gen, key), did)
+                break
+        # X combos written as "DranSword 3-60F"
+        if gen == "X":
+            text = " ".join(filter(None, [fields.get("beyblade"), fields.get("combo"), fields.get("contents"), title]))
+            for m in X_COMBO_RE.finditer(text):
+                blade, ratchet, bit = m.groups()
+                for key, kw in (("blades", {"name": blade}), ("ratchets", {"name": ratchet}),
+                                ("bits", {"base_name": bit})):
+                    did = self.find_part("X", key, code=prow.get("sku"), **kw)
+                    if did is not None:
+                        n += self.add_content(pid, S.part_sheet("X", key), did)
+        return n
+
+    def handle_tcg(self, target, title, pg, infobox, fields, files, imgs):
+        src = self.cfg["sources"][target]
+        book = self.book("tcg")
+        if target == "tcg:sets":
+            row, sheet, idc, pre = map_tcg_set(title, fields, src), "TCG_Sets", "setID", "S"
+        else:
+            row, sheet, idc, pre = map_tcg_card(title, fields, src), "TCG_Cards", "dataID", ""
+        ws, r = self.existing_match(target, title, row)
+        r, rid, new = book.write(ws, row, idc, pre, row=r, overwrite=self.overwrite)
+        full, mini = imgs.get(title, (None, None))
+        book.set_image(ws, r, "image", full)
+        book.set_image(ws, r, "minifiedImage", mini, "min")
+        if new or not book.log_index(target).get(title):
+            book.add_log(target, sheet, rid, title, pg.get("url"), pg.get("revid"), files[0] if files else None)
+        return f"{'new' if new else 'upd'} {rid} {row.get('cardNumber') or row.get('setCode') or ''}"
+
+    # ---- runs -----------------------------------------------------------------------
+    def run_target(self, target, limit=None):
+        if target not in self.cfg["sources"]:
+            raise SystemExit(f"Unknown target '{target}'. Use --list-targets.")
+        kind = target_kind(target)
+        st = self.kstate(target)
+        log(f"\n=== {target} -> {os.path.basename(self.book_path(kind))} ===")
+        titles = self.list_titles(target)
         if not titles:
-            log("  !! nothing found. Run --find-categories <word> and fix 'categories'/'title_prefixes' "
-                f"for '{key}' in scraper_config.json")
+            log("  !! nothing listed. Run --find-categories <word> and fix this target's 'categories' / "
+                "'title_prefixes' in scraper_config.json")
             return
+        todo = []
+        skipped = 0
+        for t in titles:
+            if t in st["done"]:
+                continue
+            if not self.refresh_existing and kind != "products" and self.existing_match(target, t)[1]:
+                st["done"][t] = "already in store"
+                skipped += 1
+                continue
+            todo.append(t)
+        log(f"  {len(titles)} pages listed, {skipped} already in the store (skipped without downloading), "
+            f"{len(todo)} to fetch")
         if limit:
             todo = todo[:limit]
-        wb = MasterWorkbook(self.wb_path)
-        defaults = self.cfg["row_defaults"]
-        processed = 0
-        save_every = max(1, int(self.cfg["politeness"]["save_every"]))
         try:
             bs = max(1, min(50, int(self.cfg["politeness"]["batch_size"])))
             for batch in chunks(todo, bs):
-                log("2) fetching page sources")
                 pages = self.get_pages(batch)
-                parsed = {}
+                parsed = self.parse(pages, batch)
                 for t in batch:
-                    pg = pages.get(t)
-                    if not pg:
+                    if t not in parsed:
                         st["failed"][t] = "page missing"
-                        continue
-                    infobox, fields, files = parse_page(pg.get("wikitext"), self.image_re)
-                    if not files and pg.get("page_image"):
-                        files = [norm_file(pg["page_image"].split("/revision/")[0].rsplit("/", 1)[-1]
-                                           .replace("%20", " "))]
-                    parsed[t] = (pg, infobox, fields, files[:1])
-                urls = {}
-                if not self.no_images:
-                    need = set()
-                    for t, (_, _, _, files) in parsed.items():
-                        for f in files:
-                            c = os.path.join(self.state_dir, "images", hashlib.sha1(f.encode()).hexdigest()[:16])
-                            if not os.path.exists(c + ".png"):
-                                need.add(f)
-                    if need:
-                        log(f"3) resolving {len(need)} image URLs")
-                        urls = self.client.resolve_files(need)
+                imgs = self.images_for_pages(parsed)
                 for t, (pg, infobox, fields, files) in parsed.items():
-                    full = mini = None
-                    if files and not self.no_images:
-                        full, mini = self.image_for(files[0], urls.get(files[0]))
-                    row = map_row(key, part, t, fields)
-                    meta = {"url": pg.get("url"), "revid": pg.get("revid"), "infobox": infobox,
-                            "imageFile": files[0] if files else None}
-                    data_id, new = wb.upsert(key, t, row, defaults, full, mini, meta, self.overwrite)
-                    st["done"][t] = {"dataID": data_id, "revid": pg.get("revid"), "image": bool(full)}
+                    if kind == "parts":
+                        res = self.handle_part(target, t, pg, infobox, fields, files, imgs)
+                    elif kind == "products":
+                        gen, _ = target_gen_key(target)
+                        res = self.handle_product(gen, t, pg, infobox, fields, files, imgs)
+                    else:
+                        res = self.handle_tcg(target, t, pg, infobox, fields, files, imgs)
+                    st["done"][t] = res
                     st["failed"].pop(t, None)
-                    processed += 1
-                    log(f"  [{'new' if new else 'upd'}] #{data_id} {t}"
-                        f"{'' if full or self.no_images else '  (no image)'}")
-                    if processed % save_every == 0:
-                        wb.save()
-                        self.save_state()
-                        log(f"  -- checkpoint saved ({processed} this run, {self.client.count} requests)")
+                    log(f"  [{res}] {t}")
+                    self.checkpoint()
             st["complete"] = all(t in st["done"] for t in titles)
         finally:
-            wb.save()
-            self.save_state()
-            log(f"  saved {SHEET_NAMES[key]}: {processed} rows processed this run, "
-                f"{len(st['done'])}/{len(titles)} total, {self.client.count} requests used")
+            self.save_all()
+            log(f"  saved: {len(st['done'])}/{len(titles)} pages handled for {target}, "
+                f"{self.client.count} requests used this run")
 
-    def inspect(self, key, n):
-        titles = self.list_titles(key)[:n]
+    # ---- update by release code -----------------------------------------------------
+    def code_series(self):
+        book = self.book("products")
+        cs = book.named_sheet("CodeSeries")
+        if not book.rows(cs):
+            for s in S.CODE_SERIES:
+                book.write(cs, dict(zip(S.CODE_SERIES_COLUMNS, s)))
+        return book, cs
+
+    def run_update(self, prefixes=None, generation=None, manufacturer=None, from_code=None):
+        book, cs = self.code_series()
+        series = []
+        for r, x in book.rows(cs):
+            if str(x.get("sequential") or "0") not in ("1", "True", "true", "TRUE"):
+                continue
+            if prefixes and x.get("seriesPrefix") not in prefixes:
+                continue
+            if generation and x.get("hobbyGeneration") != generation:
+                continue
+            if manufacturer and x.get("manufacturer") != manufacturer:
+                continue
+            series.append((r, x))
+        if not series:
+            log("No matching sequential series in the CodeSeries sheet.")
+            return
+        try:
+            for r, x in series:
+                self.update_series(book, cs, r, x, from_code)
+        finally:
+            self.save_all()
+
+    def update_series(self, book, cs, cs_row, s, from_code=None):
+        prefix, manu, gen = s["seriesPrefix"], s["manufacturer"], s["hobbyGeneration"]
+        digits = int(s.get("digits") or 2)
+        prods = book.named_sheet("Products")
+        have = set()
+        for _, x in book.rows(prods):
+            c = S.parse_code(x.get("sku"), {prefix})
+            if c and x.get("manufacturer") == manu and c["number"] > 0:
+                have.add(c["number"])
+        last = max(have, default=0)
+        start = last + 1
+        fc = S.parse_code(from_code, {prefix}) if from_code else None
+        if fc:
+            start = fc["number"]
+        up = self.cfg["update"]
+        log(f"\n=== update {prefix} ({manu}, {gen}): store has up to "
+            f"{S.format_code(prefix, last, digits) if last else 'nothing'}, checking from "
+            f"{S.format_code(prefix, start, digits)} ===")
+        misses = checked = 0
+        n = start
+        found_max = last
+        while misses < int(up["miss_limit"]) and checked < int(up["max_codes_per_series"]):
+            if n in have:
+                n += 1
+                continue
+            code = S.format_code(prefix, n, max(digits, len(str(n))))
+            if self.probe_code(code, prefix, gen, manu):
+                misses = 0
+                found_max = max(found_max, n)
+            else:
+                misses += 1
+                log(f"  {code}: not found ({misses}/{up['miss_limit']})")
+            n += 1
+            checked += 1
+        if found_max:
+            hdr = book.headers(cs)
+            cs.cell(cs_row, hdr["lastKnownCode"], S.format_code(prefix, found_max, max(digits, len(str(found_max)))))
+        log(f"  {prefix}: stopped after {checked} codes checked "
+            f"({'gap of ' + str(misses) if misses >= int(up['miss_limit']) else 'per-run limit'})")
+
+    def probe_code(self, code, prefix, gen, manu):
+        titles = self.client.search_pages(f'"{code}"', int(self.cfg["update"]["search_hits"]))
+        part_prefixes = tuple(p.lower() for t, s in self.cfg["sources"].items() if t.startswith("parts:")
+                              for p in s.get("title_prefixes", []))
+        titles = [t for t in titles if not t.lower().startswith(part_prefixes)]
+        if not titles:
+            return False
+        parsed = self.parse(self.get_pages(titles), titles)
+        part_words = {w for _, _, p in S.all_part_targets() for w in [p["label"].lower()]}
+        scored = []
+        for t, (pg, infobox, fields, files) in parsed.items():
+            score = 0
+            if code.lower() in t.lower():
+                score += 3
+            for k, v in fields.items():
+                c = S.parse_code(v, {prefix})
+                if c and c["base"] == code:
+                    score += 2 if k in ("product code", "code", "product number", "sku", "number") else 1
+                    break
+            ib = infobox.lower()
+            if any(w in ib for w in part_words) and "product" not in ib:
+                score -= 5
+            if score >= 2:
+                scored.append((score, t))
+        if not scored:
+            return False
+        scored.sort(reverse=True)
+        best = [t for sc, t in scored if sc == scored[0][0]][:3]
+        imgs = self.images_for_pages({t: parsed[t] for t in best})
+        for t in best:
+            pg, infobox, fields, files = parsed[t]
+            res = self.handle_product(gen, t, pg, infobox, fields, files, imgs, manufacturer_hint=manu)
+            log(f"  {code}: [{res}] {t}")
+            self.checkpoint()
+        return True
+
+    # ---- helpers for humans ---------------------------------------------------------
+    def inspect(self, target, n):
+        titles = self.list_titles(target)[:n]
         pages = self.get_pages(titles)
         seen = Counter()
+        kind = target_kind(target)
+        src = self.cfg["sources"][target]
         for t in titles:
             pg = pages.get(t)
             if not pg:
@@ -945,50 +1277,87 @@ class Scraper:
             for k, v in fields.items():
                 log(f"    {k!r}: {v[:90]}")
             log(f"    images: {files or pg.get('page_image')}")
-            log(f"    => mapped row: {map_row(key, self.cfg['parts'][key], t, fields)}")
-        log("\nField names seen (add the useful ones to 'aliases' in scraper_config.json):")
+            if kind == "parts":
+                gen, key = target_gen_key(target)
+                log(f"    => {map_part(gen, key, t, fields, src)}")
+            elif kind == "products":
+                gen, _ = target_gen_key(target)
+                log(f"    => {map_product(gen, t, fields, src)[0]}")
+            else:
+                log(f"    => {(map_tcg_set if target == 'tcg:sets' else map_tcg_card)(t, fields, src)}")
+        log("\nField names seen (add useful ones to this target's 'aliases' in scraper_config.json):")
         for k, c in seen.most_common():
             log(f"  {c:3d}x  {k}")
         self.save_state()
 
     def status(self):
-        log(f"Workbook: {self.wb_path}")
-        for key in self.cfg["parts"]:
-            st = self.progress.get(key)
+        for kind in S.BOOK_FILES:
+            log(f"{kind:9s} workbook: {self.book_path(kind)}")
+        for t in self.targets():
+            st = self.progress.get(t)
             if not st or st.get("titles") is None:
-                log(f"  {key:13s} not started")
                 continue
             n, d = len(st["titles"]), len(st["done"])
-            imgs = sum(1 for v in st["done"].values() if v.get("image"))
-            log(f"  {key:13s} {d}/{n} done, {imgs} with image, {len(st['failed'])} failed"
-                f"{'  COMPLETE' if st.get('complete') else ''}")
+            log(f"  {t:28s} {d}/{n} handled, {len(st['failed'])} failed{'  COMPLETE' if st.get('complete') else ''}")
+        if os.path.exists(self.book_path("products")):
+            book = self.book("products")
+            for _, x in book.rows(book.named_sheet("CodeSeries")):
+                if x.get("lastKnownCode"):
+                    log(f"  series {x['seriesPrefix']:6s} {x['manufacturer']:12s} last known {x['lastKnownCode']}")
 
-    def next_key(self):
-        for key in [k for k in KEY_ORDER if k in self.cfg["parts"]] + \
-                   [k for k in self.cfg["parts"] if k not in KEY_ORDER]:
-            if not self.progress.get(key, {}).get("complete"):
-                return key
+    def next_target(self):
+        for t in self.targets():
+            if not self.progress.get(t, {}).get("complete"):
+                return t
         return None
 
 # =============================================================================
 # CLI
 # =============================================================================
 
+def resolve_targets(cfg, a):
+    ts = list(a.target or [])
+    for k in a.key or []:  # old --key blades
+        ts.append(k if ":" in k else f"parts:X:{k}")
+    if a.scope:
+        for t in cfg["sources"]:
+            kind = target_kind(t)
+            gen, key = target_gen_key(t)
+            if kind != a.scope:
+                continue
+            if a.generation and kind != "tcg" and gen != a.generation:
+                continue
+            if a.part and key not in a.part:
+                continue
+            ts.append(t)
+    return list(OrderedDict.fromkeys(ts))
+
+
 def run_cli(argv):
-    ap = argparse.ArgumentParser(description="Polite, resumable Beyblade wiki scraper -> packager workbook")
-    ap.add_argument("--key", action="append", help="part key to scrape (repeatable), e.g. blades, ratchets, bits")
-    ap.add_argument("--next", action="store_true", help="scrape the next key that is not complete yet")
-    ap.add_argument("--all", action="store_true", help="scrape every key in order (one sheet after another)")
-    ap.add_argument("--limit", type=int, help="max pages to process per key this run")
-    ap.add_argument("--max-requests", type=int, help="override request budget for this run")
-    ap.add_argument("--delay", type=float, help="override minimum seconds between requests")
+    ap = argparse.ArgumentParser(description="Polite, resumable Beyblade wiki scraper -> parts/products/tcg workbooks")
+    ap.add_argument("--target", action="append", help="e.g. parts:X:blades, products:X, tcg:cards (repeatable)")
+    ap.add_argument("--scope", choices=["parts", "products", "tcg"], help="all targets of one workbook")
+    ap.add_argument("--generation", choices=S.GENERATION_NAMES, help="limit --scope / --update to a generation")
+    ap.add_argument("--part", nargs="+", help="with --scope parts: only these part keys")
+    ap.add_argument("--key", action="append", help=argparse.SUPPRESS)
+    ap.add_argument("--update", action="store_true", help="look for releases after the last code in the store")
+    ap.add_argument("--series", nargs="+", help="with --update: series prefixes, e.g. BX UX CX B")
+    ap.add_argument("--manufacturer", choices=S.MANUFACTURERS, help="with --update")
+    ap.add_argument("--from-code", help="with --update: start here instead of after the store's last code")
+    ap.add_argument("--next", action="store_true", help="scrape the next target that is not complete")
+    ap.add_argument("--limit", type=int, help="max pages per target this run")
+    ap.add_argument("--max-requests", type=int, help="request budget for this run (0 = unlimited)")
+    ap.add_argument("--delay", type=float, help="minimum seconds between requests (>= 0.5)")
     ap.add_argument("--no-images", action="store_true")
-    ap.add_argument("--overwrite", action="store_true", help="overwrite non-empty cells (default: only fill blanks)")
-    ap.add_argument("--relist", action="store_true", help="re-list pages and re-fetch changed ones")
-    ap.add_argument("--reset", metavar="KEY", help="forget progress for KEY (sheet rows are kept)")
-    ap.add_argument("--list-only", action="store_true", help="only list matching page titles")
-    ap.add_argument("--inspect", type=int, metavar="N", help="show infobox fields of the first N pages of --key")
-    ap.add_argument("--find-categories", metavar="WORD", help="search wiki category names")
+    ap.add_argument("--overwrite", action="store_true", help="overwrite filled cells (default: fill blanks only)")
+    ap.add_argument("--refresh-existing", action="store_true",
+                    help="also fetch pages already in the store to fill their blank cells")
+    ap.add_argument("--relist", action="store_true", help="re-list pages (find new ones) and refetch changed ones")
+    ap.add_argument("--reset", metavar="TARGET", help="forget scrape progress for TARGET (workbook rows kept)")
+    ap.add_argument("--list-only", action="store_true")
+    ap.add_argument("--inspect", type=int, metavar="N", help="show infobox fields of the first N pages")
+    ap.add_argument("--find-categories", metavar="WORD")
+    ap.add_argument("--list-targets", action="store_true")
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--config", default=CONFIG_PATH)
     a = ap.parse_args(argv)
@@ -1000,8 +1369,12 @@ def run_cli(argv):
         cfg["politeness"]["delay_seconds"] = max(0.5, a.delay)
     if "CHANGE_ME" in cfg["user_agent"]:
         log("NOTE: set a contact in 'user_agent' in scraper_config.json - Fandom asks bots to identify themselves.")
-
-    sc = Scraper(cfg, overwrite=a.overwrite, no_images=a.no_images, relist=a.relist)
+    sc = Scraper(cfg, overwrite=a.overwrite, no_images=a.no_images, relist=a.relist,
+                 refresh_existing=a.refresh_existing)
+    if a.list_targets:
+        for t in sc.targets():
+            log(f"  {t}")
+        return 0
     if a.reset:
         sc.progress.pop(a.reset, None)
         sc.save_state()
@@ -1015,34 +1388,35 @@ def run_cli(argv):
             for title, _ in sc.client.search_categories(a.find_categories):
                 log(f"  {title}")
             return 0
-        keys = a.key or []
-        if a.all:
-            keys = [k for k in KEY_ORDER if k in cfg["parts"]]
+        if a.update:
+            sc.run_update(a.series, a.generation, a.manufacturer, a.from_code)
+            return 0
+        targets = resolve_targets(cfg, a)
         if a.next:
-            k = sc.next_key()
-            if not k:
-                log("All keys complete.")
+            t = sc.next_target()
+            if not t:
+                log("All targets complete.")
                 return 0
-            keys = [k]
-        if not keys:
+            targets = [t]
+        if not targets:
             ap.print_help()
             return 1
-        for key in keys:
+        for t in targets:
             if a.list_only:
-                ts = sc.list_titles(key)
-                log(f"{key}: {len(ts)} pages")
-                for t in ts:
-                    log(f"  {t}")
+                ts = sc.list_titles(t)
+                log(f"{t}: {len(ts)} pages")
+                for x in ts:
+                    log(f"  {x}")
             elif a.inspect:
-                sc.inspect(key, a.inspect)
+                sc.inspect(t, a.inspect)
             else:
-                sc.run_key(key, a.limit)
+                sc.run_target(t, a.limit)
     except StopScrape as e:
         log(f"\nSTOPPED SAFELY: {e}")
         log("Everything done so far is saved. Run the same command again to continue.")
         return 2
     except KeyboardInterrupt:
-        sc.save_state()
+        sc.save_all()
         log("\nInterrupted - progress saved. Run again to continue.")
         return 130
     return 0
@@ -1054,7 +1428,7 @@ def run_cli(argv):
 def run_gui():
     import queue
     import tkinter as tk
-    from tkinter import ttk, scrolledtext, messagebox
+    from tkinter import ttk, scrolledtext
 
     global _LOG_SINK
     q = queue.Queue()
@@ -1063,40 +1437,69 @@ def run_gui():
 
     root = tk.Tk()
     root.title("Beyblade Wiki Scraper (polite / resumable)")
-    root.geometry("820x640")
+    root.geometry("900x700")
     frm = ttk.Frame(root, padding=10)
     frm.pack(fill=tk.BOTH, expand=True)
 
-    ttk.Label(frm, text="Keys (sheets) to scrape, processed one after another:").grid(row=0, column=0, columnspan=4, sticky="w")
-    key_vars = {}
-    kf = ttk.Frame(frm)
-    kf.grid(row=1, column=0, columnspan=4, sticky="w", pady=4)
-    for i, k in enumerate(cfg["parts"]):
-        key_vars[k] = tk.BooleanVar(value=False)
-        ttk.Checkbutton(kf, text=k, variable=key_vars[k]).grid(row=i // 4, column=i % 4, sticky="w", padx=6)
+    top = ttk.Frame(frm)
+    top.grid(row=0, column=0, sticky="w")
+    ttk.Label(top, text="Workbook:").pack(side=tk.LEFT)
+    scope = tk.StringVar(value="parts")
+    ttk.Combobox(top, textvariable=scope, values=["parts", "products", "tcg"], width=10, state="readonly"
+                 ).pack(side=tk.LEFT, padx=4)
+    ttk.Label(top, text="Generation:").pack(side=tk.LEFT, padx=(10, 0))
+    gen = tk.StringVar(value="X")
+    ttk.Combobox(top, textvariable=gen, values=S.GENERATION_NAMES, width=11, state="readonly").pack(side=tk.LEFT, padx=4)
+
+    tf = ttk.LabelFrame(frm, text="Targets (processed one after another, each into its own sheet)", padding=6)
+    tf.grid(row=1, column=0, sticky="we", pady=6)
+    tvars = {}
+
+    def rebuild(*_):
+        for w in tf.winfo_children():
+            w.destroy()
+        tvars.clear()
+        for i, t in enumerate(x for x in cfg["sources"] if target_kind(x) == scope.get()
+                              and (scope.get() == "tcg" or target_gen_key(x)[0] == gen.get())):
+            tvars[t] = tk.BooleanVar(value=True)
+            ttk.Checkbutton(tf, text=t.split(":", 1)[1], variable=tvars[t]).grid(row=i // 4, column=i % 4,
+                                                                                  sticky="w", padx=6)
+    scope.trace_add("write", rebuild)
+    gen.trace_add("write", rebuild)
+    rebuild()
 
     opts = ttk.Frame(frm)
-    opts.grid(row=2, column=0, columnspan=4, sticky="w", pady=6)
-    no_img, overwrite, relist = tk.BooleanVar(), tk.BooleanVar(), tk.BooleanVar()
-    ttk.Checkbutton(opts, text="Skip images", variable=no_img).pack(side=tk.LEFT, padx=4)
-    ttk.Checkbutton(opts, text="Overwrite filled cells", variable=overwrite).pack(side=tk.LEFT, padx=4)
-    ttk.Checkbutton(opts, text="Re-list / refresh changed pages", variable=relist).pack(side=tk.LEFT, padx=4)
-    ttk.Label(opts, text="Limit/key:").pack(side=tk.LEFT, padx=(12, 2))
+    opts.grid(row=2, column=0, sticky="w", pady=4)
+    no_img, overwrite, relist, refresh = (tk.BooleanVar() for _ in range(4))
+    for text, var in (("Skip images", no_img), ("Overwrite filled cells", overwrite),
+                      ("Re-list (find new pages)", relist), ("Refresh rows already in store", refresh)):
+        ttk.Checkbutton(opts, text=text, variable=var).pack(side=tk.LEFT, padx=4)
+    ttk.Label(opts, text="Limit:").pack(side=tk.LEFT, padx=(10, 2))
     limit_var = tk.StringVar()
-    ttk.Entry(opts, textvariable=limit_var, width=6).pack(side=tk.LEFT)
-    ttk.Label(opts, text="Delay s:").pack(side=tk.LEFT, padx=(12, 2))
+    ttk.Entry(opts, textvariable=limit_var, width=5).pack(side=tk.LEFT)
+    ttk.Label(opts, text="Delay s:").pack(side=tk.LEFT, padx=(10, 2))
     delay_var = tk.StringVar(value=str(cfg["politeness"]["delay_seconds"]))
     ttk.Entry(opts, textvariable=delay_var, width=5).pack(side=tk.LEFT)
 
+    up = ttk.Frame(frm)
+    up.grid(row=3, column=0, sticky="w", pady=4)
+    ttk.Label(up, text="Update series (blank = all):").pack(side=tk.LEFT)
+    series_var = tk.StringVar()
+    ttk.Entry(up, textvariable=series_var, width=18).pack(side=tk.LEFT, padx=4)
+    ttk.Label(up, text="from code:").pack(side=tk.LEFT)
+    from_var = tk.StringVar()
+    ttk.Entry(up, textvariable=from_var, width=10).pack(side=tk.LEFT, padx=4)
+
     btns = ttk.Frame(frm)
-    btns.grid(row=3, column=0, columnspan=4, sticky="w", pady=6)
-    out = scrolledtext.ScrolledText(frm, height=24, state="disabled", bg="black", fg="lightgray",
+    btns.grid(row=4, column=0, sticky="w", pady=6)
+    out = scrolledtext.ScrolledText(frm, height=22, state="disabled", bg="black", fg="lightgray",
                                     font=("Consolas", 10))
-    out.grid(row=4, column=0, columnspan=4, sticky="nsew")
-    frm.rowconfigure(4, weight=1)
-    frm.columnconfigure(3, weight=1)
+    out.grid(row=5, column=0, sticky="nsew")
+    frm.rowconfigure(5, weight=1)
+    frm.columnconfigure(0, weight=1)
     stop_event = threading.Event()
     worker = {"t": None}
+    action_btns = []
 
     def pump():
         try:
@@ -1110,15 +1513,12 @@ def run_gui():
             pass
         if worker["t"] and not worker["t"].is_alive():
             worker["t"] = None
-            start_btn.config(state="normal")
-            next_btn.config(state="normal")
+            for b in action_btns:
+                b.config(state="normal")
         root.after(150, pump)
 
-    def launch(keys):
+    def launch(fn):
         if worker["t"]:
-            return
-        if not keys:
-            messagebox.showerror("Nothing selected", "Tick at least one key.")
             return
         stop_event.clear()
         c = copy.deepcopy(cfg)
@@ -1126,36 +1526,43 @@ def run_gui():
             c["politeness"]["delay_seconds"] = max(0.5, float(delay_var.get()))
         except ValueError:
             pass
-        lim = int(limit_var.get()) if limit_var.get().strip().isdigit() else None
 
         def job():
-            sc = Scraper(c, stop_event, overwrite.get(), no_img.get(), relist.get())
+            sc = Scraper(c, stop_event, overwrite.get(), no_img.get(), relist.get(), refresh.get())
             try:
-                for k in keys:
-                    sc.run_key(k, lim)
+                fn(sc)
                 log("\nDone.")
             except StopScrape as e:
-                log(f"\nSTOPPED SAFELY: {e}\nProgress saved - press Start again to continue.")
+                log(f"\nSTOPPED SAFELY: {e}\nProgress saved - start again to continue.")
+                sc.save_all()
             except Exception:
                 import traceback
                 log(traceback.format_exc())
-        start_btn.config(state="disabled")
-        next_btn.config(state="disabled")
+        for b in action_btns:
+            b.config(state="disabled")
         worker["t"] = threading.Thread(target=job, daemon=True)
         worker["t"].start()
 
-    def next_key():
-        sc = Scraper(cfg)
-        k = sc.next_key()
-        if k:
-            launch([k])
-        else:
-            log("All keys complete.")
+    def start_selected():
+        ts = [t for t, v in tvars.items() if v.get()]
+        lim = int(limit_var.get()) if limit_var.get().strip().isdigit() else None
+        launch(lambda sc: [sc.run_target(t, lim) for t in ts])
 
-    start_btn = ttk.Button(btns, text="Start selected", command=lambda: launch([k for k, v in key_vars.items() if v.get()]))
-    start_btn.pack(side=tk.LEFT, padx=4)
-    next_btn = ttk.Button(btns, text="Next unfinished key", command=next_key)
-    next_btn.pack(side=tk.LEFT, padx=4)
+    def start_update():
+        ser = series_var.get().split() or None
+        launch(lambda sc: sc.run_update(ser, None if ser else gen.get(), None, from_var.get().strip() or None))
+
+    def start_next():
+        def fn(sc):
+            t = sc.next_target()
+            sc.run_target(t) if t else log("All targets complete.")
+        launch(fn)
+
+    for text, cmd in (("Start selected", start_selected), ("Update releases (next codes)", start_update),
+                      ("Next unfinished target", start_next)):
+        b = ttk.Button(btns, text=text, command=cmd)
+        b.pack(side=tk.LEFT, padx=4)
+        action_btns.append(b)
     ttk.Button(btns, text="Stop (saves progress)", command=stop_event.set).pack(side=tk.LEFT, padx=4)
     ttk.Button(btns, text="Status", command=lambda: Scraper(cfg).status()).pack(side=tk.LEFT, padx=4)
 
