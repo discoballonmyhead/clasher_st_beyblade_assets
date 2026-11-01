@@ -286,16 +286,20 @@ class Book:
         return self.wb[LOG_SHEET]
 
     def log_index(self, target):
-        """wikiTitle -> (sheet, id) for rows previously created by the scraper for this target."""
-        out = {}
-        if LOG_SHEET in self.wb.sheetnames:
-            for row in self.wb[LOG_SHEET].iter_rows(min_row=2, values_only=True):
-                if row and row[0] == target:
-                    out[row[3]] = (row[1], row[2])
-        return out
+        """wikiTitle -> (sheet, id) for rows previously created by the scraper for this target (cached)."""
+        cache = self.__dict__.setdefault("_log_cache", {})
+        if target not in cache:
+            out = {}
+            if LOG_SHEET in self.wb.sheetnames:
+                for row in self.wb[LOG_SHEET].iter_rows(min_row=2, values_only=True):
+                    if row and row[0] == target:
+                        out[row[3]] = (row[1], row[2])
+            cache[target] = out
+        return cache[target]
 
     def add_log(self, target, sheet, rid, title, url=None, revid=None, image_file=None):
         self.log_sheet().append([target, sheet, rid, title, url, revid, image_file, now_iso()])
+        self.log_index(target)[title] = (sheet, rid)
 
     def save(self):
         os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)

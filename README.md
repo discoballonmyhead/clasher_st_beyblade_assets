@@ -56,6 +56,11 @@ python fandom_scraper.py --status
 * Update mode: per sequential series in `CodeSeries`, finds the highest code for that manufacturer in
   `Products` (e.g. BX-54) and searches the wiki for BX-55, BX-56 … until 3 in a row are missing.
   Non-sequential codes (BX-00 limited releases, Hasbro item numbers) come from `--scope products`.
+* Live progress: every request (`-> #57 image Foo.png` / `<- #57 HTTP 200, 48 KB in 1.2s`) and every step is
+  printed with a timestamp and also saved to `scrape_state/scrape.log`. If nothing is printed for 15 s a
+  heartbeat line says exactly what it is waiting on (`... still busy: request #57: image Foo.png - 12 KB
+  received (34s)`). Each download has a hard 90 s limit; an image that keeps failing is skipped (row written
+  without image) instead of stalling the run. `--quiet` hides the per-request lines on screen only.
 * Safe: one request at a time with a 2–3 s gap, Retry-After/maxlag honoured, stops itself on repeated
   throttling or HTTP 403, 1500-request budget per run, everything checkpointed – just run again to continue.
 

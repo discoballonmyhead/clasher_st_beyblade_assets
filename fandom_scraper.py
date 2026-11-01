@@ -150,6 +150,9 @@ DEFAULT_CONFIG = {
         "read_timeout": 45, "max_retries": 5, "backoff_base_seconds": 10, "backoff_max_seconds": 300,
         "max_consecutive_failures": 4, "max_requests_per_run": 1500, "maxlag": 5,
         "image_width": 600, "min_image_width": 128, "save_every": 15,
+        "request_deadline_seconds": 90,  # hard cap on one download, even if data keeps trickling in
+        "max_response_mb": 25,
+        "heartbeat_seconds": 15,         # print what is going on when nothing was logged for this long
     },
     "update": {
         "miss_limit": 3,             # stop a series after this many codes in a row are not found
@@ -193,13 +196,66 @@ def load_config(path=CONFIG_PATH):
 # =============================================================================
 
 _LOG_SINK = None  # GUI installs a callable here
+_LOG_FILE = {"path": None}
+_LOG_LOCK = threading.Lock()
+LOG_OPTS = {"quiet": False}  # quiet: per-request lines go to the log file only
 
 
-def log(msg=""):
-    if _LOG_SINK:
-        _LOG_SINK(str(msg))
-    else:
-        print(msg, flush=True)
+class Activity:
+    """What the scraper is doing right now - shown by the heartbeat and the GUI status line."""
+
+    def __init__(self):
+        self.text, self.detail, self.since, self.last_log = "starting", "", time.monotonic(), time.monotonic()
+
+    def set(self, text, detail=""):
+        self.text, self.detail, self.since = text, detail, time.monotonic()
+
+    def describe(self):
+        secs = time.monotonic() - self.since
+        return f"{self.text}{' - ' + self.detail if self.detail else ''} ({secs:.0f}s)"
+
+
+ACTIVITY = Activity()
+
+
+def log(msg="", detail=False):
+    """detail=True lines (one per HTTP request) are hidden on screen with --quiet but always go to the log file."""
+    msg = str(msg)
+    lead = msg[:len(msg) - len(msg.lstrip("\n"))]
+    line = f"{lead}{time.strftime('%H:%M:%S')} {msg.lstrip(chr(10))}" if msg.strip() else msg
+    with _LOG_LOCK:
+        ACTIVITY.last_log = time.monotonic()
+        if _LOG_FILE["path"]:
+            try:
+                with open(_LOG_FILE["path"], "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except OSError:
+                pass
+        if detail and LOG_OPTS["quiet"]:
+            return
+        if _LOG_SINK:
+            _LOG_SINK(line)
+        else:
+            print(line, flush=True)
+
+
+def set_log_file(path):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    _LOG_FILE["path"] = path
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"\n===== run started {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+
+
+def start_heartbeat(seconds=15, stop_event=None):
+    """Prints what is happening whenever nothing has been logged for `seconds` - so a stall is never silent."""
+    def beat():
+        while not (stop_event and stop_event.is_set()):
+            time.sleep(1)
+            if time.monotonic() - ACTIVITY.last_log >= seconds:
+                log(f"  ... still busy: {ACTIVITY.describe()}")
+    t = threading.Thread(target=beat, daemon=True)
+    t.start()
+    return t
 
 
 def write_json(path, data, indent=None):
@@ -247,6 +303,27 @@ class BudgetExhausted(StopScrape): pass
 class UserStopped(StopScrape): pass
 
 
+class SlowResponse(requests.RequestException):
+    """Body took longer than request_deadline_seconds (a trickling connection) or was too large."""
+
+
+def describe_api(p):
+    """Short human description of an API call for the log."""
+    bits = ["API"]
+    for k in ("list", "prop"):
+        if p.get(k):
+            bits.append(f"{k}={p[k]}")
+    for k in ("cmtitle", "apprefix", "srsearch"):
+        if p.get(k):
+            bits.append(repr(p[k]))
+    if p.get("titles"):
+        ts = p["titles"].split("|")
+        bits.append(f"({len(ts)} titles: {ts[0][:40]}{' ...' if len(ts) > 1 else ''})")
+    if any(k.endswith("continue") for k in p):
+        bits.append("[continued]")
+    return " ".join(bits)
+
+
 class PoliteClient:
     """One request at a time (API and images alike), spaced out, with backoff."""
 
@@ -278,8 +355,31 @@ class PoliteClient:
         wait = self.last + gap - time.monotonic()
         if wait > 0:
             self._sleep(wait)
+        return max(0.0, wait)
+
+    def _read_body(self, r, what):
+        """Read the response with a hard total deadline, so a slow-trickling server can't hang the run."""
+        deadline = time.monotonic() + float(self.p.get("request_deadline_seconds", 90))
+        limit = float(self.p.get("max_response_mb", 25)) * 1024 * 1024
+        buf = bytearray()
+        try:
+            for chunk in r.iter_content(64 * 1024):
+                if self.stop_event.is_set():
+                    raise UserStopped("Stopped by user.")
+                buf += chunk
+                ACTIVITY.detail = f"{len(buf) // 1024} KB received"
+                if time.monotonic() > deadline:
+                    raise SlowResponse(f"{what}: still downloading after "
+                                       f"{self.p.get('request_deadline_seconds', 90)}s ({len(buf) // 1024} KB)")
+                if len(buf) > limit:
+                    raise SlowResponse(f"{what}: response larger than {self.p.get('max_response_mb', 25)} MB")
+        finally:
+            r.close()
+        return bytes(buf)
 
     def _backoff(self, attempt, retry_after=None):
+        if attempt >= self.p["max_retries"] - 1:
+            return  # last attempt failed - no point waiting before giving up
         if retry_after:
             try:
                 secs = float(retry_after)
@@ -289,6 +389,7 @@ class PoliteClient:
             secs = self.p["backoff_base_seconds"] * (2 ** attempt)
         secs = min(secs, self.p["backoff_max_seconds"]) + random.uniform(0, 3)
         log(f"    ...waiting {secs:.0f}s before retrying")
+        ACTIVITY.set(f"backing off {secs:.0f}s before retry {attempt + 1}", ACTIVITY.text)
         self._sleep(secs)
 
     def _fail(self, why):
@@ -297,26 +398,39 @@ class PoliteClient:
             raise Cooldown(f"{self.consecutive_failures} failures in a row ({why}). The wiki is throttling "
                            f"or unreachable - stopping to protect your IP. Wait 15-30 min and run again.")
 
-    def request(self, url, params=None, binary=False):
+    def request(self, url, params=None, binary=False, what=None):
         budget = self.p.get("max_requests_per_run") or 0
+        what = what or url
         with self.lock:
             for attempt in range(self.p["max_retries"]):
                 if self.stop_event.is_set():
                     raise UserStopped("Stopped by user.")
                 if budget and self.count >= budget:
                     raise BudgetExhausted(f"Request budget of {budget} reached for this run. Run again to continue.")
-                self._wait_turn()
+                ACTIVITY.set(f"waiting politely before request #{self.count + 1}", what)
+                waited = self._wait_turn()
                 self.count += 1
+                n = self.count
+                retry = f" retry {attempt}" if attempt else ""
+                log(f"    -> #{n} {what}{retry} (waited {waited:.1f}s)", detail=True)
+                ACTIVITY.set(f"request #{n}: {what}", "connecting")
+                t0 = time.monotonic()
                 try:
-                    r = self.s.get(url, params=params,
+                    r = self.s.get(url, params=params, stream=True,
                                    timeout=(self.p["connect_timeout"], self.p["read_timeout"]))
+                    ACTIVITY.detail = f"HTTP {r.status_code}, reading body"
+                    body = self._read_body(r, what) if r.status_code < 400 else b""
                 except requests.RequestException as e:
                     self.last = time.monotonic()
-                    log(f"    network error: {type(e).__name__}")
+                    log(f"    <- #{n} network error after {time.monotonic() - t0:.1f}s: {type(e).__name__}: "
+                        f"{str(e)[:160]}")
                     self._fail(type(e).__name__)
                     self._backoff(attempt)
                     continue
                 self.last = time.monotonic()
+                log(f"    <- #{n} HTTP {r.status_code}, {len(body) / 1024:.0f} KB in {self.last - t0:.1f}s",
+                    detail=True)
+                ACTIVITY.set("processing", what)
 
                 if r.status_code == 403:
                     raise Blocked("HTTP 403 Forbidden - the wiki is refusing this client. Stop for a few hours; "
@@ -333,8 +447,14 @@ class PoliteClient:
 
                 if binary:
                     self.consecutive_failures = 0
-                    return r.content
-                data = r.json()
+                    return body
+                try:
+                    data = json.loads(body.decode("utf-8"))
+                except ValueError:
+                    log(f"    <- #{n} response was not JSON (first bytes: {body[:80]!r})")
+                    self._fail("bad JSON")
+                    self._backoff(attempt)
+                    continue
                 err = data.get("error") if isinstance(data, dict) else None
                 if err and err.get("code") == "maxlag":
                     log("    wiki servers lagging (maxlag)")
@@ -348,13 +468,17 @@ class PoliteClient:
                     raise RuntimeError(f"API error: {err}")
                 self.consecutive_failures = 0
                 return data
-            self._fail("retries exhausted")
-            raise Cooldown(f"Gave up after {self.p['max_retries']} attempts. Wait and run again.")
+            self._fail("retries exhausted")  # still counts towards the circuit breaker
+            if binary:
+                log(f"    giving up on {what} after {self.p['max_retries']} attempts - skipped, continuing")
+                return None
+            raise Cooldown(f"Gave up on {what} after {self.p['max_retries']} attempts. Wait and run again.")
 
     # ---- MediaWiki helpers --------------------------------------------------
     def api_get(self, **params):
+        what = describe_api(params)
         params.update(format="json", formatversion="2", maxlag=str(self.p["maxlag"]))
-        return self.request(self.api, params=params)
+        return self.request(self.api, params=params, what=what)
 
     def query_all(self, **params):
         cont = {}
@@ -804,12 +928,22 @@ class Scraper:
 
     def book(self, kind):
         if kind not in self._books:
-            self._books[kind] = Book(self.book_path(kind), kind)
+            path = self.book_path(kind)
+            ACTIVITY.set(f"opening {os.path.basename(path)}")
+            t0 = time.monotonic()
+            log(f"  opening {os.path.basename(path)}{'' if os.path.exists(path) else ' (new file)'} ...")
+            self._books[kind] = Book(path, kind)
+            log(f"  opened in {time.monotonic() - t0:.1f}s")
         return self._books[kind]
 
     def save_all(self):
-        for b in self._books.values():
+        for kind, b in self._books.items():
+            n_img = sum(len(ws._images) for ws in b.wb.worksheets)
+            ACTIVITY.set(f"saving {os.path.basename(b.path)}", f"{n_img} images")
+            t0 = time.monotonic()
             b.save()
+            log(f"  saved {os.path.basename(b.path)} ({n_img} images) in {time.monotonic() - t0:.1f}s")
+        ACTIVITY.set("saving progress files")
         self.save_state()
 
     def save_state(self):
@@ -865,12 +999,17 @@ class Scraper:
                 live = self.client.revids(cached)
                 missing += [t for t in cached if live.get(t) and live[t] != self.pages[t].get("revid")]
         bs = max(1, min(50, int(self.cfg["politeness"]["batch_size"])))
+        cached = len(titles) - len(missing)
+        if cached:
+            log(f"  {cached} page sources from cache")
         for i, batch in enumerate(chunks(missing, bs), 1):
+            log(f"  downloading page sources {(i - 1) * bs + 1}-{(i - 1) * bs + len(batch)} of {len(missing)} ...")
             for t, pg in self.client.fetch_pages(batch).items():
                 if "wikitext" in pg:
                     self.pages[t] = pg
+            ACTIVITY.set("writing page cache", f"{len(self.pages)} pages")
             write_json(self.pages_path, self.pages)
-            log(f"  page sources {min(i * bs, len(missing))}/{len(missing)}")
+            log(f"  page sources {min(i * bs, len(missing))}/{len(missing)} done")
         return {t: self.pages[t] for t in titles if t in self.pages}
 
     def _img_cache(self, filename):
@@ -882,24 +1021,34 @@ class Scraper:
         if self.no_images:
             return out
         need = {f[0] for (_, _, _, f) in parsed.values() if f and not os.path.exists(self._img_cache(f[0]) + ".png")}
+        with_img = sum(1 for v in parsed.values() if v[3])
+        log(f"  images: {with_img} of {len(parsed)} pages have one, {with_img - len(need)} cached, "
+            f"{len(need)} to download")
+        if need:
+            log(f"  looking up {len(need)} image URLs ...")
         urls = self.client.resolve_files(need) if need else {}
         p = self.cfg["politeness"]
-        for t, (_, _, _, files) in parsed.items():
-            if not files:
-                continue
-            c = self._img_cache(files[0])
+        todo = [(t, v[3][0]) for t, v in parsed.items() if v[3]]
+        for i, (t, fname) in enumerate(todo, 1):
+            c = self._img_cache(fname)
             if os.path.exists(c + ".png") and os.path.exists(c + "-min.png"):
                 with open(c + ".png", "rb") as a, open(c + "-min.png", "rb") as b:
                     out[t] = (a.read(), b.read())
                 continue
-            url = urls.get(files[0])
-            raw = self.client.request(url, binary=True) if url else None
-            if not raw:
+            url = urls.get(fname)
+            if not url:
+                log(f"  image {i}/{len(todo)}: {fname} - no URL on the wiki (file missing?), skipped")
                 continue
+            log(f"  image {i}/{len(todo)}: {fname}")
+            raw = self.client.request(url, binary=True, what=f"image {fname}")
+            if not raw:
+                log("    no image data - row will be written without an image (rerun with --refresh-existing later)")
+                continue
+            ACTIVITY.set(f"converting image {fname}", f"{len(raw) // 1024} KB")
             try:
                 full, mini = to_png(raw, p["image_width"]), to_png(raw, p["min_image_width"])
             except Exception as e:
-                log(f"    image convert failed for {files[0]}: {e}")
+                log(f"    image convert failed for {fname}: {e}")
                 continue
             with open(c + ".png", "wb") as a, open(c + "-min.png", "wb") as b:
                 a.write(full)
@@ -909,10 +1058,13 @@ class Scraper:
 
     def parse(self, pages, titles):
         parsed = {}
+        log(f"  parsing {len(titles)} pages ...")
         for t in titles:
             pg = pages.get(t)
             if not pg:
+                log(f"  ! {t}: not returned by the wiki (deleted / renamed?)")
                 continue
+            ACTIVITY.set("parsing page", t)
             infobox, fields, files = parse_page(pg.get("wikitext"), self.image_re)
             if not files and pg.get("page_image"):
                 files = [norm_file(pg["page_image"].split("/revision/")[0].rsplit("/", 1)[-1].replace("%20", " "))]
@@ -1114,7 +1266,9 @@ class Scraper:
             return
         todo = []
         skipped = 0
+        log(f"  checking the store for {len(titles)} listed pages ...")
         for t in titles:
+            ACTIVITY.set("checking store", t)
             if t in st["done"]:
                 continue
             if not self.refresh_existing and kind != "products" and self.existing_match(target, t)[1]:
@@ -1128,14 +1282,20 @@ class Scraper:
             todo = todo[:limit]
         try:
             bs = max(1, min(50, int(self.cfg["politeness"]["batch_size"])))
-            for batch in chunks(todo, bs):
+            n_batches = (len(todo) + bs - 1) // bs
+            done_n = 0
+            for bi, batch in enumerate(chunks(todo, bs), 1):
+                log(f"\n  --- batch {bi}/{n_batches}: pages {done_n + 1}-{done_n + len(batch)} of {len(todo)} ---")
                 pages = self.get_pages(batch)
                 parsed = self.parse(pages, batch)
                 for t in batch:
                     if t not in parsed:
                         st["failed"][t] = "page missing"
                 imgs = self.images_for_pages(parsed)
+                log(f"  writing {len(parsed)} rows into the workbook ...")
                 for t, (pg, infobox, fields, files) in parsed.items():
+                    done_n += 1
+                    ACTIVITY.set(f"writing row {done_n}/{len(todo)}", t)
                     if kind == "parts":
                         res = self.handle_part(target, t, pg, infobox, fields, files, imgs)
                     elif kind == "products":
@@ -1145,7 +1305,7 @@ class Scraper:
                         res = self.handle_tcg(target, t, pg, infobox, fields, files, imgs)
                     st["done"][t] = res
                     st["failed"].pop(t, None)
-                    log(f"  [{res}] {t}")
+                    log(f"  [{done_n}/{len(todo)}] [{res}] {t}")
                     self.checkpoint()
             st["complete"] = all(t in st["done"] for t in titles)
         finally:
@@ -1359,6 +1519,8 @@ def run_cli(argv):
     ap.add_argument("--find-categories", metavar="WORD")
     ap.add_argument("--list-targets", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--quiet", action="store_true", help="hide the per-request lines on screen (still in the log file)")
+    ap.add_argument("--log-file", help="default: <state_dir>/scrape.log")
     ap.add_argument("--config", default=CONFIG_PATH)
     a = ap.parse_args(argv)
 
@@ -1371,6 +1533,10 @@ def run_cli(argv):
         log("NOTE: set a contact in 'user_agent' in scraper_config.json - Fandom asks bots to identify themselves.")
     sc = Scraper(cfg, overwrite=a.overwrite, no_images=a.no_images, relist=a.relist,
                  refresh_existing=a.refresh_existing)
+    LOG_OPTS["quiet"] = a.quiet
+    set_log_file(a.log_file or os.path.join(sc.state_dir, "scrape.log"))
+    log(f"Log file: {_LOG_FILE['path']}  (every request and step is recorded there)")
+    start_heartbeat(int(cfg["politeness"].get("heartbeat_seconds", 15)))
     if a.list_targets:
         for t in sc.targets():
             log(f"  {t}")
@@ -1495,11 +1661,16 @@ def run_gui():
     out = scrolledtext.ScrolledText(frm, height=22, state="disabled", bg="black", fg="lightgray",
                                     font=("Consolas", 10))
     out.grid(row=5, column=0, sticky="nsew")
+    status_var = tk.StringVar(value="idle")
+    ttk.Label(frm, textvariable=status_var, foreground="#0066cc").grid(row=6, column=0, sticky="w", pady=(4, 0))
     frm.rowconfigure(5, weight=1)
     frm.columnconfigure(0, weight=1)
     stop_event = threading.Event()
     worker = {"t": None}
     action_btns = []
+    sd = cfg["state_dir"] if os.path.isabs(cfg["state_dir"]) else os.path.join(HERE, cfg["state_dir"])
+    set_log_file(os.path.join(sd, "scrape.log"))
+    start_heartbeat(int(cfg["politeness"].get("heartbeat_seconds", 15)))
 
     def pump():
         try:
@@ -1515,6 +1686,8 @@ def run_gui():
             worker["t"] = None
             for b in action_btns:
                 b.config(state="normal")
+        status_var.set(("Now: " + ACTIVITY.describe()) if worker["t"] else
+                       f"idle - full log: {_LOG_FILE['path']}")
         root.after(150, pump)
 
     def launch(fn):
