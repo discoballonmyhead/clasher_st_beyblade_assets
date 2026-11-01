@@ -28,3 +28,9 @@ output.csv
 output.json
 profile_beyblade.json
 test_offline.py
+# fandom_scraper.py working files (resume state, image cache, output workbook, local config)
+scrape_state/
+scraped_master.xlsx
+scraped_master.xlsx.bak
+*.tmp.xlsx
+scraper_config.json
