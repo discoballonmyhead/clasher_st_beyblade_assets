@@ -24,3 +24,7 @@ create_release.py
 image_to_png.py
 png_towebp.py
 _release_zips/
+output.csv
+output.json
+profile_beyblade.json
+test_offline.py
