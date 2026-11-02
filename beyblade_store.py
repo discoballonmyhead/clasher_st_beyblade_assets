@@ -191,6 +191,7 @@ class Book:
             if col not in headers:
                 ws.cell(1, len(headers) + 1, col).font = Font(bold=True)
                 self.dirty = True
+                self.__dict__.get("_hdr_cache", {}).pop(name, None)
                 headers.append(col)
         return ws
 
@@ -203,9 +204,12 @@ class Book:
         return self.sheet(name, cfg["columns"], cfg["images"])
 
     # ---- reading --------------------------------------------------------------------
-    @staticmethod
-    def headers(ws):
-        return {c.value: i + 1 for i, c in enumerate(ws[1]) if c.value}
+    def headers(self, ws):
+        """{column name: column number} - cached per sheet (cleared when sheet() adds a column)."""
+        cache = self.__dict__.setdefault("_hdr_cache", {})
+        if ws.title not in cache:
+            cache[ws.title] = {c.value: i + 1 for i, c in enumerate(ws[1]) if c.value}
+        return cache[ws.title]
 
     def rows(self, ws):
         """[(row_number, {header: value})] for the contiguous block the packager will read."""
@@ -249,34 +253,67 @@ class Book:
                 vals[id_col] = self.next_id(ws, id_col, id_prefix)
         else:
             vals = {k: v for k, v in values.items() if v not in (None, "")}
+        changed = False
         for k, v in vals.items():
-            if k not in hdr:
+            if k not in hdr or k == "updated_at":
                 continue
             cell = ws.cell(row, hdr[k])
             if new or overwrite or cell.value in (None, ""):
                 if cell.value != v:
                     cell.value = v
-                    self.dirty = True
-        self._rows_cache.pop(ws.title, None)
+                    changed = True
+        if changed:
+            self.touch(ws, row)
+        self._refresh_cached_row(ws, row, new)
         rid = ws.cell(row, hdr[id_col]).value if id_col else None
         return row, rid, new
 
+    def touch(self, ws, row):
+        """Row changed: stamp updated_at (last edited, UTC) and mark the workbook for saving."""
+        self.dirty = True
+        col = self.headers(ws).get("updated_at")
+        if col and row > 1:
+            ws.cell(row, col).value = now_iso()
+            self._refresh_cached_row(ws, row, False)
+
+    def _refresh_cached_row(self, ws, row, new):
+        """Keep the rows() cache current instead of re-reading the whole sheet after every write."""
+        cache = self._rows_cache.get(ws.title)
+        if cache is None:
+            return
+        hdr = self.headers(ws)
+        vals = {h: ws.cell(row, i).value for h, i in hdr.items()}
+        if new and (not cache or cache[-1][0] == row - 1):
+            cache.append((row, vals))
+            return
+        for i, (r, _) in enumerate(cache):
+            if r == row:
+                cache[i] = (row, vals)
+                return
+        self._rows_cache.pop(ws.title, None)  # unexpected shape: rebuild on next read
+
+    def image_index(self, ws):
+        """{(row, col): image} for a sheet - built once, kept current by set_image()."""
+        idx = self.__dict__.setdefault("_img_idx", {})
+        if ws.title not in idx:
+            idx[ws.title] = {(i.anchor._from.row + 1, i.anchor._from.col + 1): i
+                             for i in ws._images if hasattr(i.anchor, "_from")}
+        return idx[ws.title]
+
     def has_image(self, ws, row, col_name):
         col = self.headers(ws).get(col_name)
-        for img in ws._images:
-            a = img.anchor
-            if hasattr(a, "_from") and a._from.row + 1 == row and a._from.col + 1 == col:
-                return True
-        return False
+        return (row, col) in self.image_index(ws)
 
     def set_image(self, ws, row, col_name, png, size="full", replace=False):
         if not png:
             return False
         col = self.headers(ws)[col_name]
-        if self.has_image(ws, row, col_name):
+        index = self.image_index(ws)
+        if (row, col) in index:
             if not replace:
                 return False
-            ws._images = [i for i in ws._images if not (i.anchor._from.row + 1 == row and i.anchor._from.col + 1 == col)]
+            old = index.pop((row, col))
+            ws._images = [i for i in ws._images if i is not old]
         img = XLImage(io.BytesIO(png))
         w = IMAGE_DISPLAY[size]
         img.height = max(1, int(img.height * w / img.width)) if img.width else w
@@ -285,7 +322,8 @@ class Book:
                                    ext=XDRPositiveSize2D(pixels_to_EMU(img.width), pixels_to_EMU(img.height)))
         self._pin(img, png)
         ws.add_image(img)
-        self.dirty = True
+        index[(row, col)] = img
+        self.touch(ws, row)
         ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 15, img.height * 0.75 + 4)
         return True
 

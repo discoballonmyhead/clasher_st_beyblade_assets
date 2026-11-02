@@ -16,7 +16,9 @@ CLI:  python beyblade_data.py --parts beyblade_parts.xlsx --products beyblade_pr
           --tcg beyblade_tcg.xlsx --out data --user discoballonmyhead --repo clasher_st_beyblade_assets
 """
 import argparse
+import concurrent.futures as cf
 import datetime as dt
+import os
 import hashlib
 import io
 import json
@@ -31,6 +33,8 @@ from PIL import Image as PILImage
 import beyblade_schema as S
 
 WEBP_QUALITY = 85
+# Image encoding releases the GIL, so a thread per core encodes that many images at once.
+WORKERS = max(2, min(16, (os.cpu_count() or 4)))
 NO_IMAGE_SHEETS = {name: cfg["json"] for name, cfg in S.SHEETS.items() if not cfg["images"]}
 
 # --- Core Logic Helpers ---
@@ -117,6 +121,26 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
     out_images_dir = out_dir / "images"
     out_images_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1) encode every image in parallel (the slow part when the workbook holds PNG/JPEG)
+    jobs = {}
+    for i, row in enumerate(raw_rows):
+        data_id = row.get(id_field)
+        for kind, suffix in (("full", ""), ("min", "-min")):
+            data = images_by_row.get(i + 2, {}).get(kind)
+            if data_id not in (None, "") and data:
+                jobs[(i, kind)] = (f"{prefix}-{data_id}{suffix}.webp", data)
+
+    def encode(item):
+        key, (name, data) = item
+        webp = png_bytes_to_webp(data)
+        (out_images_dir / name).write_bytes(webp)
+        return key, (name, hashlib.sha1(webp).hexdigest()[:12])
+
+    encoded = {}
+    if jobs:
+        with cf.ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            encoded = dict(ex.map(encode, jobs.items()))
+
     rows, seen_ids = [], set()
     with_image = without_image = no_id = 0
     for i, row in enumerate(raw_rows):
@@ -127,16 +151,13 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         if str(data_id) in seen_ids:
             log(f"  WARNING {ws.title}: duplicate {id_field} {data_id!r} (row {i + 2})")
         seen_ids.add(str(data_id))
-        images = images_by_row.get(i + 2, {})  # header is row 1
         row.pop(img_field, None)
         row.pop(min_field, None)
 
-        if "full" in images:
-            webp = png_bytes_to_webp(images["full"])
-            name = f"{prefix}-{data_id}.webp"
-            (out_images_dir / name).write_bytes(webp)
+        if (i, "full") in encoded:
+            name, digest = encoded[(i, "full")]
             row["imageUrl"] = f"{base_url}images/{name}"
-            row["imageHash"] = hashlib.sha1(webp).hexdigest()[:12]
+            row["imageHash"] = digest
             with_image += 1
             gen = row.get("hobbyGeneration") or "unknown"
             images_by_generation.setdefault(gen, {}).setdefault(prefix, []).append(str(data_id))
@@ -148,12 +169,10 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             row["imageHash"] = None
             without_image += 1
 
-        if "min" in images:
-            webp = png_bytes_to_webp(images["min"])
-            name = f"{prefix}-{data_id}-min.webp"
-            (out_images_dir / name).write_bytes(webp)
+        if (i, "min") in encoded:
+            name, digest = encoded[(i, "min")]
             row["minifiedImageUrl"] = f"{base_url}images/{name}"
-            row["minifiedImageHash"] = hashlib.sha1(webp).hexdigest()[:12]
+            row["minifiedImageHash"] = digest
         else:
             row["minifiedImageUrl"] = None
             row["minifiedImageHash"] = None
@@ -231,13 +250,19 @@ def run_gui():
     from tkinter import ttk, filedialog, messagebox
     from tkinter.scrolledtext import ScrolledText
 
+    import queue
+    import time
+    import tk_ui
+
     root = tk.Tk()
-    root.title("Offline Packager (From Embedded Images)")
-    root.geometry("800x700")
-    v = {k: tk.StringVar() for k in ("parts", "products", "tcg", "out", "user", "repo")}
-    v["branch"] = tk.StringVar(value="main")
+    root.title("Beyblade packager")
+    root.geometry("860x720")
+    tk_ui.apply_theme(root)
+    prefs = tk_ui.Prefs("packager")
+    v = {k: tk.StringVar(value=prefs.get(k, "")) for k in ("parts", "products", "tcg", "out", "user", "repo")}
+    v["branch"] = tk.StringVar(value=prefs.get("branch", "main"))
     for k, fn in S.BOOK_FILES.items():
-        if Path(fn).exists():
+        if not v[k].get() and Path(fn).exists():
             v[k].set(str(Path(fn).resolve()))
 
     cf = ttk.LabelFrame(root, text="Configuration", padding=10)
@@ -275,21 +300,40 @@ def run_gui():
 
     af = ttk.Frame(root)
     af.pack(fill=tk.X, padx=10)
-    run_btn = ttk.Button(af, text="Run Packager")
+    run_btn = ttk.Button(af, text="Run packager", style="Accent.TButton")
     run_btn.pack(side=tk.LEFT)
-    progress = ttk.Progressbar(af, mode="indeterminate")
-    lf = ttk.LabelFrame(root, text="Logs", padding=10)
-    lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    log_text = ScrolledText(lf, state="disabled", bg="#f4f4f4", wrap=tk.WORD)
-    log_text.pack(fill=tk.BOTH, expand=True)
 
-    def log(msg):
-        def append():
-            log_text.configure(state="normal")
-            log_text.insert(tk.END, msg + "\n")
-            log_text.see(tk.END)
-            log_text.configure(state="disabled")
-        root.after(0, append)
+    def open_out():
+        out = v["out"].get().strip()
+        if out and os.path.isdir(out):
+            import subprocess
+            opener = "explorer" if sys.platform.startswith("win") else "open" if sys.platform == "darwin" else "xdg-open"
+            subprocess.Popen([opener, out])
+    ttk.Button(af, text="Open output folder", command=open_out).pack(side=tk.LEFT, padx=6)
+    progress = ttk.Progressbar(af, mode="indeterminate")
+    lf = ttk.LabelFrame(root, text="Log", padding=6)
+    lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    log_text = ScrolledText(lf, state="disabled", bg="#151922", fg="#d7dce5", font=("Consolas", 9), wrap=tk.WORD)
+    log_text.pack(fill=tk.BOTH, expand=True)
+    sbar, set_status = tk_ui.status_bar(root)
+    sbar.pack(fill=tk.X)
+    q = queue.Queue()
+
+    def log(msg):  # safe from any thread: drained on the UI thread
+        q.put(str(msg))
+
+    def pump():
+        try:
+            while True:
+                line = q.get_nowait()
+                log_text.configure(state="normal")
+                log_text.insert(tk.END, line + "\n")
+                log_text.see(tk.END)
+                log_text.configure(state="disabled")
+        except queue.Empty:
+            pass
+        root.after(100, pump)
+    pump()
 
     def stop():
         progress.stop()
@@ -309,23 +353,40 @@ def run_gui():
             return
         base = build_jsdelivr_url(v["user"].get().strip(), v["repo"].get().strip(),
                                   v["branch"].get().strip() or "main")
+        for k, var in v.items():
+            prefs.set(k, var.get().strip())
         run_btn.config(state=tk.DISABLED)
+        set_status(f"Packaging {len(books)} workbook(s) with {WORKERS} image threads ...", True)
+        t0 = time.time()
         progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
         progress.start(15)
         log(f"Using base URL: {base}")
 
+        result = {}
+
         def job():
             try:
                 package(books, Path(v["out"].get()), base, log)
-                log("\nSUCCESS: Packaging completed successfully.")
-                root.after(0, lambda: messagebox.showinfo("Done", "Packaging completed successfully!"))
+                log(f"\nSUCCESS: packaged in {time.time() - t0:.1f}s.")
+                result["ok"] = True
             except Exception as e:
                 import traceback
                 log(f"\nERROR:\n{traceback.format_exc()}")
-                root.after(0, lambda e=e: messagebox.showerror("Error", f"An error occurred:\n{e}"))
-            finally:
-                root.after(0, stop)
-        threading.Thread(target=job, daemon=True).start()
+                result["err"] = e
+
+        def wait(th):
+            if th.is_alive():
+                root.after(150, lambda: wait(th))
+                return
+            stop()
+            if result.get("ok"):
+                set_status(f"Done in {time.time() - t0:.1f}s - output in {v['out'].get()}", False)
+            else:
+                set_status("Failed - see the log", False)
+                messagebox.showerror("Error", f"An error occurred:\n{result.get('err')}")
+        th = threading.Thread(target=job, daemon=True)
+        th.start()
+        wait(th)
 
     run_btn.config(command=start)
     root.mainloop()

@@ -29,7 +29,9 @@ Zips are written deterministically (fixed timestamps, sorted names), so the same
 SHA-256 - an unchanged catalog doesn't make every app re-download it.
 """
 import argparse
+import concurrent.futures as cf
 import hashlib
+import os
 import io
 import json
 import re
@@ -180,15 +182,15 @@ def main(argv=None):
     print("image packs:")
     for hobby, gens in index.items():
         for gen, by_prefix in gens.items():
-            entries, missing = [], 0
-            for prefix, ids in by_prefix.items():
-                for did in ids:
-                    for stem in (f"{prefix}-{did}", f"{prefix}-{did}-min"):
-                        p = find_image(images_dir, stem)
-                        if p:
-                            entries.append((f"{stem}.webp", as_webp(p)))
-                        else:
-                            missing += 1
+            stems = [f"{prefix}-{did}{suf}" for prefix, ids in by_prefix.items() for did in ids for suf in ("", "-min")]
+
+            def load(stem):  # read (+ convert a stray PNG) - in parallel, the image work releases the GIL
+                p = find_image(images_dir, stem)
+                return (f"{stem}.webp", as_webp(p)) if p else None
+            with cf.ThreadPoolExecutor(max_workers=max(2, min(16, os.cpu_count() or 4))) as ex:
+                loaded = list(ex.map(load, stems))
+            entries = [e for e in loaded if e]
+            missing = len(loaded) - len(entries)
             if not entries:
                 continue
             emit("images", hobby, gen, pack_name(hobby, "images", gen), write_zip(entries),
