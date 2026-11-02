@@ -205,6 +205,7 @@ CODE_SERIES = [
     ("BX",  "Takara-Tomy", "X",          "JP", 1, 2, "BX-01", "Beyblade X Basic Line releases"),
     ("UX",  "Takara-Tomy", "X",          "JP", 1, 2, "UX-01", "Beyblade X Unique Line releases"),
     ("CX",  "Takara-Tomy", "X",          "JP", 1, 2, "CX-01", "Beyblade X Custom Line releases"),
+    ("RX",  "Takara-Tomy", "X",          "JP", 1, 2, "RX-01", "Beyblade X upcoming RX line (verify)"),
     ("BXG", "Takara-Tomy", "X",          "JP", 0, 2, "BXG-01", "Beyblade X limited/G3 releases (verify)"),
     ("HASBRO", "Hasbro",   "",           "US", 0, 4, "F9580", "Hasbro item numbers (letter + 4 digits, not sequential)"),
 ]

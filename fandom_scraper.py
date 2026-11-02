@@ -87,6 +87,7 @@ COLUMN_ALIASES = {
     "heightMm": ["height", "height mm"],
     "protrusions": ["protrusions", "number of protrusions", "contact points"],
     "baseName": ["abbreviation", "short name", "initial", "symbol", "bit code"],
+    "wbolegality": ["wbo ranked league", "wbo", "wbo legality", "wbo format legality", "legality", "legal"],
     # products
     "productName": ["name", "english name", "product name", "title"],
     "productType": ["product type", "type", "category", "release type"],
@@ -174,6 +175,7 @@ DEFAULT_CONFIG = {
         "request_deadline_seconds": 90,  # hard cap on one download, even if data keeps trickling in
         "max_response_mb": 25,
         "heartbeat_seconds": 15,         # print what is going on when nothing was logged for this long
+        "variant_images": True,          # parts: also download each recolor's image from the page gallery
     },
     "update": {
         "miss_limit": 3,             # stop a series after this many codes in a row are not found
@@ -845,6 +847,10 @@ def map_part(gen, key, title, fields, src):
     ed = pick("edition")
     row["edition"] = ed.split(";")[0].strip()[:120] if ed else None
     row["mass"] = first_number(pick("mass"))
+    wbo = pick("wbolegality")
+    if wbo:
+        row["wbolegality"] = 0 if re.search(r"(?i)\u274c|\u2716|\u2718|\bno\b|\bban|illegal|\bnot\b", wbo) else \
+            1 if re.search(r"(?i)\u2714|\u2705|\byes\b|\blegal|\ballowed", wbo) else None
     if "type" in cols:
         row["type"] = norm_type(pick("type"))
     if "movementStyle" in cols:
@@ -1080,6 +1086,99 @@ def parse_assortment(wikitext):
     return out
 
 
+def parse_product_line(txt, manufacturer=None):
+    """One line of a part page's Products section:
+        'CX-05 Random Booster Vol. 6 - 01: HellsReaper T4-70K'  -> code CX-05 01, product, combo
+        'BX-00 Booster DranSword 3-60F (Metal Coat: Gold)'      -> code BX-00, note 'Metal Coat: Gold'
+        'G1678 Reaper Incendio T 4-70K'                          -> Hasbro item G1678
+    """
+    txt = (txt or "").strip()
+    m = re.match(r"^([A-Z]{1,4}-\d{2,3})(?:\s+(\d{2})(?=\s|:))?\s*[:\-\u2013]?\s*(.*)$", txt)
+    if m:
+        base, sub, rest = m.group(1), m.group(2), m.group(3)
+        manu = manufacturer or "Takara-Tomy"
+    else:
+        m = re.match(r"^([A-Z]\d{4})\s*[:\-\u2013]?\s*(.*)$", txt)
+        if not m:
+            return None
+        base, sub, rest, manu = m.group(1), None, m.group(2), "Hasbro"
+    product, combo = rest, None
+    mm = re.match(r"^(.*?)\s+[-\u2013]\s+(\d{2})\s*:\s*(.+)$", rest)
+    if mm:
+        product, sub, combo = mm.group(1), mm.group(2), mm.group(3)
+    else:
+        mm = re.match(r"^(.*?)\s*:\s*(.+)$", rest)  # 'Random Booster Vol. 1: SharkEdge 3-60LF'
+        if mm and COMBO_RE.search(mm.group(2)):
+            product, combo = mm.group(1), mm.group(2)
+    note = None
+    for part in (combo, product):
+        nm = re.search(r"\(([^()]*)\)\s*$", part or "")
+        if nm:
+            note = nm.group(1).strip()
+            break
+    return {"manufacturer": manu, "base": base, "sub": sub, "code": base + (f" {sub}" if sub else ""),
+            "product": product.strip() or None, "combo": (combo or "").strip() or None, "note": note}
+
+
+def parse_part_products(wikitext):
+    """'== Products ==' section of a part page -> one entry per product the part came in (both manufacturers)."""
+    out, in_products, manu = [], False, None
+    for raw in (wikitext or "").splitlines():
+        line = raw.strip()
+        h = re.match(r"^(=+)\s*(.*?)\s*\1$", line)
+        if h:
+            level, name = len(h.group(1)), clean_value(mwparserfromhell.parse(h.group(2)))
+            if level <= 2:
+                in_products, manu = name.lower().startswith(("product", "release")), None
+            elif in_products:
+                manu = norm_manufacturer(name) or manu
+            continue
+        if in_products and line.startswith(("*", "#")):
+            e = parse_product_line(clean_value(mwparserfromhell.parse(line.lstrip("*#: "))), manu)
+            if e and (e["manufacturer"], e["code"], e["product"], e["combo"]) not in {
+                    (x["manufacturer"], x["code"], x["product"], x["combo"]) for x in out}:
+                out.append(e)
+    return out
+
+
+def release_edition(e):
+    """'Random Booster Vol. 6 06 (HellsReaper T4-70K)' style edition text for a release."""
+    prod = e["product"] or ""
+    if e["sub"] and e["combo"]:
+        return f"{prod} {e['sub']} ({e['combo']})".strip()
+    return (prod + (f" ({e['combo']})" if e["combo"] else "")).strip() or None
+
+
+def parse_gallery(wikitext):
+    """<gallery> lines 'MainBladeReaper2.png|Reaper (CX-05 02/G2746)' -> [(filename, [codes], caption)]"""
+    out = []
+    for block in re.findall(r"<gallery[^>]*>(.*?)</gallery>", wikitext or "", re.S | re.I):
+        for line in block.splitlines():
+            m = re.match(r"^\s*(?:File:|Image:)?\s*([^|\n]+?\." + IMAGE_EXT + r")\s*(?:\|(.*))?$", line, re.I)
+            if not m:
+                continue
+            cap = clean_value(mwparserfromhell.parse(m.group(2) or ""))
+            codes = [f"{c.group(1)}-{c.group(2)}" + (f" {c.group(3)}" if c.group(3) else "")
+                     for c in S.CODE_RE.finditer(cap)] + S.HASBRO_ITEM_RE.findall(cap)
+            out.append((norm_file(m.group(1)), codes, cap))
+    return out
+
+
+def gallery_file_for(gallery, e):
+    """Gallery image for a release: caption names its exact code. When several releases share a code
+    (BX-00 limited recolors) the caption must also name the variant, e.g. 'Metal Coat: Gold'."""
+    code = e["code"]
+    hits = [(f, cap) for f, codes, cap in gallery if code in codes]
+    want = norm_name(e.get("note") or "")
+    if want:
+        for f, cap in hits:
+            if want in norm_name(cap):
+                return f
+    others = [norm_name(n) for n in e.get("_sibling_notes", []) if n and norm_name(n) != want]
+    hits = [(f, cap) for f, cap in hits if not any(o in norm_name(cap) for o in others)]
+    return hits[0][0] if hits else None
+
+
 def combo_parts(text):
     """'Starter HellsReaper T4-70K' -> {'blade':'HellsReaper','assist':'T','ratchet':'4-70','bit':'K'}"""
     m = COMBO_RE.search(PRODUCT_WORDS_RE.sub("", text or "").strip())
@@ -1155,7 +1254,12 @@ class Scraper:
             log(f"  -- checkpoint saved ({self.processed} this run, {self.client.count} requests)")
 
     def kstate(self, target):
-        return self.progress.setdefault(target, {"titles": None, "done": {}, "failed": {}, "complete": False})
+        st = self.progress.setdefault(target, {"titles": None, "done": {}, "failed": {}, "complete": False})
+        if target_kind(target) == "parts" and st.get("schema", 1) < 2:
+            # earlier runs only stored one row per part; revisit every page once for its variants
+            # (page sources come from the local cache, so this costs no extra page downloads)
+            st["done"], st["complete"], st["schema"] = {}, False, 2
+        return st
 
     def targets(self):
         order = {g: i for i, g in enumerate(["X"] + [g for g in S.GENERATIONS if g != "X"])}
@@ -1213,31 +1317,29 @@ class Scraper:
     def _img_cache(self, filename):
         return os.path.join(self.state_dir, "images", hashlib.sha1(filename.encode()).hexdigest()[:16])
 
-    def images_for_pages(self, parsed):
-        """parsed: {title: (pg, infobox, fields, files)} -> {title: (full_png, min_png)}"""
+    def fetch_images(self, filenames, label="images"):
+        """{filename: (full_png, min_png)} for wiki files, from the local cache when possible."""
         out = {}
-        if self.no_images:
+        filenames = [f for f in OrderedDict.fromkeys(filenames) if f]
+        if self.no_images or not filenames:
             return out
-        need = {f[0] for (_, _, _, f) in parsed.values() if f and not os.path.exists(self._img_cache(f[0]) + ".png")}
-        with_img = sum(1 for v in parsed.values() if v[3])
-        log(f"  images: {with_img} of {len(parsed)} pages have one, {with_img - len(need)} cached, "
-            f"{len(need)} to download")
+        need = [f for f in filenames if not os.path.exists(self._img_cache(f) + "-min.png")]
+        log(f"  {label}: {len(filenames)} files, {len(filenames) - len(need)} cached, {len(need)} to download")
         if need:
             log(f"  looking up {len(need)} image URLs ...")
-        urls = self.client.resolve_files(need) if need else {}
+        urls = self.client.resolve_files(set(need)) if need else {}
         p = self.cfg["politeness"]
-        todo = [(t, v[3][0]) for t, v in parsed.items() if v[3]]
-        for i, (t, fname) in enumerate(todo, 1):
+        for i, fname in enumerate(filenames, 1):
             c = self._img_cache(fname)
             if os.path.exists(c + ".png") and os.path.exists(c + "-min.png"):
                 with open(c + ".png", "rb") as a, open(c + "-min.png", "rb") as b:
-                    out[t] = (a.read(), b.read())
+                    out[fname] = (a.read(), b.read())
                 continue
             url = urls.get(fname)
             if not url:
-                log(f"  image {i}/{len(todo)}: {fname} - no URL on the wiki (file missing?), skipped")
+                log(f"  image {i}/{len(filenames)}: {fname} - no URL on the wiki (file missing?), skipped")
                 continue
-            log(f"  image {i}/{len(todo)}: {fname}")
+            log(f"  image {i}/{len(filenames)}: {fname}")
             raw = self.client.request(url, binary=True, what=f"image {fname}")
             if not raw:
                 log("    no image data - row will be written without an image (rerun with --refresh-existing later)")
@@ -1251,8 +1353,13 @@ class Scraper:
             with open(c + ".png", "wb") as a, open(c + "-min.png", "wb") as b:
                 a.write(full)
                 b.write(mini)
-            out[t] = (full, mini)
+            out[fname] = (full, mini)
         return out
+
+    def images_for_pages(self, parsed):
+        """parsed: {title: (pg, infobox, fields, files)} -> {title: (full_png, min_png)} (main image per page)"""
+        got = self.fetch_images([v[3][0] for v in parsed.values() if v[3]], "main images")
+        return {t: got[v[3][0]] for t, v in parsed.items() if v[3] and v[3][0] in got}
 
     def parse(self, pages, titles):
         parsed = {}
@@ -1356,6 +1463,9 @@ class Scraper:
 
     # ---- handlers -------------------------------------------------------------------
     def handle_part(self, target, title, pg, infobox, fields, files, imgs):
+        """One part page -> the main-release row + one variant row per other product it came in
+        (recolors, random-booster items, limited releases, Hasbro releases), each with its own code and,
+        when the wiki gallery has it, its own image. Variants get parentPartId = the main release's dataID."""
         gen, key = target_gen_key(target)
         src = self.cfg["sources"][target]
         cats = " ".join(pg.get("categories", []))
@@ -1364,16 +1474,99 @@ class Scraper:
         if src.get("exclude_category_regex") and re.search(src["exclude_category_regex"], cats):
             return "filtered (category)"
         row = map_part(gen, key, title, fields, src)
+        wt = pg.get("wikitext") or ""
+        releases = parse_part_products(wt)
+        gallery = parse_gallery(wt)
+        gimgs = getattr(self, "_gallery_imgs", {})
+
+        # main release = first Takara Tomy product with the debut code from the infobox
+        main = None
+        tt = [e for e in releases if e["manufacturer"] == "Takara-Tomy"]
+        debut = (row.get("code") or "").split(" ")[0]
+        main = next((e for e in tt if e["base"] == debut), None) or (tt[0] if tt else None) or \
+            (releases[0] if releases else None)
+        if main:
+            row["code"] = main["code"]
+            row["edition"] = release_edition(main)
+            row["manufacturer"] = main["manufacturer"]
+
         book = self.book("parts")
         ws, r = self.existing_match(target, title, row)
+        if releases and r is not None:
+            # never take another release's row (e.g. the BX-50 06 recolor) as the main release
+            other_codes = {e["code"] for e in releases if e is not main}
+            x = dict(book.rows(ws)).get(r, {})
+            if str(x.get("code") or "") in other_codes and str(x.get("code") or "") != row.get("code"):
+                r = None
+                n = norm_name(row["name"])
+                for rr, xx in book.rows(ws):
+                    if norm_name(xx.get("name")) == n and str(xx.get("code") or "") == row.get("code"):
+                        r = rr
+                        break
         defaults = dict(self.cfg["row_defaults"])
         r, rid, new = book.write(ws, row, "dataID", row=r, overwrite=self.overwrite, defaults=defaults)
-        full, mini = imgs.get(title, (None, None))
+        for e in releases:  # releases sharing a code: their notes tell the gallery images apart
+            e["_sibling_notes"] = [x["note"] for x in releases if x["code"] == e["code"] and x is not e]
+        gfile = gallery_file_for(gallery, main) if main else None
+        full, mini = gimgs.get(gfile) if gfile in gimgs else imgs.get(title, (None, None))
         book.set_image(ws, r, "image", full)
         book.set_image(ws, r, "minifiedImage", mini, "min")
         if new or not book.log_index(target).get(title):
-            book.add_log(target, ws.title, rid, title, pg.get("url"), pg.get("revid"), files[0] if files else None)
-        return f"{'new' if new else 'upd'} #{rid}" + ("" if full or self.no_images else " (no image)")
+            book.add_log(target, ws.title, rid, title, pg.get("url"), pg.get("revid"), gfile or (files[0] if files else None))
+        if main:
+            self.link_part_to_product(main, ws.title, rid)
+
+        # variants
+        shared = {k: v for k, v in row.items() if k not in ("code", "edition", "manufacturer", "dataID")}
+        shared["name"] = book.rows(ws)[r - 2][1].get("name") or row["name"]  # keep the store's spelling
+        n_new = n_upd = n_img = 0
+        for e in releases:
+            if e is main:
+                continue
+            vals = dict(shared, code=e["code"], edition=release_edition(e), manufacturer=e["manufacturer"],
+                        parentPartId=rid, variantLabel=e["note"] or e["combo"] or e["product"])
+            vr = self.find_variant_row(book, ws, row["name"], e)
+            if vr == r:
+                continue  # that row is the main release itself
+            vr, vid, vnew = book.write(ws, vals, "dataID", row=vr, overwrite=self.overwrite, defaults=defaults)
+            vf = gallery_file_for(gallery, e)
+            if vf in gimgs:
+                n_img += book.set_image(ws, vr, "image", gimgs[vf][0])
+                book.set_image(ws, vr, "minifiedImage", gimgs[vf][1], "min")
+            key_title = f"{title}#{e['manufacturer']}#{e['code']}#{e['product']}"
+            if vnew or not book.log_index(target).get(key_title):
+                book.add_log(target, ws.title, vid, key_title, pg.get("url"), pg.get("revid"), vf)
+            self.link_part_to_product(e, ws.title, vid)
+            n_new += vnew
+            n_upd += not vnew
+        res = f"{'new' if new else 'upd'} #{rid}" + ("" if full or self.no_images else " (no image)")
+        if releases:
+            res += f", {len(releases) - (1 if main else 0)} variants ({n_new} new, {n_upd} updated, {n_img} new images)"
+        return res
+
+    def find_variant_row(self, book, ws, name, e):
+        """Existing row for this release of the part: same name + code (+ edition for shared codes like BX-00)."""
+        n = norm_name(name)
+        cands = [(r, x) for r, x in book.rows(ws) if norm_name(x.get("name")) == n
+                 and str(x.get("code") or "") == e["code"]
+                 and x.get("manufacturer") in (None, "", e["manufacturer"])]
+        if len(cands) == 1 and S.parse_code(e["code"]) and S.parse_code(e["code"])["number"] != 0:
+            return cands[0][0]
+        want = norm_name(e["note"] or e["combo"] or e["product"])
+        for r, x in cands:
+            if want and (want in norm_name(x.get("edition")) or want == norm_name(x.get("variantLabel"))):
+                return r
+        return cands[0][0] if len(cands) == 1 and not want else None
+
+    def link_part_to_product(self, e, sheet, did):
+        """If the products workbook has this release (sku = code), record the part in its contents."""
+        if not os.path.exists(self.book_path("products")) and "products" not in self._books:
+            return
+        book = self.book("products")
+        pr, prow = book.find(book.named_sheet("Products"), lambda x: str(x.get("sku") or "") == e["code"]
+                             and x.get("manufacturer") == e["manufacturer"])
+        if pr:
+            self.add_content(prow.get("productID"), sheet, did)
 
     def handle_product(self, gen, title, pg, infobox, fields, files, imgs, manufacturer_hint=None):
         src = self.cfg["sources"].get(f"products:{gen}", {})
@@ -1524,10 +1717,15 @@ class Scraper:
             ACTIVITY.set("checking store", t)
             if t in st["done"]:
                 continue
-            if not self.refresh_existing and kind != "products" and self.existing_match(target, t)[1]:
-                st["done"][t] = "already in store"
-                skipped += 1
-                continue
+            if not self.refresh_existing and kind != "products":
+                # parts: skip only pages the scraper already handled (their variants are in the store too);
+                # a part typed in by hand is still opened once so its product variants get added
+                in_store = (self.book("parts").log_index(target).get(t) if kind == "parts"
+                            else self.existing_match(target, t)[1])
+                if in_store:
+                    st["done"][t] = "already in store"
+                    skipped += 1
+                    continue
             todo.append(t)
         log(f"  {len(titles)} pages listed, {skipped} already in the store (skipped without downloading), "
             f"{len(todo)} to fetch")
@@ -1545,6 +1743,11 @@ class Scraper:
                     if t not in parsed:
                         st["failed"][t] = "page missing"
                 imgs = self.images_for_pages(parsed)
+                self._gallery_imgs = {}
+                if kind == "parts" and self.cfg["politeness"].get("variant_images", True):
+                    gal = [f for (pg, _, _, _) in parsed.values() for f, codes, _ in parse_gallery(pg.get("wikitext"))
+                           if codes]
+                    self._gallery_imgs = self.fetch_images(gal, "variant images (gallery)")
                 log(f"  writing {len(parsed)} rows into the workbook ...")
                 for t, (pg, infobox, fields, files) in parsed.items():
                     done_n += 1
@@ -1725,8 +1928,9 @@ class Scraper:
     def code_series(self):
         book = self.book("products")
         cs = book.named_sheet("CodeSeries")
-        if not book.rows(cs):
-            for s in S.CODE_SERIES:
+        have = {(x.get("seriesPrefix"), x.get("manufacturer")) for _, x in book.rows(cs)}
+        for s in S.CODE_SERIES:  # add series that are new in the schema (e.g. RX) to an existing sheet
+            if (s[0], s[1]) not in have:
                 book.write(cs, dict(zip(S.CODE_SERIES_COLUMNS, s)))
         return book, cs
 
