@@ -82,6 +82,11 @@ README = {
     "tcg": [
         "BEYBLADE TCG WORKBOOK",
         "",
+        "Holds every Beyblade card game, told apart by hobbyGeneration:",
+        "  Plastic = the original 2000s Beyblade TCG (Blade / Bit-Beast cards with Battle Edge, Spin Strength, Game Text, Lore)",
+        "  X       = the Beyblade X TCG",
+        "Columns a game doesn't use stay empty (e.g. battleEdge for X, cost for the old game).",
+        "",
         "TCG_Sets   one row per set/expansion. setID = 'S' + number. setCode = the code printed on cards (e.g. BXT01).",
         "           productID links to the booster/deck in the Products workbook if you have it.",
         "TCG_Cards  one row per card. dataID = whole number, unique, never reused.",
@@ -108,6 +113,7 @@ class Book:
     def __init__(self, path, kind):
         self.path, self.kind = path, kind
         self.backed_up = False
+        self.dirty = not os.path.exists(path)
         if os.path.exists(path):
             self.wb = openpyxl.load_workbook(path)
             for ws in self.wb.worksheets:
@@ -157,6 +163,7 @@ class Book:
         """Get or create a sheet with these columns (+ image columns at the end)."""
         wanted = list(columns) + list(image_cols or ())
         if name not in self.wb.sheetnames:
+            self.dirty = True
             ws = self.wb.create_sheet(name)
             ws.append(wanted)
             for i, col in enumerate(wanted, 1):
@@ -181,6 +188,7 @@ class Book:
         for col in wanted:
             if col not in headers:
                 ws.cell(1, len(headers) + 1, col).font = Font(bold=True)
+                self.dirty = True
                 headers.append(col)
         return ws
 
@@ -244,7 +252,9 @@ class Book:
                 continue
             cell = ws.cell(row, hdr[k])
             if new or overwrite or cell.value in (None, ""):
-                cell.value = v
+                if cell.value != v:
+                    cell.value = v
+                    self.dirty = True
         self._rows_cache.pop(ws.title, None)
         rid = ws.cell(row, hdr[id_col]).value if id_col else None
         return row, rid, new
@@ -273,6 +283,7 @@ class Book:
                                    ext=XDRPositiveSize2D(pixels_to_EMU(img.width), pixels_to_EMU(img.height)))
         self._pin(img, png)
         ws.add_image(img)
+        self.dirty = True
         ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 15, img.height * 0.75 + 4)
         return True
 
@@ -299,6 +310,7 @@ class Book:
 
     def add_log(self, target, sheet, rid, title, url=None, revid=None, image_file=None):
         self.log_sheet().append([target, sheet, rid, title, url, revid, image_file, now_iso()])
+        self.dirty = True
         self.log_index(target)[title] = (sheet, rid)
 
     def save(self):
@@ -309,3 +321,4 @@ class Book:
         tmp = self.path + ".tmp.xlsx"
         self.wb.save(tmp)
         os.replace(tmp, self.path)
+        self.dirty = False

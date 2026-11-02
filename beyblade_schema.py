@@ -213,14 +213,17 @@ CODE_SERIES = [
 # TCG WORKBOOK
 # -----------------------------------------------------------------------------
 TCG_RARITIES = ["C", "U", "R", "RR", "SR", "SEC", "Promo", "Other"]
-TCG_CARD_TYPES = ["Bey", "Blader", "Action", "Stadium", "Other"]
+TCG_CARD_TYPES = ["Bey", "Blade", "Blader", "Bit-Beast", "Action", "Stadium", "Other"]
 TCG_SETS_COLUMNS = ["setID", "parentSetId", "variantLabel", "setCode", "setName", "manufacturer", "hobbyName",
                     "hobbyGeneration", "region", "releaseDate", "cardCount", "productID", "description",
                     "incompleteData", "updated_at", "deleted"]
 TCG_SETS_IMAGE_COLS = ("image", "minifiedImage")
+# hobbyGeneration tells the card games apart: "Plastic" = the original 2000s Beyblade TCG
+# (Battle Edge / Spin Strength cards), "X" = the Beyblade X TCG. Stats a game doesn't use stay empty.
 TCG_CARDS_COLUMNS = ["dataID", "parentCardId", "variantLabel", "manufacturer", "hobbyName", "hobbyGeneration",
-                     "setCode", "cardNumber", "name", "cardType", "rarity", "attribute", "cost", "power",
-                     "effectText", "linkedPartType", "linkedPartDataID", "illustrator", "legality",
+                     "setCode", "setName", "cardNumber", "name", "subtitle", "cardType", "rarity", "attribute",
+                     "cost", "power", "battleEdge", "spinStrength", "effectText", "loreText",
+                     "linkedPartType", "linkedPartDataID", "illustrator", "legality",
                      "incompleteData", "updated_at", "deleted"]
 TCG_CARDS_IMAGE_COLS = ("image", "minifiedImage")
 TCG_CARD_NUMBER_RE = re.compile(r"\b([A-Z0-9]{2,6})-(\d{2,4})\b")
