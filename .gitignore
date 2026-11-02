@@ -40,3 +40,6 @@ scraper_config.json
 /beyblade_products.xlsx
 /beyblade_tcg.xlsx
 *.xlsx.bak
+
+# release builder output
+_release/

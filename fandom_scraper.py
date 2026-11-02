@@ -281,6 +281,8 @@ def start_heartbeat(seconds=15, stop_event=None):
     def beat():
         while not (stop_event and stop_event.is_set()):
             time.sleep(1)
+            if ACTIVITY.text == "idle":
+                continue  # finished (GUI keeps running between jobs) - nothing to report
             if time.monotonic() - ACTIVITY.last_log >= seconds:
                 log(f"  ... still busy: {ACTIVITY.describe()}")
     t = threading.Thread(target=beat, daemon=True)
@@ -714,6 +716,7 @@ MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "
                                       "september", "october", "november", "december"], 1)}
 PRODUCT_TYPE_WORDS = [  # first match wins, so specific before generic
     ("random booster", "Random Booster"), ("starter deck", "TCG Starter Deck"), ("booster pack", "TCG Booster"),
+    ("battle pass", "Battle Pass"), ("beybattle pass", "Battle Pass"),
     ("launcher grip", "Launcher Grip"), ("grip", "Launcher Grip"), ("launcher", "Launcher"),
     ("stadium", "Stadium"), ("battle set", "Battle Set"), ("deck set", "Deck Set"), ("entry", "Entry Set"),
     ("customize", "Customize Set"), ("custom set", "Customize Set"), ("starter", "Starter"),
@@ -911,7 +914,7 @@ def map_product(gen, title, fields, src, manufacturer_hint=None):
 def map_tcg_set(title, fields, src, gen="X"):
     pick = make_picker(fields, src.get("aliases"))
     return {"setCode": pick("setCode"), "setName": title_to_name(title) or pick("setName"),
-            "manufacturer": norm_manufacturer(pick("manufacturer")), "hobbyName": S.HOBBY_NAME,
+            "manufacturer": norm_manufacturer(pick("manufacturer")), "hobbyName": S.TCG_HOBBY_NAME,
             "hobbyGeneration": gen, "releaseDate": parse_date(pick("releaseDate")),
             "cardCount": first_number(pick("cardCount")), "description": (pick("description") or "")[:500] or None,
             "incompleteData": 1}
@@ -935,7 +938,7 @@ def map_tcg_card(title, fields, src, gen="X", categories=()):
     return {"cardNumber": m.group(0) if m else (num or None),
             "setCode": m.group(1) if m else pick("cardSetNumber"), "setName": pick("cardSetName"),
             "name": card_name(title) or pick("name"), "subtitle": pick("subtitle"),
-            "manufacturer": norm_manufacturer(pick("manufacturer")), "hobbyName": S.HOBBY_NAME,
+            "manufacturer": norm_manufacturer(pick("manufacturer")), "hobbyName": S.TCG_HOBBY_NAME,
             "hobbyGeneration": gen, "cardType": ctype, "rarity": pick("rarity"), "attribute": pick("attribute"),
             "cost": to_number(pick("cost")), "power": to_number(pick("power")),
             "battleEdge": to_number(pick("battleEdge")), "spinStrength": to_number(pick("spinStrength")),
@@ -1240,8 +1243,11 @@ class Scraper:
             t0 = time.monotonic()
             b.save()
             log(f"  saved {os.path.basename(b.path)} ({n_img} images) in {time.monotonic() - t0:.1f}s")
-        ACTIVITY.set("saving progress files")
+        ACTIVITY.set("saving progress files", f"{len(self.pages)} cached pages")
+        t0 = time.monotonic()
         self.save_state()
+        if time.monotonic() - t0 > 2:
+            log(f"  saved progress files in {time.monotonic() - t0:.1f}s")
 
     def save_state(self):
         write_json(self.progress_path, self.progress)
@@ -1610,6 +1616,12 @@ class Scraper:
             vals = {"accessoryType": acc_type, "manufacturer": prow["manufacturer"], "hobbyName": S.HOBBY_NAME,
                     "hobbyGeneration": gen, "code": prow.get("sku"), "name": prow["productName"],
                     "itemCost": prow.get("itemCost"), "incompleteData": 1}
+            vm = re.match(r"^(.*?)\s*\(([^()]+)\)\s*$", prow["productName"])  # "String Launcher (White Ver.)"
+            if r is None and vm:
+                pr_, base = book.find(acc, lambda x: norm_name(x.get("name")) == norm_name(vm.group(1))
+                                      and x.get("manufacturer") == prow["manufacturer"] and not x.get("parentPartId"))
+                if base:
+                    vals.update(parentPartId=base.get("dataID"), variantLabel=vm.group(2).strip())
             r, aid, _ = book.write(acc, vals, "dataID", row=r, overwrite=self.overwrite)
             book.set_image(acc, r, "imageUrl", full)
             book.set_image(acc, r, "minifiedImage", mini, "min")
@@ -1688,7 +1700,7 @@ class Scraper:
             (set_name and norm_name(x.get("setName")) == norm_name(set_name)) or
             (not set_name and set_code and str(x.get("setCode")) == str(set_code))))
         if r is None:
-            book.write(ws, {"setCode": set_code, "setName": set_name, "hobbyName": S.HOBBY_NAME,
+            book.write(ws, {"setCode": set_code, "setName": set_name, "hobbyName": S.TCG_HOBBY_NAME,
                             "hobbyGeneration": gen, "incompleteData": 1}, "setID", "S")
             log(f"    + new TCG set: {set_name or set_code} ({gen})")
 
@@ -2371,6 +2383,7 @@ def run_gui():
             sc = Scraper(c, stop_event, overwrite.get(), no_img.get(), relist.get(), refresh.get())
             try:
                 fn(sc)
+                ACTIVITY.set("idle")
                 log("\nDone.")
             except StopScrape as e:
                 log(f"\nSTOPPED SAFELY: {e}\nProgress saved - start again to continue.")
@@ -2378,6 +2391,8 @@ def run_gui():
             except Exception:
                 import traceback
                 log(traceback.format_exc())
+            finally:
+                ACTIVITY.set("idle")
         for b in action_btns:
             b.config(state="disabled")
         worker["t"] = threading.Thread(target=job, daemon=True)

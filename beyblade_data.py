@@ -84,8 +84,21 @@ def _dump(path: Path, rows):
                     encoding="utf-8")
 
 
+def check_required(sheet_key, rows, log):
+    """Warn about empty columns the app's models read with requiredString()."""
+    req = list(S.APP_REQUIRED.get(sheet_key, []))
+    part = next((p for g, k, p in S.all_part_targets() if S.part_json_prefix(g, k) == sheet_key), None)
+    if part:
+        req = S.APP_REQUIRED["_part"] + (S.APP_REQUIRED["_typed"] if "spinDir" in part["columns"] else []) + req
+    empty = {c: sum(1 for r in rows if r.get(c) in (None, "")) for c in req if any(c in r for r in rows) or rows}
+    empty = {c: n for c, n in empty.items() if n}
+    if empty:
+        log(f"    note: {sheet_key}: empty required columns (the app reads these as required): "
+            + ", ".join(f"{c} x{n}" for c, n in empty.items()))
+
+
 def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, base_url,
-                        images_by_generation, manifest, log):
+                        images_by_generation, manifest, log, images_by_hobby=None):
     headers = [str(c.value) if c.value else "" for c in ws[1]]
     missing = [f for f in (id_field, img_field, min_field) if f not in headers]
     if missing:
@@ -120,6 +133,9 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             with_image += 1
             gen = row.get("hobbyGeneration") or "unknown"
             images_by_generation.setdefault(gen, {}).setdefault(prefix, []).append(str(data_id))
+            if images_by_hobby is not None:
+                hobby = row.get("hobbyName") or "unknown"
+                images_by_hobby.setdefault(hobby, {}).setdefault(gen, {}).setdefault(prefix, []).append(str(data_id))
         else:
             row["imageUrl"] = None
             row["imageHash"] = None
@@ -137,6 +153,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         rows.append(row)
 
     _dump(out_dir / f"{prefix}.json", rows)
+    check_required(prefix, rows, log)
     manifest["sheets"][prefix] = {"rowCount": len(rows), "withImage": with_image, "withoutImage": without_image}
     extra = f", {no_id} rows without {id_field} skipped" if no_id else ""
     log(f"  {ws.title} -> {prefix}.json: {len(rows)} rows ({with_image} with image, {without_image} without{extra})")
@@ -150,6 +167,7 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest = {"packagedAt": datetime.now(timezone.utc).isoformat(), "workbooks": [], "sheets": {}}
     images_by_generation = {}
+    images_by_hobby = {}  # hobby -> generation -> sheet prefix -> [dataID]; used by build_release.py
     done = {}
 
     for path in [Path(p) for p in workbooks if p]:
@@ -165,14 +183,15 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
             if part:
                 gen, key, _ = part
                 process_image_sheet(ws, S.part_json_prefix(gen, key), "dataID", *S.PART_IMAGE_COLS,
-                                    out_dir, base_url, images_by_generation, manifest, log)
+                                    out_dir, base_url, images_by_generation, manifest, log, images_by_hobby)
             elif name in S.SHEETS and S.SHEETS[name]["images"]:
                 cfg = S.SHEETS[name]
                 process_image_sheet(ws, cfg["json"], cfg["id"], *cfg["images"],
-                                    out_dir, base_url, images_by_generation, manifest, log)
+                                    out_dir, base_url, images_by_generation, manifest, log, images_by_hobby)
             elif name in NO_IMAGE_SHEETS:
                 rows = read_sheet_rows(ws)
                 _dump(out_dir / f"{NO_IMAGE_SHEETS[name]}.json", rows)
+                check_required(NO_IMAGE_SHEETS[name], rows, log)
                 manifest["sheets"][NO_IMAGE_SHEETS[name]] = {"rowCount": len(rows)}
                 log(f"  {name} -> {NO_IMAGE_SHEETS[name]}.json: {len(rows)} rows (no images)")
             else:
@@ -182,6 +201,10 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
     manifest["imagesByGeneration"] = {g: {k: len(v) for k, v in s.items()} for g, s in images_by_generation.items()}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (out_dir / "_images_by_generation.json").write_text(json.dumps(images_by_generation), encoding="utf-8")
+    (out_dir / "_images_by_hobby.json").write_text(json.dumps(images_by_hobby), encoding="utf-8")
+    manifest["imagesByHobby"] = {h: {g: sum(len(v) for v in s.values()) for g, s in gs.items()}
+                                 for h, gs in images_by_hobby.items()}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     log(f"\nDone. Output in {out_dir}")
     return manifest
 
