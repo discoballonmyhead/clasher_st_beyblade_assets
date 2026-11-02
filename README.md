@@ -55,6 +55,15 @@ python fandom_scraper.py --scope tcg --generation X           # Beyblade X TCG (
 python fandom_scraper.py --next      # next unfinished target
 python fandom_scraper.py --status
 ```
+* Parts and their variants: each part page's **Products** section lists every release the part came in
+  (`CX-05 Random Booster Vol. 6 - 01: HellsReaper T4-70K`, `BX-00 Booster DranSword 3-60F (Metal Coat: Gold)`,
+  Hasbro `G1678 Reaper Incendio T 4-70K`). The debut release (infobox product code) becomes the main row;
+  every other release becomes a variant row with `parentPartId` = main row, its own `code` (BX/UX/CX/RX + item
+  number, or the Hasbro item number), `edition`, `variantLabel` and `manufacturer`. Images come from the page
+  gallery, matched by the codes in the captions (`Reaper (CX-05 02/G2746)`); recolors sharing a code (BX-00) are
+  told apart by the caption text. A variant without a gallery image is written without one. Rows you already
+  have (same name + code) are matched and only blank cells are filled, so your existing editions get their
+  `parentPartId`. If the release is in the products workbook (sku = code) the part is added to its contents.
 * Anything already in the workbooks is skipped **before** downloading (wiki title, name+code, sku, card number).
   `--relist` finds newly added wiki pages; `--refresh-existing` fills blank cells of existing rows; hand edits
   are kept unless `--overwrite`.
