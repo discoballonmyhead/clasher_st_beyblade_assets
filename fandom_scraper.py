@@ -176,6 +176,8 @@ DEFAULT_CONFIG = {
         "max_response_mb": 25,
         "heartbeat_seconds": 15,         # print what is going on when nothing was logged for this long
         "variant_images": True,          # parts: also download each recolor's image from the page gallery
+        "rendered_infobox": "auto",      # parts: read the rendered infobox when stats are missing (auto/always/never)
+        "workbook_image_format": "webp", # images stored in the workbooks: webp (packager copies as-is) or png
     },
     "update": {
         "miss_limit": 3,             # stop a series after this many codes in a row are not found
@@ -235,7 +237,7 @@ class Activity:
     """What the scraper is doing right now - shown by the heartbeat and the GUI status line."""
 
     def __init__(self):
-        self.text, self.detail, self.since, self.last_log = "starting", "", time.monotonic(), time.monotonic()
+        self.text, self.detail, self.since, self.last_log = "idle", "", time.monotonic(), time.monotonic()
 
     def set(self, text, detail=""):
         self.text, self.detail, self.since = text, detail, time.monotonic()
@@ -548,6 +550,12 @@ class PoliteClient:
         d = self.api_get(action="query", list="search", srsearch=term, srnamespace="14", srlimit="50")
         return [(h["title"], h.get("size")) for h in d["query"]["search"]]
 
+    def rendered_lead_html(self, title):
+        """Rendered HTML of the top of a page (where the infobox lives)."""
+        d = self.api_get(action="parse", page=title, prop="text", section="0", disablelimitreport="1",
+                         disableeditsection="1", redirects="1")
+        return (d.get("parse") or {}).get("text") or ""
+
     def search_pages(self, term, limit=5):
         d = self.api_get(action="query", list="search", srsearch=term, srnamespace="0", srlimit=str(limit),
                          srwhat="text")
@@ -595,6 +603,86 @@ class PoliteClient:
                 if info:
                     out[norm_file(p["title"])] = info.get("thumburl") or info.get("url")
         return out
+
+# =============================================================================
+# RENDERED INFOBOX (fallback when the page source doesn't give the stats)
+# =============================================================================
+
+from html.parser import HTMLParser  # noqa: E402
+
+_VOID_TAGS = {"br", "img", "hr", "meta", "input", "wbr", "source", "link", "col"}
+
+
+class PortableInfoboxParser(HTMLParser):
+    """Reads Fandom's rendered portable infobox: the labels you see on the page ("Spin Direction",
+    "Weight", "Attack") and their values, plus the first infobox image. With tabbed infoboxes
+    (Original / Version 2.0) the first tab wins."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []          # [(tag, attrs)]
+        self.values = OrderedDict()   # data-source -> text
+        self.labels = {}         # data-source -> label text
+        self.image = None
+        self._cap = None         # (kind, key, depth, [text])
+
+    def _source(self):
+        for tag, a in reversed(self.stack):
+            if a.get("data-source"):
+                return a["data-source"]
+        return None
+
+    def handle_starttag(self, tag, attrs):
+        a = {k: (v or "") for k, v in attrs}
+        if tag == "br" and self._cap:
+            self._cap[3].append("\n")
+        if tag == "img" and self.image is None and any("portable-infobox" in (x.get("class", "")) for _, x in self.stack):
+            self.image = a.get("data-image-key") or a.get("data-image-name")
+        if tag in _VOID_TAGS:
+            return
+        self.stack.append((tag, a))
+        cls = a.get("class", "")
+        if self._cap is None:
+            kind = ("value" if re.search(r"pi-(smart-)?data-value", cls) else
+                    "label" if re.search(r"pi-(smart-)?data-label", cls) else None)
+            if kind:
+                self._cap = (kind, a.get("data-source") or self._source(), len(self.stack), [])
+
+    def handle_endtag(self, tag):
+        if tag in _VOID_TAGS:
+            return
+        while self.stack:
+            t, _ = self.stack.pop()
+            if self._cap and len(self.stack) < self._cap[2]:
+                kind, key, _, text = self._cap
+                val = re.sub(r"[ \t]+", " ", "".join(text)).strip()
+                val = "\n".join(x.strip() for x in val.splitlines() if x.strip())
+                if key and val:
+                    target = self.values if kind == "value" else self.labels
+                    target.setdefault(key, val)
+                self._cap = None
+            if t == tag:
+                break
+
+    def handle_data(self, data):
+        if self._cap:
+            self._cap[3].append(data)
+
+
+def rendered_infobox_fields(html):
+    """-> ({normalised label or data-source: value}, infobox image filename or None)"""
+    p = PortableInfoboxParser()
+    try:
+        p.feed(html or "")
+    except Exception:
+        return {}, None
+    out = OrderedDict()
+    for src, val in p.values.items():
+        out.setdefault(norm_key(src), val)
+        if p.labels.get(src):
+            out.setdefault(norm_key(p.labels[src]), val)
+    img = norm_file(p.image) if p.image else None
+    return out, img
 
 # =============================================================================
 # WIKITEXT PARSING
@@ -691,15 +779,24 @@ def parse_page(wikitext, image_re):
 # IMAGES
 # =============================================================================
 
-def to_png(content, max_width):
+def to_image(content, max_width, fmt="webp"):
+    """Resize to max_width and encode as WebP (default: what the packager and the app use, so the
+    packager copies it as-is) or PNG (for very old Excel versions that can't show WebP)."""
     im = Image.open(io.BytesIO(content))
     im.seek(0)
     im = im.convert("RGBA")
     if im.width > max_width:
         im = im.resize((max_width, max(1, round(im.height * max_width / im.width))), Image.LANCZOS)
     buf = io.BytesIO()
-    im.save(buf, "PNG", optimize=True)
+    if fmt == "png":
+        im.save(buf, "PNG", optimize=True)
+    else:
+        im.save(buf, "WEBP", quality=85, method=6)
     return buf.getvalue()
+
+
+def to_png(content, max_width):  # kept for older callers
+    return to_image(content, max_width, "png")
 
 
 # =============================================================================
@@ -849,7 +946,7 @@ def map_part(gen, key, title, fields, src):
     row["manufacturer"] = norm_manufacturer(pick("manufacturer")) or "Takara-Tomy"
     ed = pick("edition")
     row["edition"] = ed.split(";")[0].strip()[:120] if ed else None
-    row["mass"] = first_number(pick("mass"))
+    row["mass"] = first_number(pick("mass"))  # "34.6 grams (first mold)\n35.1 grams" -> 34.6
     wbo = pick("wbolegality")
     if wbo:
         row["wbolegality"] = 0 if re.search(r"(?i)\u274c|\u2716|\u2718|\bno\b|\bban|illegal|\bnot\b", wbo) else \
@@ -862,8 +959,12 @@ def map_part(gen, key, title, fields, src):
         row["spinDir"] = norm_spin(pick("spinDir"))
     for stat in ("attack", "defense", "stamina", "dash", "burstRes"):
         if stat in cols:
-            v = pick(stat)
-            row[stat] = to_number(v.split(";")[0]) if v else None
+            v = pick(stat)  # "55\n60 (2.0)" (first mold / version 2.0) -> 55
+            row[stat] = to_number(re.split(r"[;\n]", v)[0].strip()) if v else None
+    if "attack" in cols and row.get("attack") is None:
+        nums = NUM_RE.findall(fields.get("stats") or "")  # |stats={{Stats|25|10|25}} -> "25 10 25"
+        if len(nums) >= 3:
+            row["attack"], row["defense"], row["stamina"] = (to_number(n) for n in nums[:3])
     for col in ("system", "layerComponent", "discType"):
         if col in cols:
             row[col] = pick(col)
@@ -1089,14 +1190,30 @@ def parse_assortment(wikitext):
     return out
 
 
+_NOTE_STOP = {"ver", "version", "the", "and", "of", "a"}
+
+
+def note_tokens(text):
+    """'Metal Coat: Bronze' -> {'metal','coat','bronze'}; 'Katsushika City Ver.' -> {'katsushika','city'};
+    'Version 2.0' / 'Ver. 2' / 'V2' -> {'v2'}"""
+    t = str(text or "").lower()
+    t = re.sub(r"\b(?:version|ver\.?)\s*(\d+)(?:\.0)?\b", r" v\1 ", t)
+    t = re.sub(r"\bv(\d+)\.0\b", r"v\1", t)
+    return set(re.findall(r"[a-z0-9]+", t)) - _NOTE_STOP
+
+
 def parse_product_line(txt, manufacturer=None):
-    """One line of a part page's Products section:
-        'CX-05 Random Booster Vol. 6 - 01: HellsReaper T4-70K'  -> code CX-05 01, product, combo
-        'BX-00 Booster DranSword 3-60F (Metal Coat: Gold)'      -> code BX-00, note 'Metal Coat: Gold'
-        'G1678 Reaper Incendio T 4-70K'                          -> Hasbro item G1678
-    """
-    txt = (txt or "").strip()
-    m = re.match(r"^([A-Z]{1,4}-\d{2,3})(?:\s+(\d{2})(?=\s|:))?\s*[:\-\u2013]?\s*(.*)$", txt)
+    """One line of a part page's Products section, e.g.
+        'BX-01 DranSword 3-60F'
+        'BX-07 Start Dash Set - DranSword 3-60F (Special Ver.)'
+        'BX-14 Random Booster Vol. 1 - 03: DranSword 3-80B'
+        'BX-00 DranSword 3-60F (Metal Coat: Bronze) (G1 Prize)'
+        'BX-00 "'DranSword 3-60F 'Version 2.0"'
+        'G0197 Tail Viper and Sword Dran Dual Pack - Sword Dran 3-60F (Red Ver.)'   (Hasbro item number)
+    -> {manufacturer, base, sub, code, product, combo, note, extra}"""
+    txt = re.sub(r"[\"\u201c\u201d]|'(?=\S)|(?<=\S)'", " ", (txt or "")).strip()
+    txt = re.sub(r"\s+", " ", txt)
+    m = re.match(r"^([A-Z]{1,4}-\d{2,3})(?:\s+(\d{2})(?=\s|:|$))?\s*[:\-\u2013]?\s*(.*)$", txt)
     if m:
         base, sub, rest = m.group(1), m.group(2), m.group(3)
         manu = manufacturer or "Takara-Tomy"
@@ -1106,21 +1223,23 @@ def parse_product_line(txt, manufacturer=None):
             return None
         base, sub, rest, manu = m.group(1), None, m.group(2), "Hasbro"
     product, combo = rest, None
-    mm = re.match(r"^(.*?)\s+[-\u2013]\s+(\d{2})\s*:\s*(.+)$", rest)
+    mm = re.match(r"^(.*?)\s+[-\u2013]\s+(?:(\d{2})\s*:\s*)?(.+)$", rest)   # 'Set - [03:] Combo'
     if mm:
-        product, sub, combo = mm.group(1), mm.group(2), mm.group(3)
+        product, sub, combo = mm.group(1), mm.group(2) or sub, mm.group(3)
     else:
-        mm = re.match(r"^(.*?)\s*:\s*(.+)$", rest)  # 'Random Booster Vol. 1: SharkEdge 3-60LF'
+        mm = re.match(r"^(.*?)\s*:\s*(.+)$", rest)                          # 'Random Booster Vol. 1: Combo'
         if mm and COMBO_RE.search(mm.group(2)):
             product, combo = mm.group(1), mm.group(2)
-    note = None
-    for part in (combo, product):
-        nm = re.search(r"\(([^()]*)\)\s*$", part or "")
-        if nm:
-            note = nm.group(1).strip()
-            break
+    tail = combo or product or ""
+    notes = re.findall(r"\(([^()]*)\)", tail)
+    note = notes[0].strip() if notes else None
+    extra = "; ".join(n.strip() for n in notes[1:]) or None
+    if not note:  # 'DranSword 3-60F Version 2.0' / 'DranSword V2'
+        vm = re.search(r"\b(Version \d+(?:\.\d+)?|Ver\. ?\d+(?:\.\d+)?|V\d+(?:\.\d+)?)\s*$", tail)
+        note = vm.group(1) if vm else None
     return {"manufacturer": manu, "base": base, "sub": sub, "code": base + (f" {sub}" if sub else ""),
-            "product": product.strip() or None, "combo": (combo or "").strip() or None, "note": note}
+            "product": (product or "").strip() or None, "combo": (combo or "").strip() or None,
+            "note": note, "extra": extra, "line": txt}
 
 
 def parse_part_products(wikitext):
@@ -1168,18 +1287,26 @@ def parse_gallery(wikitext):
 
 
 def gallery_file_for(gallery, e):
-    """Gallery image for a release: caption names its exact code. When several releases share a code
-    (BX-00 limited recolors) the caption must also name the variant, e.g. 'Metal Coat: Gold'."""
+    """Gallery image for a release. Captions look like 'DranSword (BX-01/F9580)',
+    'DranSword (Red Ver.; BX-17/G0197)', 'DranSword (Metal Coat: Bronze)' (no code at all).
+    A release with a note (recolor) only takes a caption naming that note; a plain release takes the
+    caption with its code that doesn't belong to a sibling recolor."""
     code = e["code"]
-    hits = [(f, cap) for f, codes, cap in gallery if code in codes]
-    want = norm_name(e.get("note") or "")
+    want = note_tokens(e.get("note"))
+    hits = [(f, cap) for f, codes, cap in gallery if code in codes or (" " not in code and e["base"] in codes)]
     if want:
         for f, cap in hits:
-            if want in norm_name(cap):
+            if want <= note_tokens(cap):
                 return f
-    others = [norm_name(n) for n in e.get("_sibling_notes", []) if n and norm_name(n) != want]
-    hits = [(f, cap) for f, cap in hits if not any(o in norm_name(cap) for o in others)]
-    return hits[0][0] if hits else None
+        for f, codes, cap in gallery:
+            if want <= note_tokens(cap):
+                return f
+        return None
+    sibling = [note_tokens(n) for n in e.get("_sibling_notes", []) if n]
+    for f, cap in hits:
+        if not any(t and t <= note_tokens(cap) for t in sibling):
+            return f
+    return None
 
 
 def combo_parts(text):
@@ -1261,10 +1388,10 @@ class Scraper:
 
     def kstate(self, target):
         st = self.progress.setdefault(target, {"titles": None, "done": {}, "failed": {}, "complete": False})
-        if target_kind(target) == "parts" and st.get("schema", 1) < 2:
-            # earlier runs only stored one row per part; revisit every page once for its variants
-            # (page sources come from the local cache, so this costs no extra page downloads)
-            st["done"], st["complete"], st["schema"] = {}, False, 2
+        if target_kind(target) == "parts" and st.get("schema", 1) < 3:
+            # earlier runs stored one row per part and could miss stats; revisit every page once for its
+            # variants + stats (page sources come from the local cache, so no extra page downloads)
+            st["done"], st["complete"], st["schema"] = {}, False, 3
         return st
 
     def targets(self):
@@ -1320,26 +1447,102 @@ class Scraper:
             log(f"  page sources {min(i * bs, len(missing))}/{len(missing)} done")
         return {t: self.pages[t] for t in titles if t in self.pages}
 
+    def fill_from_rendered(self, target, parsed):
+        """Pages whose source didn't give type / spin / stats / weight: read the rendered infobox
+        (same labels as on the page) and fill the gaps. One request per such page, cached."""
+        mode = self.cfg["politeness"].get("rendered_infobox", "auto")
+        if mode == "never":
+            return
+        gen, key = target_gen_key(target)
+        src = self.cfg["sources"][target]
+        cols = S.GENERATIONS[gen]["parts"][key]["columns"]
+        want = [c for c in ("type", "spinDir", "attack", "mass") if c in cols]
+        need = []
+        for t, (pg, infobox, fields, files) in parsed.items():
+            row = map_part(gen, key, t, fields, src)
+            if mode == "always" or any(row.get(c) in (None, "") for c in want):
+                need.append(t)
+        if not need:
+            return
+        log(f"  {len(need)} pages lack stats in their source - reading their rendered infobox ...")
+        for i, t in enumerate(need, 1):
+            pg, infobox, fields, files = parsed[t]
+            cached = pg.get("rendered_fields")
+            if cached is None:
+                ACTIVITY.set(f"rendered infobox {i}/{len(need)}", t)
+                try:
+                    rf, img = rendered_infobox_fields(self.client.rendered_lead_html(t))
+                except RuntimeError as e:
+                    log(f"    {t}: could not render ({e})")
+                    rf, img = {}, None
+                pg["rendered_fields"], pg["rendered_image"] = dict(rf), img
+                if i % 10 == 0:
+                    write_json(self.pages_path, self.pages)
+            for k, v in (pg.get("rendered_fields") or {}).items():
+                fields.setdefault(k, v)
+            if not files and pg.get("rendered_image"):
+                files.append(pg["rendered_image"])
+            got = map_part(gen, key, t, fields, src)
+            log(f"    {t}: " + ", ".join(f"{c}={got.get(c)}" for c in want + ["defense", "stamina"] if c in cols))
+        write_json(self.pages_path, self.pages)
+
+    def completeness_report(self, target):
+        """How many rows of the sheet still have blanks in the columns that matter."""
+        if target_kind(target) != "parts":
+            return
+        gen, key = target_gen_key(target)
+        book = self.book("parts")
+        ws = book.part_sheet(gen, key)
+        rows = [x for _, x in book.rows(ws)]
+        cols = [c for c in ("code", "type", "spinDir", "attack", "defense", "stamina", "mass", "wbolegality",
+                            "baseName", "protrusions", "heightMm")
+                if c in S.GENERATIONS[gen]["parts"][key]["columns"]]
+        hdr = book.headers(ws)
+        img_rows = {im.anchor._from.row + 1 for im in ws._images if im.anchor._from.col + 1 == hdr.get("image")}
+        blanks = {c: sum(1 for x in rows if x.get(c) in (None, "")) for c in cols}
+        n_img = sum(1 for r, _ in book.rows(ws) if r in img_rows)
+        log(f"  {ws.title}: {len(rows)} rows ({sum(1 for x in rows if x.get('parentPartId'))} variants), "
+            f"{n_img} with image; still blank: " +
+            (", ".join(f"{c} {n}" for c, n in blanks.items() if n) or "nothing"))
+
     def _img_cache(self, filename):
         return os.path.join(self.state_dir, "images", hashlib.sha1(filename.encode()).hexdigest()[:16])
 
+    def _cached_image(self, fname, fmt, p):
+        """(full, mini) from the local cache; converts a cache of the other format without re-downloading."""
+        c = self._img_cache(fname)
+        if os.path.exists(f"{c}.{fmt}") and os.path.exists(f"{c}-min.{fmt}"):
+            with open(f"{c}.{fmt}", "rb") as a, open(f"{c}-min.{fmt}", "rb") as b:
+                return a.read(), b.read()
+        other = "png" if fmt == "webp" else "webp"
+        if os.path.exists(f"{c}.{other}"):
+            with open(f"{c}.{other}", "rb") as a:
+                src = a.read()
+            full, mini = to_image(src, p["image_width"], fmt), to_image(src, p["min_image_width"], fmt)
+            with open(f"{c}.{fmt}", "wb") as a, open(f"{c}-min.{fmt}", "wb") as b:
+                a.write(full)
+                b.write(mini)
+            return full, mini
+        return None
+
     def fetch_images(self, filenames, label="images"):
-        """{filename: (full_png, min_png)} for wiki files, from the local cache when possible."""
+        """{filename: (full, mini)} for wiki files (WebP by default), from the local cache when possible."""
         out = {}
         filenames = [f for f in OrderedDict.fromkeys(filenames) if f]
         if self.no_images or not filenames:
             return out
-        need = [f for f in filenames if not os.path.exists(self._img_cache(f) + "-min.png")]
+        p = self.cfg["politeness"]
+        fmt = p.get("workbook_image_format", "webp")
+        need = [f for f in filenames if not any(os.path.exists(f"{self._img_cache(f)}.{x}") for x in ("webp", "png"))]
         log(f"  {label}: {len(filenames)} files, {len(filenames) - len(need)} cached, {len(need)} to download")
         if need:
             log(f"  looking up {len(need)} image URLs ...")
         urls = self.client.resolve_files(set(need)) if need else {}
-        p = self.cfg["politeness"]
         for i, fname in enumerate(filenames, 1):
             c = self._img_cache(fname)
-            if os.path.exists(c + ".png") and os.path.exists(c + "-min.png"):
-                with open(c + ".png", "rb") as a, open(c + "-min.png", "rb") as b:
-                    out[fname] = (a.read(), b.read())
+            cached = self._cached_image(fname, fmt, p)
+            if cached:
+                out[fname] = cached
                 continue
             url = urls.get(fname)
             if not url:
@@ -1352,11 +1555,11 @@ class Scraper:
                 continue
             ACTIVITY.set(f"converting image {fname}", f"{len(raw) // 1024} KB")
             try:
-                full, mini = to_png(raw, p["image_width"]), to_png(raw, p["min_image_width"])
+                full, mini = to_image(raw, p["image_width"], fmt), to_image(raw, p["min_image_width"], fmt)
             except Exception as e:
                 log(f"    image convert failed for {fname}: {e}")
                 continue
-            with open(c + ".png", "wb") as a, open(c + "-min.png", "wb") as b:
+            with open(f"{c}.{fmt}", "wb") as a, open(f"{c}-min.{fmt}", "wb") as b:
                 a.write(full)
                 b.write(mini)
             out[fname] = (full, mini)
@@ -1536,6 +1739,8 @@ class Scraper:
                 continue  # that row is the main release itself
             vr, vid, vnew = book.write(ws, vals, "dataID", row=vr, overwrite=self.overwrite, defaults=defaults)
             vf = gallery_file_for(gallery, e)
+            if vf is None and not e.get("note") and not e.get("sub") and gfile:
+                vf = gfile  # standard-color re-release (Entry Package, Hasbro single) looks like the main one
             if vf in gimgs:
                 n_img += book.set_image(ws, vr, "image", gimgs[vf][0])
                 book.set_image(ws, vr, "minifiedImage", gimgs[vf][1], "min")
@@ -1551,18 +1756,28 @@ class Scraper:
         return res
 
     def find_variant_row(self, book, ws, name, e):
-        """Existing row for this release of the part: same name + code (+ edition for shared codes like BX-00)."""
+        """Existing row for this release of the part. Same name and the same code family (BX-17 matches a
+        store row 'BX-17 01'); a recolor must also share its note words with the row's edition/label
+        ('Red Ver.' -> 'Red Version'), so BX-00 recolors never collapse into one row."""
         n = norm_name(name)
-        cands = [(r, x) for r, x in book.rows(ws) if norm_name(x.get("name")) == n
-                 and str(x.get("code") or "") == e["code"]
-                 and x.get("manufacturer") in (None, "", e["manufacturer"])]
-        if len(cands) == 1 and S.parse_code(e["code"]) and S.parse_code(e["code"])["number"] != 0:
-            return cands[0][0]
-        want = norm_name(e["note"] or e["combo"] or e["product"])
-        for r, x in cands:
-            if want and (want in norm_name(x.get("edition")) or want == norm_name(x.get("variantLabel"))):
-                return r
-        return cands[0][0] if len(cands) == 1 and not want else None
+        cands = []
+        for r, x in book.rows(ws):
+            code = str(x.get("code") or "")
+            if norm_name(x.get("name")) != n or x.get("manufacturer") not in (None, "", e["manufacturer"]):
+                continue
+            if code == e["code"] or code.split(" ")[0] == e["base"]:
+                cands.append((r, x))
+        want = note_tokens(e.get("note"))
+        if want:
+            for r, x in cands:
+                if want <= note_tokens(f"{x.get('edition') or ''} {x.get('variantLabel') or ''}"):
+                    return r
+            return None
+        exact = [(r, x) for r, x in cands if str(x.get("code") or "") == e["code"]]
+        plain = [(r, x) for r, x in exact if not re.search(r"[\"(]", str(x.get("edition") or ""))
+                 or not x.get("variantLabel")]
+        pick = plain or exact
+        return pick[0][0] if len(pick) == 1 else None
 
     def link_part_to_product(self, e, sheet, did):
         """If the products workbook has this release (sku = code), record the part in its contents."""
@@ -1729,12 +1944,10 @@ class Scraper:
             ACTIVITY.set("checking store", t)
             if t in st["done"]:
                 continue
-            if not self.refresh_existing and kind != "products":
-                # parts: skip only pages the scraper already handled (their variants are in the store too);
-                # a part typed in by hand is still opened once so its product variants get added
-                in_store = (self.book("parts").log_index(target).get(t) if kind == "parts"
-                            else self.existing_match(target, t)[1])
-                if in_store:
+            if not self.refresh_existing and kind == "tcg":
+                # parts are skipped only via progress (st["done"] above): every part page is handled once
+                # by this version so its variants + stats land, even when a row for it already exists
+                if self.existing_match(target, t)[1]:
                     st["done"][t] = "already in store"
                     skipped += 1
                     continue
@@ -1754,11 +1967,13 @@ class Scraper:
                 for t in batch:
                     if t not in parsed:
                         st["failed"][t] = "page missing"
+                if kind == "parts":
+                    self.fill_from_rendered(target, parsed)
                 imgs = self.images_for_pages(parsed)
                 self._gallery_imgs = {}
                 if kind == "parts" and self.cfg["politeness"].get("variant_images", True):
-                    gal = [f for (pg, _, _, _) in parsed.values() for f, codes, _ in parse_gallery(pg.get("wikitext"))
-                           if codes]
+                    # every gallery image: recolor captions often have no code ("DranSword (Metal Coat: Bronze)")
+                    gal = [f for (pg, _, _, _) in parsed.values() for f, _, _ in parse_gallery(pg.get("wikitext"))]
                     self._gallery_imgs = self.fetch_images(gal, "variant images (gallery)")
                 log(f"  writing {len(parsed)} rows into the workbook ...")
                 for t, (pg, infobox, fields, files) in parsed.items():
@@ -1780,6 +1995,7 @@ class Scraper:
             self.save_all()
             log(f"  saved: {len(st['done'])}/{len(titles)} pages handled for {target}, "
                 f"{self.client.count} requests used this run")
+            self.completeness_report(target)
 
     # ---- products from the wiki's product list pages ---------------------------------
     def list_pages_for(self, gen, refresh=False):

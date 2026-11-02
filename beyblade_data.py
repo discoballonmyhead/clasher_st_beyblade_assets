@@ -47,6 +47,10 @@ def read_sheet_rows(ws):
 
 
 def png_bytes_to_webp(png_bytes: bytes) -> bytes:
+    """Any embedded image -> WebP. Already WebP (what the scraper stores) is copied as-is: no second
+    lossy encode, and the same image always gives the same file/hash."""
+    if png_bytes[:4] == b"RIFF" and png_bytes[8:12] == b"WEBP":
+        return png_bytes
     img = PILImage.open(io.BytesIO(png_bytes)).convert("RGBA")
     buf = io.BytesIO()
     img.save(buf, format="WEBP", quality=WEBP_QUALITY)
@@ -59,10 +63,12 @@ def extract_embedded_images(ws, img_col_1idx: int, min_col_1idx: int):
     for img in ws._images:
         row = img.anchor._from.row + 1
         col = img.anchor._from.col + 1
+        # original bytes: img._data() re-encodes WebP as PNG
+        raw = img.ref.getvalue() if hasattr(img.ref, "getvalue") else img._data()
         if col == img_col_1idx:
-            result.setdefault(row, {})["full"] = img._data()
+            result.setdefault(row, {})["full"] = raw
         elif col == min_col_1idx:
-            result.setdefault(row, {})["min"] = img._data()
+            result.setdefault(row, {})["min"] = raw
     return result
 
 
