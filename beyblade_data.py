@@ -11,6 +11,8 @@ Inputs (any combination; a single legacy master workbook also works):
 Images are PNGs embedded in the image columns of each row (anchored to that row's cell).
 
 GUI:  python beyblade_data.py
+Image tool (put an image you found on a row): "Image tool..." button, or
+      python beyblade_data.py image --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --file pic.png
 CLI:  python beyblade_data.py --parts beyblade_parts.xlsx --products beyblade_products.xlsx \
           --tcg beyblade_tcg.xlsx --out data --user discoballonmyhead --repo clasher_st_beyblade_assets
 """
@@ -276,6 +278,13 @@ def run_gui():
     af.pack(fill=tk.X, padx=10)
     run_btn = ttk.Button(af, text="Run Packager")
     run_btn.pack(side=tk.LEFT)
+
+    def open_image_tool():
+        import image_tool
+        image_tool.open_window(root, v["parts"].get().strip() or v["products"].get().strip())
+
+    # Side tool: put an image you found onto an existing row (doesn't package anything)
+    ttk.Button(af, text="Image tool...", command=open_image_tool).pack(side=tk.RIGHT)
     progress = ttk.Progressbar(af, mode="indeterminate")
     lf = ttk.LabelFrame(root, text="Logs", padding=10)
     lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -331,7 +340,11 @@ def run_gui():
 
 
 def run_cli(argv):
-    ap = argparse.ArgumentParser(description="Package Beyblade workbooks into data/*.json + images")
+    if argv and argv[0] == "image":  # side tool: python beyblade_data.py image --workbook ... --sheet ... --id ...
+        import image_tool
+        return image_tool.run_cli(argv[1:])
+    ap = argparse.ArgumentParser(description="Package Beyblade workbooks into data/*.json + images "
+                                             "(or: beyblade_data.py image --help for the image tool)")
     ap.add_argument("--parts")
     ap.add_argument("--products")
     ap.add_argument("--tcg")

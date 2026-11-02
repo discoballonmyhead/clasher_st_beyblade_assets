@@ -9,7 +9,7 @@ Used by:
 
 THE THREE WORKBOOKS
   1. beyblade_parts.xlsx     one sheet per generation + part type: Parts_<Gen>_<Type>
-                             e.g. Parts_X_Blades, Parts_Burst_Layers, Parts_MetalFight_FusionWheels
+                             e.g. Parts_X_Blades, Parts_Burst_Layers, Parts_Metal_FusionWheels
   2. beyblade_products.xlsx  Products (every release: starters, boosters, sets, launchers,
                              stadiums...), Accessories (launchers, stadiums, grips, cases...),
                              ProductContents (what is inside each product), CodeSeries (the
@@ -26,10 +26,10 @@ from collections import OrderedDict
 
 HOBBY_NAME = "Beyblade"
 # The card game is its own hobby in the app (separate catalog, separate image/data packs),
-# so its rows carry a different hobbyName. Generation still says which era ("X", "Plastic").
+# so its rows carry a different hobbyName. Generation still says which series ("Original" = V-Force TCG, "X").
 TCG_HOBBY_NAME = "Beyblade TCG"
 HOBBIES = [HOBBY_NAME, TCG_HOBBY_NAME]
-MANUFACTURERS = ["Takara-Tomy", "Hasbro", "Sonokong", "Other"]
+MANUFACTURERS = ["Takara-Tomy", "Hasbro"]  # the only two, for all four series
 REGIONS = ["JP", "US", "EU", "KR", "Global", "Other"]
 CURRENCIES = ["JPY", "USD", "EUR", "KRW", "GBP", "CAD", "AUD"]
 BEY_TYPES = ["attack", "defense", "stamina", "balance"]
@@ -53,56 +53,53 @@ def _pt(sheet, label, extra, words, categories=None):
             "words": words, "categories": categories or [label + "s"]}
 
 
+# The four Beyblade series. Each has its own part types; "system" says which system inside the series
+# a part belongs to (Plastic / HMS, Hybrid Wheel / 4D / Zero-G, Dual / God / ... / QuadDrive, ...).
+# "signals" let the scraper tell which series a wiki page belongs to (series/system names, codes).
 GENERATIONS = OrderedDict([
-    ("Plastic", {
-        "label": "Bakuten Shoot Beyblade (Plastic, 1999-2003)",
+    ("Original", {
+        "label": "Beyblade original series: Bakuten Shoot / V-Force / G-Revolution, plastic + HMS (1999-2004)",
+        "signals": {"codes": ["A", "MA"],
+                    "words": r"bakuten|plastic gen|original series|engine gear|magnacore|spin gear system|"
+                             r"heavy metal|\bhms\b|v-?force|g-?revolution|first generation"},
         "parts": OrderedDict([
-            ("bitChips",    _pt("BitChips", "Bit Chip", ["system"], ["bit chip", "bit-chip"])),
-            ("attackRings", _pt("AttackRings", "Attack Ring", ["system", "type", "spinDir"], ["attack ring", "ar"])),
-            ("weightDisks", _pt("WeightDisks", "Weight Disk", ["system"], ["weight disk", "weight disc", "wd"])),
-            ("spinGears",   _pt("SpinGears", "Spin Gear", ["system", "spinDir"], ["spin gear", "sg"])),
-            ("bladeBases",  _pt("BladeBases", "Blade Base", ["system", "type"], ["blade base", "bb", "base"])),
+            ("bitChips",     _pt("BitChips", "Bit Chip", ["system"], ["bit chip", "bit-chip"])),
+            ("attackRings",  _pt("AttackRings", "Attack Ring", ["system", "type", "spinDir"], ["attack ring", "ar"])),
+            ("weightDisks",  _pt("WeightDisks", "Weight Disk", ["system"], ["weight disk", "weight disc", "wd"])),
+            ("spinGears",    _pt("SpinGears", "Spin Gear", ["system", "spinDir"], ["spin gear", "sg"])),
+            ("bladeBases",   _pt("BladeBases", "Blade Base", ["system", "type"], ["blade base", "bb", "base"])),
+            ("runningCores", _pt("RunningCores", "Running Core", ["system", "type"], ["running core", "rc"])),
         ]),
     }),
-    ("HMS", {
-        "label": "Beyblade Heavy Metal System (2003-2004)",
+    ("Metal", {
+        "label": "Beyblade Metal series: Metal Fusion / Masters / Fury, 4D, Shogun Steel / Zero-G (2008-2013)",
+        "signals": {"codes": ["BB", "BBG"],
+                    "words": r"metal fight|metal fusion|metal masters|metal fury|metal saga|hybrid wheel|"
+                             r"\b4d\b|zero-?g|shogun steel|synchrome"},
         "parts": OrderedDict([
-            ("bitChips",     _pt("BitChips", "Bit Chip", [], ["bit chip"])),
-            ("attackRings",  _pt("AttackRings", "Attack Ring", ["type", "spinDir"], ["attack ring", "ar"])),
-            ("weightDisks",  _pt("WeightDisks", "Weight Disk", [], ["weight disk", "wd"])),
-            ("runningCores", _pt("RunningCores", "Running Core", ["type"], ["running core", "rc"])),
-        ]),
-    }),
-    ("MetalFight", {
-        "label": "Metal Fight Beyblade (2008-2012)",
-        "parts": OrderedDict([
-            ("faceBolts",        _pt("FaceBolts", "Face Bolt", [], ["face bolt", "face"])),
-            ("energyRings",      _pt("EnergyRings", "Energy Ring", [], ["energy ring", "clear wheel"])),
-            ("fusionWheels",     _pt("FusionWheels", "Fusion Wheel", ["system", "type", "spinDir"] + STATS,
-                                     ["fusion wheel", "metal wheel", "wheel"])),
-            ("spinTracks",       _pt("SpinTracks", "Spin Track", ["heightMm"] + STATS, ["spin track", "track"])),
-            ("performanceTips",  _pt("Tips", "Performance Tip", ["movementStyle"] + STATS,
-                                     ["performance tip", "bottom", "tip"])),
-        ]),
-    }),
-    ("ZeroG", {
-        "label": "Beyblade: Shogun Steel / Zero-G (2012-2013)",
-        "parts": OrderedDict([
-            ("stoneFaces",    _pt("StoneFaces", "Stone Face", [], ["stone face", "face"])),
-            ("crystalWheels", _pt("CrystalWheels", "Crystal Wheel", [], ["crystal wheel"])),
-            ("chromeWheels",  _pt("ChromeWheels", "Chrome Wheel", ["system", "type", "spinDir"] + STATS,
-                                  ["chrome wheel", "wheel"])),
-            ("tracks",        _pt("Tracks", "Track", ["heightMm"], ["track", "spin track"])),
-            ("bottoms",       _pt("Bottoms", "Bottom", ["movementStyle"], ["bottom", "performance tip", "tip"])),
+            # Zero-G pieces live with their Metal counterparts (system = "Zero-G"):
+            # Stone Face -> faceBolts, Crystal Wheel -> energyRings, Chrome Wheel -> fusionWheels, Bottom -> tips
+            ("faceBolts",       _pt("FaceBolts", "Face Bolt", ["system"], ["face bolt", "stone face", "face"])),
+            ("energyRings",     _pt("EnergyRings", "Energy Ring", ["system"],
+                                    ["energy ring", "clear wheel", "crystal wheel"])),
+            ("fusionWheels",    _pt("FusionWheels", "Fusion Wheel", ["system", "type", "spinDir"] + STATS,
+                                    ["fusion wheel", "metal wheel", "chrome wheel", "wheel"])),
+            ("spinTracks",      _pt("SpinTracks", "Spin Track", ["system", "heightMm"] + STATS, ["spin track", "track"])),
+            ("performanceTips", _pt("PerformanceTips", "Performance Tip", ["system", "movementStyle"] + STATS,
+                                    ["performance tip", "bottom", "tip"])),
         ]),
     }),
     ("Burst", {
-        "label": "Beyblade Burst (2015-2023)",
+        "label": "Beyblade Burst series (2015-2023)",
+        "signals": {"codes": ["B"],
+                    "words": r"\bburst\b|cho-?z|gatinko|sparking|superking|dynamite battle|quaddrive|quadstrike|"
+                             r"god layer|dual layer|single layer|hypersphere|speedstorm|slingshock"},
         "parts": OrderedDict([
             # layerComponent: full | chip | weight | base | ring | chassis | core | armor | blade
             # (one sheet for every system's layer pieces keeps it simple)
             ("layers",  _pt("Layers", "Layer", ["system", "layerComponent"] + BLADE_LIKE,
-                            ["layer", "energy layer", "chip", "ring", "chassis", "core", "armor"],
+                            ["layer", "energy layer", "chip", "ring", "chassis", "core", "armor", "blade",
+                             "weight", "base"],
                             ["Energy Layers", "Layers"])),
             ("discs",   _pt("Discs", "Disc", ["system", "discType"], ["disc", "forge disc", "core disc"],
                             ["Forge Discs", "Discs"])),
@@ -112,7 +109,9 @@ GENERATIONS = OrderedDict([
         ]),
     }),
     ("X", {
-        "label": "Beyblade X (2023-)",
+        "label": "Beyblade X series (2023-)",
+        "signals": {"codes": ["BX", "UX", "CX", "RX", "BXG"],
+                    "words": r"beyblade x\b|basic line|unique line|custom line|xtreme"},
         "parts": OrderedDict([  # column orders mirror the existing data/*.json exactly
             ("blades",       {"sheet": "Blades", "label": "Blade", "words": ["blade"],
                               "categories": ["Beyblade X Blades", "Blades (Beyblade X)"],
@@ -212,11 +211,11 @@ CODE_SERIES_COLUMNS = ["seriesPrefix", "manufacturer", "hobbyGeneration", "regio
 # These are editable in the CodeSeries sheet; anything marked "verify" is a best guess.
 CODE_SERIES = [
     # prefix, manufacturer, generation, region, sequential, digits, example, description
-    ("A",   "Takara-Tomy", "Plastic",    "JP", 1, 2, "A-01",  "Bakuten Shoot releases (verify range)"),
-    ("MA",  "Takara-Tomy", "HMS",        "JP", 1, 2, "MA-01", "HMS releases (verify)"),
-    ("BB",  "Takara-Tomy", "MetalFight", "JP", 1, 2, "BB-01", "Metal Fight Beyblade releases"),
-    ("BB",  "Hasbro",      "MetalFight", "US", 1, 2, "BB-01", "Hasbro Metal Fusion/Masters (own numbering, verify)"),
-    ("BBG", "Takara-Tomy", "ZeroG",      "JP", 1, 2, "BBG-01", "Zero-G / Shogun Steel releases"),
+    ("A",   "Takara-Tomy", "Original",   "JP", 1, 2, "A-01",  "Bakuten Shoot releases (verify range)"),
+    ("MA",  "Takara-Tomy", "Original",   "JP", 1, 2, "MA-01", "HMS releases (verify)"),
+    ("BB",  "Takara-Tomy", "Metal",      "JP", 1, 2, "BB-01", "Metal Fight Beyblade releases"),
+    ("BB",  "Hasbro",      "Metal",      "US", 1, 2, "BB-01", "Hasbro Metal Fusion/Masters (own numbering, verify)"),
+    ("BBG", "Takara-Tomy", "Metal",      "JP", 1, 2, "BBG-01", "Zero-G / Shogun Steel releases"),
     ("B",   "Takara-Tomy", "Burst",      "JP", 1, 2, "B-01",  "Beyblade Burst releases (B-100+ uses 3 digits)"),
     ("BX",  "Takara-Tomy", "X",          "JP", 1, 2, "BX-01", "Beyblade X Basic Line releases"),
     ("UX",  "Takara-Tomy", "X",          "JP", 1, 2, "UX-01", "Beyblade X Unique Line releases"),
@@ -235,7 +234,7 @@ TCG_SETS_COLUMNS = ["setID", "parentSetId", "variantLabel", "setCode", "setName"
                     "hobbyGeneration", "region", "releaseDate", "cardCount", "productID", "description",
                     "incompleteData", "updated_at", "deleted"]
 TCG_SETS_IMAGE_COLS = ("image", "minifiedImage")
-# hobbyGeneration tells the card games apart: "Plastic" = the original 2000s Beyblade TCG
+# hobbyGeneration tells the card games apart: "Original" = the V-Force TCG
 # (Battle Edge / Spin Strength cards), "X" = the Beyblade X TCG. Stats a game doesn't use stay empty.
 TCG_CARDS_COLUMNS = ["dataID", "parentCardId", "variantLabel", "manufacturer", "hobbyName", "hobbyGeneration",
                      "setCode", "setName", "cardNumber", "name", "subtitle", "cardType", "rarity", "attribute",

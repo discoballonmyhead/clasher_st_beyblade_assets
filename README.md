@@ -14,14 +14,17 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `beyblade_store.py` | shared workbook read/write helper |
 
 ## The three workbooks
-* **beyblade_parts.xlsx** – `Parts_<Generation>_<PartType>` per generation: X (Blades, Ratchets, Bits, LockChips,
-  Main/Assist/Metal/OverBlades), Burst (Layers, Discs, Frames, Drivers), MetalFight (FaceBolts, EnergyRings,
-  FusionWheels, SpinTracks, Tips), ZeroG, HMS, Plastic.
+* **beyblade_parts.xlsx** – `Parts_<Series>_<PartType>` for the four series:
+  **Original** (BitChips, AttackRings, WeightDisks, SpinGears, BladeBases, RunningCores – plastic and HMS),
+  **Metal** (FaceBolts, EnergyRings, FusionWheels, SpinTracks, PerformanceTips – incl. Zero-G),
+  **Burst** (Layers – with `layerComponent` for chip/ring/chassis/blade/armor…, Discs, Frames, Drivers),
+  **X** (Blades, Ratchets, Bits, LockChips, Main/Assist/Metal/OverBlades). `system` says which system inside the series.
+  Manufacturers: Takara-Tomy and Hasbro.
 * **beyblade_products.xlsx** – `Products` (every release incl. launchers, stadiums, sets, TCG packs; both
   Takara-Tomy and Hasbro), `Accessories`, `ProductContents` (product → part/accessory/card links),
   `CodeSeries` (BX, UX, CX, B, BB, BBG, ... per manufacturer; drives the update mode).
-* **beyblade_tcg.xlsx** – `TCG_Sets`, `TCG_Cards` for every Beyblade card game, told apart by `hobbyGeneration`
-  (`Plastic` = the original 2000s TCG with Battle Edge / Spin Strength / Game Text / Lore, `X` = the X TCG).
+* **beyblade_tcg.xlsx** – `TCG_Sets`, `TCG_Cards` (hobby `Beyblade TCG`). Today: the V-Force TCG (`hobbyGeneration`
+  `Original`; Battle Edge / Spin Strength / Game Text / Lore). The Beyblade X TCG isn't released yet.
 
 Same ID model everywhere: `dataID` (stable, never reused) + `parent…Id` / `variantLabel` for variants
 (recolors, random-booster items `BX-50 06`, foil cards ...). Each workbook has a README and a Lists sheet
@@ -52,11 +55,15 @@ python fandom_scraper.py --update                             # new releases sin
 python fandom_scraper.py --update --series BX UX --manufacturer Takara-Tomy
 python fandom_scraper.py --update --series B --from-code B-150
 python fandom_scraper.py --update --no-probe                  # only re-read the list pages
-python fandom_scraper.py --target tcg:Plastic:cards           # original 2000s TCG (Category:Cards)
-python fandom_scraper.py --scope tcg --generation X           # Beyblade X TCG (set its category in the config)
+python fandom_scraper.py --target tcg:Original:cards          # V-Force TCG cards (Category:Cards)
 python fandom_scraper.py --next      # next unfinished target
 python fandom_scraper.py --status
 ```
+* Series detection: every part page is checked for the series it belongs to (Series / System fields, product-code
+  prefix BX/UX/CX/RX → X, B → Burst, BB/BBG → Metal, A → Original, then categories). A page listed under X that is
+  really Burst (e.g. `Blade - Guilty (Hasbro)`, QuadDrive) goes to that series' sheet (`Parts_Burst_Layers`,
+  `layerComponent = blade`); rows an earlier run put in the wrong sheet are marked `deleted = true`. Anime / manga
+  pages (episodes, chapters, volumes) are skipped everywhere.
 * Parts and their variants: each part page's **Products** section lists every release the part came in
   (`CX-05 Random Booster Vol. 6 - 01: HellsReaper T4-70K`, `BX-00 Booster DranSword 3-60F (Metal Coat: Gold)`,
   Hasbro `G1678 Reaper Incendio T 4-70K`). The debut release (infobox product code) becomes the main row;
@@ -121,3 +128,14 @@ files to the release `<tag>`.
 
 Hobbies: parts and products are hobby `Beyblade`; the card game is its own hobby `Beyblade TCG` (own packs).
 Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.
+
+## Image tool (images you find yourself)
+For rows the wiki has no picture for: packager GUI → **Image tool...**, or the command line:
+```bash
+python beyblade_data.py image --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --missing
+python beyblade_data.py image --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --file found.png
+python beyblade_data.py image --workbook beyblade_products.xlsx --sheet Products --id P12 --url https://...
+```
+Pick the workbook, tab and row id (dataID / productID / setID); the image (file, URL or clipboard) is trimmed of
+transparent borders, fitted inside 600 px, a 128 px minified copy is made, both WebP, and they replace that row's
+image cells. A `.bak` of the workbook is kept. Nothing is packaged – run the packager afterwards as usual.
