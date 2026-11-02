@@ -12,6 +12,7 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `build_release.py` | release builder: `data/` → `catalog.zip` + manifest, image packs and data packs per hobby/generation |
 | `flutter_integration/` | new Flutter files for the app (ban/allow list picker, lists page, stadium field, TCG catalog) – see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
+| `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
 
 ## The three workbooks
 * **beyblade_parts.xlsx** – `Parts_<Series>_<PartType>` for the four series:
@@ -129,13 +130,25 @@ files to the release `<tag>`.
 Hobbies: parts and products are hobby `Beyblade`; the card game is its own hobby `Beyblade TCG` (own packs).
 Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.
 
-## Image tool (images you find yourself)
-For rows the wiki has no picture for: packager GUI → **Image tool...**, or the command line:
+## Missing data tool (`missing_data_tool.py`)
+A separate tool to see what's empty, field by field, and fill it. Run without arguments for the GUI:
+pick a workbook and tab → the left list shows how many rows miss each field (click one to list those rows) →
+pick a row to edit its values (blank fields are highlighted) or give it an image.
+
+* **Auto-fill (preview first):** variants copy shared fields from their parent row (type, spin, stats, weight,
+  system…, never code/edition/manufacturer); rows with the same name fill a stable field when the others all agree;
+  derived values (series from the tab, ratchet `3-60` → protrusions/height, currency/region from the manufacturer).
+* **Fill from wiki:** re-reads the chosen rows' wiki pages with the scraper (polite client, rendered infobox, gallery
+  images) and fills blank cells only. Pages come from `_scrape_log`, or are guessed from the name (`Blade - DranSword`).
+* **Manual:** type values; images from a file, URL, the clipboard or the parent row – trimmed, fitted in 600 px,
+  128 px minified copy, both WebP.
+* Every save keeps a `.bak`. Rows marked `deleted` are ignored.
+
 ```bash
-python beyblade_data.py image --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --missing
-python beyblade_data.py image --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --file found.png
-python beyblade_data.py image --workbook beyblade_products.xlsx --sheet Products --id P12 --url https://...
+python missing_data_tool.py report --workbook beyblade_parts.xlsx --csv missing.csv
+python missing_data_tool.py fill   --workbook beyblade_parts.xlsx --dry-run
+python missing_data_tool.py fill   --workbook beyblade_parts.xlsx --parent --derive
+python missing_data_tool.py set    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --field mass --value 34.6
+python missing_data_tool.py image  --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --file found.png
+python missing_data_tool.py wiki   --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --limit 20
 ```
-Pick the workbook, tab and row id (dataID / productID / setID); the image (file, URL or clipboard) is trimmed of
-transparent borders, fitted inside 600 px, a 128 px minified copy is made, both WebP, and they replace that row's
-image cells. A `.bak` of the workbook is kept. Nothing is packaged – run the packager afterwards as usual.
