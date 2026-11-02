@@ -4,10 +4,13 @@ Polite, resumable Beyblade Fandom scraper that fills the three human-managed wor
 (layout in beyblade_schema.py, packaged by beyblade_data.py):
 
     beyblade_parts.xlsx     targets parts:<Gen>:<part>   e.g. parts:X:blades, parts:Burst:layers
-    beyblade_products.xlsx  targets products:<Gen>       every release incl. launchers, stadiums, sets
-                            + "update" mode: reads the store, finds the last release code per series and
-                              manufacturer (e.g. BX-54) and checks BX-55, BX-56 ... until a gap
-    beyblade_tcg.xlsx       targets tcg:sets, tcg:cards
+    beyblade_products.xlsx  targets products:<Gen>  read from the wiki's "List of ... products (Takara Tomy /
+                            Hasbro)" pages: every release (starters, boosters, random boosters, sets, launchers,
+                            stadiums, limited BX-00 releases) in a few requests; each new product's page adds the
+                            box image, random-booster items (CX-05 01 ... as variants) and contents links
+                            + "update" mode: re-reads the lists, then checks codes after the store's last one per
+                              series and manufacturer (e.g. BX-57 -> BX-58, BX-59 ...) until a gap
+    beyblade_tcg.xlsx       targets tcg:<Gen>:cards / tcg:<Gen>:sets   (Plastic = original 2000s TCG, X = X TCG)
 
 The workbooks ARE the store: anything already in them (matched by wiki title, name+code, sku,
 card number) is skipped before its page is even downloaded, so re-runs only pull what is new.
@@ -57,7 +60,7 @@ from beyblade_store import Book, norm_name
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "scraper_config.json")
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 # =============================================================================
 # CONFIG
@@ -103,18 +106,30 @@ COLUMN_ALIASES = {
     "attribute": ["attribute", "element", "color", "colour"],
     "cost": ["cost"],
     "power": ["power", "attack", "atk"],
-    "effectText": ["effect", "ability", "text", "card text", "effect text"],
+    "effectText": ["game text", "gametext", "effect", "ability", "text", "card text", "effect text"],
     "illustrator": ["illustrator", "artist", "illustration"],
+    "subtitle": ["subtitle", "sub title"],
+    "battleEdge": ["battle edge", "battleedge", "edge"],
+    "spinStrength": ["spin strength", "spinstrength"],
+    "loreText": ["lore", "flavor", "flavor text", "flavour text", "flavortext"],
+    "cardSetName": ["set", "set name", "expansion"],
+    "cardSetNumber": ["set no", "set number", "setno", "set code"],
 }
 
 _EXCLUDE = r"(?i)(/gallery|/anime|/manga|\(disambiguation\))$"
-_PRODUCT_CATS = {
-    "Plastic": ["Bakuten Shoot Beyblade products", "Plastic Generation products"],
-    "HMS": ["HMS products", "Heavy Metal System products"],
-    "MetalFight": ["Metal Fight Beyblade products", "Metal Saga products"],
-    "ZeroG": ["Zero-G products", "Shogun Steel products"],
-    "Burst": ["Beyblade Burst products", "Burst products"],
-    "X": ["Beyblade X products", "Beyblade X Products"],
+# Products come from the wiki's "List of ... products (Takara Tomy / Hasbro)" pages: one table per line
+# (Basic / Unique / Custom / Limited) with code, name, release date, price -> every release in a few requests.
+# Explicit list pages first; others are discovered in Category:Product Lists by title regex.
+_PRODUCT_LISTS = {
+    "X": ["List of Beyblade X products (Takara Tomy)", "List of Beyblade X products (Hasbro)"],
+}
+_PRODUCT_LIST_REGEX = {
+    "Plastic": r"(?i)\b(bakuten|plastic|original series|v-?force|g-?revolution)\b",
+    "HMS": r"(?i)\b(hms|heavy metal)\b",
+    "MetalFight": r"(?i)\b(metal fight|metal fusion|metal masters|metal fury|metal saga|4d)\b",
+    "ZeroG": r"(?i)\b(zero-?g|shogun steel)\b",
+    "Burst": r"(?i)\bburst\b",
+    "X": r"(?i)\bbeyblade x\b",
 }
 _GEN_FILTER = {  # pages listed by shared category names (e.g. "Attack Rings") are kept only if they match
     "Plastic": {"exclude_category_regex": r"(?i)\b(hms|heavy metal)\b"},
@@ -129,12 +144,18 @@ def default_sources():
             "categories": p["categories"], "title_prefixes": [p["label"] + " - "],
             "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}, **_GEN_FILTER.get(gen, {}))
     for gen in S.GENERATIONS:
-        src[f"products:{gen}"] = {"categories": _PRODUCT_CATS.get(gen, []), "title_prefixes": [],
-                                  "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
-    src["tcg:sets"] = {"categories": ["Beyblade X Trading Card Game sets", "TCG Sets"], "title_prefixes": [],
-                       "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
-    src["tcg:cards"] = {"categories": ["Beyblade X Trading Card Game cards", "TCG Cards"], "title_prefixes": [],
-                        "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+        src[f"products:{gen}"] = {
+            "list_pages": _PRODUCT_LISTS.get(gen, []), "list_pages_category": "Product Lists",
+            "list_page_regex": _PRODUCT_LIST_REGEX.get(gen, ""),
+            "fetch_product_pages": True,   # open each product's page: box image, random-booster items, contents
+            "categories": [], "title_prefixes": [], "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+    # card games: the old 2000s TCG pages are in Category:Cards (Blade Cards, ...); X TCG names are guesses
+    src["tcg:Plastic:cards"] = {"categories": ["Cards"], "category_depth": 1, "title_prefixes": [],
+                                "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+    src["tcg:X:cards"] = {"categories": ["Beyblade X TCG Cards", "Beyblade X Trading Card Game cards"],
+                          "title_prefixes": [], "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+    src["tcg:X:sets"] = {"categories": ["Beyblade X TCG Sets", "Beyblade X Trading Card Game sets"],
+                         "title_prefixes": [], "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
     return src
 
 
@@ -150,6 +171,9 @@ DEFAULT_CONFIG = {
         "read_timeout": 45, "max_retries": 5, "backoff_base_seconds": 10, "backoff_max_seconds": 300,
         "max_consecutive_failures": 4, "max_requests_per_run": 1500, "maxlag": 5,
         "image_width": 600, "min_image_width": 128, "save_every": 15,
+        "request_deadline_seconds": 90,  # hard cap on one download, even if data keeps trickling in
+        "max_response_mb": 25,
+        "heartbeat_seconds": 15,         # print what is going on when nothing was logged for this long
     },
     "update": {
         "miss_limit": 3,             # stop a series after this many codes in a row are not found
@@ -175,6 +199,13 @@ def load_config(path=CONFIG_PATH):
         user["sources"] = {f"parts:X:{k}": v for k, v in user.pop("parts").items()}
         user.pop("output_workbook", None)
         log("Upgraded old scraper_config.json layout (X part settings kept).")
+    for old, new in (("tcg:cards", "tcg:X:cards"), ("tcg:sets", "tcg:X:sets")):  # v3 names
+        if old in user.get("sources", {}):
+            user["sources"][new] = user["sources"].pop(old)
+    for gen in S.GENERATIONS:  # v3 guessed product categories that don't exist -> list pages now
+        ps = user.get("sources", {}).get(f"products:{gen}")
+        if ps is not None and user.get("config_version", 0) < 4:
+            ps.pop("categories", None)
     for k, v in user.items():
         if k == "sources":
             for sk, sv in v.items():
@@ -193,13 +224,66 @@ def load_config(path=CONFIG_PATH):
 # =============================================================================
 
 _LOG_SINK = None  # GUI installs a callable here
+_LOG_FILE = {"path": None}
+_LOG_LOCK = threading.Lock()
+LOG_OPTS = {"quiet": False}  # quiet: per-request lines go to the log file only
 
 
-def log(msg=""):
-    if _LOG_SINK:
-        _LOG_SINK(str(msg))
-    else:
-        print(msg, flush=True)
+class Activity:
+    """What the scraper is doing right now - shown by the heartbeat and the GUI status line."""
+
+    def __init__(self):
+        self.text, self.detail, self.since, self.last_log = "starting", "", time.monotonic(), time.monotonic()
+
+    def set(self, text, detail=""):
+        self.text, self.detail, self.since = text, detail, time.monotonic()
+
+    def describe(self):
+        secs = time.monotonic() - self.since
+        return f"{self.text}{' - ' + self.detail if self.detail else ''} ({secs:.0f}s)"
+
+
+ACTIVITY = Activity()
+
+
+def log(msg="", detail=False):
+    """detail=True lines (one per HTTP request) are hidden on screen with --quiet but always go to the log file."""
+    msg = str(msg)
+    lead = msg[:len(msg) - len(msg.lstrip("\n"))]
+    line = f"{lead}{time.strftime('%H:%M:%S')} {msg.lstrip(chr(10))}" if msg.strip() else msg
+    with _LOG_LOCK:
+        ACTIVITY.last_log = time.monotonic()
+        if _LOG_FILE["path"]:
+            try:
+                with open(_LOG_FILE["path"], "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except OSError:
+                pass
+        if detail and LOG_OPTS["quiet"]:
+            return
+        if _LOG_SINK:
+            _LOG_SINK(line)
+        else:
+            print(line, flush=True)
+
+
+def set_log_file(path):
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    _LOG_FILE["path"] = path
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"\n===== run started {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+
+
+def start_heartbeat(seconds=15, stop_event=None):
+    """Prints what is happening whenever nothing has been logged for `seconds` - so a stall is never silent."""
+    def beat():
+        while not (stop_event and stop_event.is_set()):
+            time.sleep(1)
+            if time.monotonic() - ACTIVITY.last_log >= seconds:
+                log(f"  ... still busy: {ACTIVITY.describe()}")
+    t = threading.Thread(target=beat, daemon=True)
+    t.start()
+    return t
 
 
 def write_json(path, data, indent=None):
@@ -226,7 +310,7 @@ def chunks(seq, n):
 
 
 def norm_key(k):
-    return re.sub(r"[\s_\-]+", " ", str(k).strip().lower())
+    return re.sub(r"[\s_\-]+", " ", re.sub(r"[.:#()]", "", str(k).strip().lower())).strip()
 
 
 def norm_file(name):
@@ -245,6 +329,27 @@ class Blocked(StopScrape): pass
 class Cooldown(StopScrape): pass
 class BudgetExhausted(StopScrape): pass
 class UserStopped(StopScrape): pass
+
+
+class SlowResponse(requests.RequestException):
+    """Body took longer than request_deadline_seconds (a trickling connection) or was too large."""
+
+
+def describe_api(p):
+    """Short human description of an API call for the log."""
+    bits = ["API"]
+    for k in ("list", "prop"):
+        if p.get(k):
+            bits.append(f"{k}={p[k]}")
+    for k in ("cmtitle", "apprefix", "srsearch"):
+        if p.get(k):
+            bits.append(repr(p[k]))
+    if p.get("titles"):
+        ts = p["titles"].split("|")
+        bits.append(f"({len(ts)} titles: {ts[0][:40]}{' ...' if len(ts) > 1 else ''})")
+    if any(k.endswith("continue") for k in p):
+        bits.append("[continued]")
+    return " ".join(bits)
 
 
 class PoliteClient:
@@ -278,8 +383,31 @@ class PoliteClient:
         wait = self.last + gap - time.monotonic()
         if wait > 0:
             self._sleep(wait)
+        return max(0.0, wait)
+
+    def _read_body(self, r, what):
+        """Read the response with a hard total deadline, so a slow-trickling server can't hang the run."""
+        deadline = time.monotonic() + float(self.p.get("request_deadline_seconds", 90))
+        limit = float(self.p.get("max_response_mb", 25)) * 1024 * 1024
+        buf = bytearray()
+        try:
+            for chunk in r.iter_content(64 * 1024):
+                if self.stop_event.is_set():
+                    raise UserStopped("Stopped by user.")
+                buf += chunk
+                ACTIVITY.detail = f"{len(buf) // 1024} KB received"
+                if time.monotonic() > deadline:
+                    raise SlowResponse(f"{what}: still downloading after "
+                                       f"{self.p.get('request_deadline_seconds', 90)}s ({len(buf) // 1024} KB)")
+                if len(buf) > limit:
+                    raise SlowResponse(f"{what}: response larger than {self.p.get('max_response_mb', 25)} MB")
+        finally:
+            r.close()
+        return bytes(buf)
 
     def _backoff(self, attempt, retry_after=None):
+        if attempt >= self.p["max_retries"] - 1:
+            return  # last attempt failed - no point waiting before giving up
         if retry_after:
             try:
                 secs = float(retry_after)
@@ -289,6 +417,7 @@ class PoliteClient:
             secs = self.p["backoff_base_seconds"] * (2 ** attempt)
         secs = min(secs, self.p["backoff_max_seconds"]) + random.uniform(0, 3)
         log(f"    ...waiting {secs:.0f}s before retrying")
+        ACTIVITY.set(f"backing off {secs:.0f}s before retry {attempt + 1}", ACTIVITY.text)
         self._sleep(secs)
 
     def _fail(self, why):
@@ -297,26 +426,39 @@ class PoliteClient:
             raise Cooldown(f"{self.consecutive_failures} failures in a row ({why}). The wiki is throttling "
                            f"or unreachable - stopping to protect your IP. Wait 15-30 min and run again.")
 
-    def request(self, url, params=None, binary=False):
+    def request(self, url, params=None, binary=False, what=None):
         budget = self.p.get("max_requests_per_run") or 0
+        what = what or url
         with self.lock:
             for attempt in range(self.p["max_retries"]):
                 if self.stop_event.is_set():
                     raise UserStopped("Stopped by user.")
                 if budget and self.count >= budget:
                     raise BudgetExhausted(f"Request budget of {budget} reached for this run. Run again to continue.")
-                self._wait_turn()
+                ACTIVITY.set(f"waiting politely before request #{self.count + 1}", what)
+                waited = self._wait_turn()
                 self.count += 1
+                n = self.count
+                retry = f" retry {attempt}" if attempt else ""
+                log(f"    -> #{n} {what}{retry} (waited {waited:.1f}s)", detail=True)
+                ACTIVITY.set(f"request #{n}: {what}", "connecting")
+                t0 = time.monotonic()
                 try:
-                    r = self.s.get(url, params=params,
+                    r = self.s.get(url, params=params, stream=True,
                                    timeout=(self.p["connect_timeout"], self.p["read_timeout"]))
+                    ACTIVITY.detail = f"HTTP {r.status_code}, reading body"
+                    body = self._read_body(r, what) if r.status_code < 400 else b""
                 except requests.RequestException as e:
                     self.last = time.monotonic()
-                    log(f"    network error: {type(e).__name__}")
+                    log(f"    <- #{n} network error after {time.monotonic() - t0:.1f}s: {type(e).__name__}: "
+                        f"{str(e)[:160]}")
                     self._fail(type(e).__name__)
                     self._backoff(attempt)
                     continue
                 self.last = time.monotonic()
+                log(f"    <- #{n} HTTP {r.status_code}, {len(body) / 1024:.0f} KB in {self.last - t0:.1f}s",
+                    detail=True)
+                ACTIVITY.set("processing", what)
 
                 if r.status_code == 403:
                     raise Blocked("HTTP 403 Forbidden - the wiki is refusing this client. Stop for a few hours; "
@@ -333,8 +475,14 @@ class PoliteClient:
 
                 if binary:
                     self.consecutive_failures = 0
-                    return r.content
-                data = r.json()
+                    return body
+                try:
+                    data = json.loads(body.decode("utf-8"))
+                except ValueError:
+                    log(f"    <- #{n} response was not JSON (first bytes: {body[:80]!r})")
+                    self._fail("bad JSON")
+                    self._backoff(attempt)
+                    continue
                 err = data.get("error") if isinstance(data, dict) else None
                 if err and err.get("code") == "maxlag":
                     log("    wiki servers lagging (maxlag)")
@@ -348,13 +496,17 @@ class PoliteClient:
                     raise RuntimeError(f"API error: {err}")
                 self.consecutive_failures = 0
                 return data
-            self._fail("retries exhausted")
-            raise Cooldown(f"Gave up after {self.p['max_retries']} attempts. Wait and run again.")
+            self._fail("retries exhausted")  # still counts towards the circuit breaker
+            if binary:
+                log(f"    giving up on {what} after {self.p['max_retries']} attempts - skipped, continuing")
+                return None
+            raise Cooldown(f"Gave up on {what} after {self.p['max_retries']} attempts. Wait and run again.")
 
     # ---- MediaWiki helpers --------------------------------------------------
     def api_get(self, **params):
+        what = describe_api(params)
         params.update(format="json", formatversion="2", maxlag=str(self.p["maxlag"]))
-        return self.request(self.api, params=params)
+        return self.request(self.api, params=params, what=what)
 
     def query_all(self, **params):
         cont = {}
@@ -499,8 +651,8 @@ def pick_infobox(code):
         return sum(1 for p in t.params if p.showkey)
     for recursive in (False, True):
         tpls = code.filter_templates(recursive=recursive)
-        for t in tpls:
-            if "infobox" in str(t.name).lower() and named(t) >= 1:
+        for t in tpls:  # "Infobox Blade", "Product Information", "Card" ...
+            if re.search(r"infobox|information|product|card", str(t.name), re.I) and named(t) >= 1:
                 return t
         cands = [t for t in tpls if named(t) >= 3]
         if cands:
@@ -552,7 +704,10 @@ def to_png(content, max_width):
 
 NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 RATCHET_RE = re.compile(r"\b(\d{1,2})-(\d{2,3})\b")
-X_COMBO_RE = re.compile(r"([A-Z][A-Za-z.'\s]*?[A-Za-z])\s+(\d{1,2}-\d{2,3})\s*([A-Z][A-Za-z]{0,3})\b")
+# "DranSword 3-60F", "HellsReaper T4-70K" (CX: assist-blade letter before the ratchet), "Lightning L-Drago 1-60F"
+COMBO_RE = re.compile(r"(?<![A-Za-z-])([A-Z][A-Za-z'-]*[A-Za-z](?:\s[A-Z][A-Za-z'-]*[A-Za-z])?)\s+"
+                      r"([A-Z]{0,3})(\d{1,2}-\d{2,3})\s*([A-Z][A-Za-z]{0,3})\b")
+PRODUCT_WORDS_RE = re.compile(r"(?i)\b(?:random booster|starter|booster|color choice booster|entry package)\b\s*")
 MONTHS = {m: i for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august",
                                       "september", "october", "november", "december"], 1)}
 PRODUCT_TYPE_WORDS = [  # first match wins, so specific before generic
@@ -747,25 +902,190 @@ def map_product(gen, title, fields, src, manufacturer_hint=None):
     return row, code
 
 
-def map_tcg_set(title, fields, src):
+def map_tcg_set(title, fields, src, gen="X"):
     pick = make_picker(fields, src.get("aliases"))
     return {"setCode": pick("setCode"), "setName": title_to_name(title) or pick("setName"),
-            "manufacturer": norm_manufacturer(pick("manufacturer")) or "Takara-Tomy", "hobbyName": S.HOBBY_NAME,
-            "hobbyGeneration": "X", "releaseDate": parse_date(pick("releaseDate")),
+            "manufacturer": norm_manufacturer(pick("manufacturer")), "hobbyName": S.HOBBY_NAME,
+            "hobbyGeneration": gen, "releaseDate": parse_date(pick("releaseDate")),
             "cardCount": first_number(pick("cardCount")), "description": (pick("description") or "")[:500] or None,
             "incompleteData": 1}
 
 
-def map_tcg_card(title, fields, src):
+def card_name(title):
+    return title_to_name(re.sub(r"\s*\((?:TCG|card|trading card game)\)\s*$", "", title, flags=re.I))
+
+
+def map_tcg_card(title, fields, src, gen="X", categories=()):
     pick = make_picker(fields, src.get("aliases"))
     num = pick("cardNumber") or ""
     m = S.TCG_CARD_NUMBER_RE.search(num) or S.TCG_CARD_NUMBER_RE.search(title)
-    return {"cardNumber": m.group(0) if m else (num or None), "setCode": m.group(1) if m else pick("setCode"),
-            "name": title_to_name(title) or pick("name"), "manufacturer": norm_manufacturer(pick("manufacturer"))
-            or "Takara-Tomy", "hobbyName": S.HOBBY_NAME, "hobbyGeneration": "X", "cardType": pick("cardType"),
-            "rarity": pick("rarity"), "attribute": pick("attribute"), "cost": to_number(pick("cost")),
-            "power": to_number(pick("power")), "effectText": pick("effectText"),
+    ctype = re.sub(r"(?i)\s*card$", "", pick("cardType") or "").strip() or None
+    if not ctype:  # "Blade Cards" category -> Blade
+        for c in categories:
+            cm = re.match(r"^(.+?) Cards$", c)
+            if cm:
+                ctype = cm.group(1)
+                break
+    return {"cardNumber": m.group(0) if m else (num or None),
+            "setCode": m.group(1) if m else pick("cardSetNumber"), "setName": pick("cardSetName"),
+            "name": card_name(title) or pick("name"), "subtitle": pick("subtitle"),
+            "manufacturer": norm_manufacturer(pick("manufacturer")), "hobbyName": S.HOBBY_NAME,
+            "hobbyGeneration": gen, "cardType": ctype, "rarity": pick("rarity"), "attribute": pick("attribute"),
+            "cost": to_number(pick("cost")), "power": to_number(pick("power")),
+            "battleEdge": to_number(pick("battleEdge")), "spinStrength": to_number(pick("spinStrength")),
+            "effectText": pick("effectText"), "loreText": pick("loreText"),
             "illustrator": pick("illustrator"), "incompleteData": 1}
+
+# =============================================================================
+# PRODUCT LIST PAGES ("List of Beyblade X products (Takara Tomy)")
+# =============================================================================
+
+def _split_outside_links(line, sep):
+    """Split a wikitable row on '||' / '!!' but not inside [[...]] or {{...}}."""
+    out, buf, depth, i = [], "", 0, 0
+    while i < len(line):
+        two = line[i:i + 2]
+        if two in ("[[", "{{"):
+            depth += 1
+            buf += two
+            i += 2
+        elif two in ("]]", "}}"):
+            depth = max(0, depth - 1)
+            buf += two
+            i += 2
+        elif depth == 0 and two == sep:
+            out.append(buf)
+            buf = ""
+            i += 2
+        else:
+            buf += line[i]
+            i += 1
+    out.append(buf)
+    return out
+
+
+_CELL_ATTR_RE = re.compile(r'^\s*((?:[\w-]+\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s|]+)\s*)+)\|(?!\|)(.*)$', re.S)
+
+
+def _strip_cell_attrs(cell):
+    m = _CELL_ATTR_RE.match(cell)
+    return m.group(2) if m else cell
+
+
+def parse_wikitables(wikitext):
+    """-> [{'section': heading, 'headers': [cell wikitext], 'rows': [[cell wikitext]]}]"""
+    tables, section, cur, row = [], "", None, None
+    for raw in (wikitext or "").splitlines():
+        line = raw.strip()
+        h = re.match(r"^(=+)\s*(.*?)\s*\1$", line)
+        if h and cur is None:
+            section = clean_value(mwparserfromhell.parse(h.group(2)))
+            continue
+        if line.startswith("{|"):
+            cur, row = {"section": section, "headers": [], "rows": []}, None
+            continue
+        if cur is None:
+            continue
+        if line.startswith("|}"):
+            if row:
+                cur["rows"].append(row)
+            tables.append(cur)
+            cur, row = None, None
+        elif line.startswith("|+"):
+            continue
+        elif line.startswith("|-"):
+            if row:
+                cur["rows"].append(row)
+            row = None
+        elif line.startswith("!"):
+            cells = [_strip_cell_attrs(c) for c in _split_outside_links(line[1:], "!!")]
+            if not cur["rows"] and row is None:
+                cur["headers"] += cells
+            else:
+                row = (row or []) + cells
+        elif line.startswith("|"):
+            row = (row or []) + [_strip_cell_attrs(c) for c in _split_outside_links(line[1:], "||")]
+        elif row:
+            row[-1] += "\n" + raw
+    return tables
+
+
+def cell_text_link(cell):
+    m = re.search(r"\[\[(?!(?:File|Image|Category):)([^\]|#]+)", cell or "", re.I)
+    return clean_value(mwparserfromhell.parse(cell or "")), (m.group(1).strip() if m else None)
+
+
+def product_entries(list_title, wikitext, gen):
+    """Rows of every product table on a list page."""
+    manu = norm_manufacturer(list_title) or "Takara-Tomy"
+    entries = []
+    for tb in parse_wikitables(wikitext):
+        hdr = [norm_key(cell_text_link(h)[0]) for h in tb["headers"]]
+
+        def col(*words, skip=()):
+            return next((i for i, h in enumerate(hdr) if i not in skip and any(w in h for w in words)), None)
+        ci = col("code", "number", "item", "sku")
+        ni = col("name", skip=(ci,))
+        if ni is None:
+            ni = col("product", "title", skip=(ci,))
+        di = col("release", "date")
+        pi = col("price", "msrp", "srp", "cost")
+        if ni is None or (ci is None and di is None):
+            continue
+        for r in tb["rows"]:
+            def get(i):
+                return cell_text_link(r[i]) if i is not None and i < len(r) else ("", None)
+            name, link = get(ni)
+            if not name:
+                continue
+            entries.append({"list": list_title, "section": tb["section"], "manufacturer": manu,
+                            "code": get(ci)[0], "name": name, "link": link, "date": get(di)[0], "price": get(pi)[0]})
+    return entries
+
+
+def entry_to_row(gen, e):
+    c = S.parse_code(e["code"])
+    sku = c["code"] if c else (S.parse_hasbro_item(e["code"]) or e["code"] or None)
+    limited = bool(re.search(r"(?i)limited|exclusive|prize|event", e["section"]))
+    dm = re.match(r"^(.*?)\s*\((.+?)\)?\s*$", e["date"] or "")
+    date_part, note = (dm.group(1), dm.group(2)) if dm and "(" in (e["date"] or "") else (e["date"], None)
+    price, cur = parse_price(e["price"]) if not re.search(r"(?i)n/?a", e["price"] or "") else (None, None)
+    manu = e["manufacturer"]
+    row = {"manufacturer": manu, "hobbyName": S.HOBBY_NAME, "hobbyGeneration": gen, "productName": e["name"],
+           "productType": product_type_from(e["name"]) or ("Limited" if limited else "Other"),
+           "releaseDate": parse_date(date_part), "itemCost": price,
+           "currency": cur or ("JPY" if manu == "Takara-Tomy" else "USD" if manu == "Hasbro" else None),
+           "sku": sku, "region": "JP" if manu == "Takara-Tomy" else "US" if manu == "Hasbro" else None,
+           "description": "; ".join(x for x in [("Limited release" if limited else e["section"] or None), note]
+                                    if x) or None,
+           "incompleteData": 1}
+    return row, limited, note
+
+
+def entry_key(e):
+    return f"{e['list']}::{e['code']}::{e['name']}::{e['date']}"
+
+
+def parse_assortment(wikitext):
+    """'* CX-05 01: [[HellsReaper T4-70K]] (Prize)' -> [{'base','sub','code','name','note'}]"""
+    out = []
+    for line in (wikitext or "").splitlines():
+        if not line.lstrip().startswith(("*", "#")):
+            continue
+        txt = clean_value(mwparserfromhell.parse(line.lstrip("*#: ")))
+        m = re.match(r"^([A-Z]{1,4}-\d{2,3})\s+(\d{2})\s*[:\-\u2013]\s*(.+?)\s*(?:\(([^)]*)\))?\s*$", txt)
+        if m:
+            out.append({"base": m.group(1), "sub": m.group(2), "code": f"{m.group(1)} {m.group(2)}",
+                        "name": m.group(3).strip(), "note": m.group(4)})
+    return out
+
+
+def combo_parts(text):
+    """'Starter HellsReaper T4-70K' -> {'blade':'HellsReaper','assist':'T','ratchet':'4-70','bit':'K'}"""
+    m = COMBO_RE.search(PRODUCT_WORDS_RE.sub("", text or "").strip())
+    if not m:
+        return None
+    return {"blade": m.group(1), "assist": m.group(2) or None, "ratchet": m.group(3), "bit": m.group(4)}
 
 # =============================================================================
 # SCRAPE ENGINE
@@ -804,12 +1124,24 @@ class Scraper:
 
     def book(self, kind):
         if kind not in self._books:
-            self._books[kind] = Book(self.book_path(kind), kind)
+            path = self.book_path(kind)
+            ACTIVITY.set(f"opening {os.path.basename(path)}")
+            t0 = time.monotonic()
+            log(f"  opening {os.path.basename(path)}{'' if os.path.exists(path) else ' (new file)'} ...")
+            self._books[kind] = Book(path, kind)
+            log(f"  opened in {time.monotonic() - t0:.1f}s")
         return self._books[kind]
 
     def save_all(self):
-        for b in self._books.values():
+        for kind, b in self._books.items():
+            if not b.dirty:
+                continue  # only read from - don't rewrite it (a big parts workbook takes a while to save)
+            n_img = sum(len(ws._images) for ws in b.wb.worksheets)
+            ACTIVITY.set(f"saving {os.path.basename(b.path)}", f"{n_img} images")
+            t0 = time.monotonic()
             b.save()
+            log(f"  saved {os.path.basename(b.path)} ({n_img} images) in {time.monotonic() - t0:.1f}s")
+        ACTIVITY.set("saving progress files")
         self.save_state()
 
     def save_state(self):
@@ -832,7 +1164,7 @@ class Scraper:
         def sort_key(t):
             k = target_kind(t)
             gen, _ = target_gen_key(t)
-            return (order.get(gen, 0) if k != "tcg" else 0, kinds.get(k, 9))
+            return (order.get(gen, 0), kinds.get(k, 9))
         return sorted(self.cfg["sources"], key=sort_key)
 
     # ---- wiki access ----------------------------------------------------------------
@@ -857,20 +1189,25 @@ class Scraper:
         self.save_state()
         return st["titles"]
 
-    def get_pages(self, titles):
+    def get_pages(self, titles, refresh=False):
         missing = [t for t in titles if t not in self.pages]
-        if self.relist:
+        if self.relist or refresh:
             cached = [t for t in titles if t in self.pages]
             if cached:
                 live = self.client.revids(cached)
                 missing += [t for t in cached if live.get(t) and live[t] != self.pages[t].get("revid")]
         bs = max(1, min(50, int(self.cfg["politeness"]["batch_size"])))
+        cached = len(titles) - len(missing)
+        if cached:
+            log(f"  {cached} page sources from cache")
         for i, batch in enumerate(chunks(missing, bs), 1):
+            log(f"  downloading page sources {(i - 1) * bs + 1}-{(i - 1) * bs + len(batch)} of {len(missing)} ...")
             for t, pg in self.client.fetch_pages(batch).items():
                 if "wikitext" in pg:
                     self.pages[t] = pg
+            ACTIVITY.set("writing page cache", f"{len(self.pages)} pages")
             write_json(self.pages_path, self.pages)
-            log(f"  page sources {min(i * bs, len(missing))}/{len(missing)}")
+            log(f"  page sources {min(i * bs, len(missing))}/{len(missing)} done")
         return {t: self.pages[t] for t in titles if t in self.pages}
 
     def _img_cache(self, filename):
@@ -882,24 +1219,34 @@ class Scraper:
         if self.no_images:
             return out
         need = {f[0] for (_, _, _, f) in parsed.values() if f and not os.path.exists(self._img_cache(f[0]) + ".png")}
+        with_img = sum(1 for v in parsed.values() if v[3])
+        log(f"  images: {with_img} of {len(parsed)} pages have one, {with_img - len(need)} cached, "
+            f"{len(need)} to download")
+        if need:
+            log(f"  looking up {len(need)} image URLs ...")
         urls = self.client.resolve_files(need) if need else {}
         p = self.cfg["politeness"]
-        for t, (_, _, _, files) in parsed.items():
-            if not files:
-                continue
-            c = self._img_cache(files[0])
+        todo = [(t, v[3][0]) for t, v in parsed.items() if v[3]]
+        for i, (t, fname) in enumerate(todo, 1):
+            c = self._img_cache(fname)
             if os.path.exists(c + ".png") and os.path.exists(c + "-min.png"):
                 with open(c + ".png", "rb") as a, open(c + "-min.png", "rb") as b:
                     out[t] = (a.read(), b.read())
                 continue
-            url = urls.get(files[0])
-            raw = self.client.request(url, binary=True) if url else None
-            if not raw:
+            url = urls.get(fname)
+            if not url:
+                log(f"  image {i}/{len(todo)}: {fname} - no URL on the wiki (file missing?), skipped")
                 continue
+            log(f"  image {i}/{len(todo)}: {fname}")
+            raw = self.client.request(url, binary=True, what=f"image {fname}")
+            if not raw:
+                log("    no image data - row will be written without an image (rerun with --refresh-existing later)")
+                continue
+            ACTIVITY.set(f"converting image {fname}", f"{len(raw) // 1024} KB")
             try:
                 full, mini = to_png(raw, p["image_width"]), to_png(raw, p["min_image_width"])
             except Exception as e:
-                log(f"    image convert failed for {files[0]}: {e}")
+                log(f"    image convert failed for {fname}: {e}")
                 continue
             with open(c + ".png", "wb") as a, open(c + "-min.png", "wb") as b:
                 a.write(full)
@@ -909,10 +1256,13 @@ class Scraper:
 
     def parse(self, pages, titles):
         parsed = {}
+        log(f"  parsing {len(titles)} pages ...")
         for t in titles:
             pg = pages.get(t)
             if not pg:
+                log(f"  ! {t}: not returned by the wiki (deleted / renamed?)")
                 continue
+            ACTIVITY.set("parsing page", t)
             infobox, fields, files = parse_page(pg.get("wikitext"), self.image_re)
             if not files and pg.get("page_image"):
                 files = [norm_file(pg["page_image"].split("/revision/")[0].rsplit("/", 1)[-1].replace("%20", " "))]
@@ -961,7 +1311,8 @@ class Scraper:
                             return ws, r
             return ws, None
         book = self.book("tcg")
-        sheet = "TCG_Sets" if target == "tcg:sets" else "TCG_Cards"
+        gen, key = target_gen_key(target)
+        sheet = "TCG_Sets" if key == "sets" else "TCG_Cards"
         ws = book.named_sheet(sheet)
         hit = book.log_index(target).get(title)
         if hit:
@@ -973,8 +1324,17 @@ class Scraper:
             for r, x in book.rows(ws):
                 if sheet == "TCG_Sets" and row.get("setCode") and x.get("setCode") == row["setCode"]:
                     return ws, r
-                if (sheet == "TCG_Cards" and row.get("cardNumber") and x.get("cardNumber") == row["cardNumber"]
-                        and not x.get("parentCardId")):
+                if sheet == "TCG_Cards" and not x.get("parentCardId"):
+                    if row.get("cardNumber") and x.get("cardNumber") == row["cardNumber"]:
+                        return ws, r
+                    if (not row.get("cardNumber") and x.get("hobbyGeneration") == gen
+                            and norm_name(x.get("name")) == norm_name(row.get("name"))
+                            and norm_name(x.get("setName")) == norm_name(row.get("setName"))):
+                        return ws, r
+        elif sheet == "TCG_Cards":  # before download: same name + generation already there
+            n = norm_name(card_name(title))
+            for r, x in book.rows(ws):
+                if x.get("hobbyGeneration") == gen and norm_name(x.get("name")) == n and not x.get("parentCardId"):
                     return ws, r
         return ws, None
 
@@ -1072,25 +1432,50 @@ class Scraper:
                     if did is not None:
                         n += self.add_content(pid, S.part_sheet(gen, key), did)
                 break
-        # X combos written as "DranSword 3-60F"
         if gen == "X":
-            text = " ".join(filter(None, [fields.get("beyblade"), fields.get("combo"), fields.get("contents"), title]))
-            for m in X_COMBO_RE.finditer(text):
-                blade, ratchet, bit = m.groups()
-                for key, kw in (("blades", {"name": blade}), ("ratchets", {"name": ratchet}),
-                                ("bits", {"base_name": bit})):
-                    did = self.find_part("X", key, code=prow.get("sku"), **kw)
+            for text in filter(None, [prow.get("productName"), fields.get("beyblade"), fields.get("combo"), title]):
+                got = self.link_combo(pid, text, prow.get("sku"))
+                if got is not None:
+                    n += got
+                    break
+        return n
+
+    def link_combo(self, pid, text, sku=None):
+        """X combo name -> ProductContents rows. BX/UX: Blade + Ratchet + Bit.
+        CX ('HellsReaper T4-70K'): Lock Chip 'Hells' + Main Blade 'Reaper' + Ratchet + Bit.
+        Returns number of links added, or None if the text is not a combo name."""
+        c = combo_parts(text)
+        if not c:
+            return None
+        n = 0
+        did = self.find_part("X", "blades", c["blade"], sku)
+        if did is not None:
+            n += self.add_content(pid, S.part_sheet("X", "blades"), did)
+        else:
+            words = re.findall(r"[A-Z][a-z']+", c["blade"])
+            if len(words) >= 2:
+                for key, name in (("lockChips", words[0]), ("mainBlades", "".join(words[1:]))):
+                    did = self.find_part("X", key, name, sku)
                     if did is not None:
                         n += self.add_content(pid, S.part_sheet("X", key), did)
+        did = self.find_part("X", "ratchets", c["ratchet"], sku)
+        if did is not None:
+            n += self.add_content(pid, S.part_sheet("X", "ratchets"), did)
+        did = self.find_part("X", "bits", code=sku, base_name=c["bit"])
+        if did is not None:
+            n += self.add_content(pid, S.part_sheet("X", "bits"), did)
         return n
 
     def handle_tcg(self, target, title, pg, infobox, fields, files, imgs):
         src = self.cfg["sources"][target]
         book = self.book("tcg")
-        if target == "tcg:sets":
-            row, sheet, idc, pre = map_tcg_set(title, fields, src), "TCG_Sets", "setID", "S"
+        gen, key = target_gen_key(target)
+        if key == "sets":
+            row, sheet, idc, pre = map_tcg_set(title, fields, src, gen), "TCG_Sets", "setID", "S"
         else:
-            row, sheet, idc, pre = map_tcg_card(title, fields, src), "TCG_Cards", "dataID", ""
+            row = map_tcg_card(title, fields, src, gen, pg.get("categories", []))
+            sheet, idc, pre = "TCG_Cards", "dataID", ""
+            self.ensure_tcg_set(gen, row.get("setName"), row.get("setCode"))
         ws, r = self.existing_match(target, title, row)
         r, rid, new = book.write(ws, row, idc, pre, row=r, overwrite=self.overwrite)
         full, mini = imgs.get(title, (None, None))
@@ -1098,12 +1483,32 @@ class Scraper:
         book.set_image(ws, r, "minifiedImage", mini, "min")
         if new or not book.log_index(target).get(title):
             book.add_log(target, sheet, rid, title, pg.get("url"), pg.get("revid"), files[0] if files else None)
-        return f"{'new' if new else 'upd'} {rid} {row.get('cardNumber') or row.get('setCode') or ''}"
+        return f"{'new' if new else 'upd'} {rid} {row.get('cardNumber') or row.get('setName') or row.get('setCode') or ''}"
+
+    def ensure_tcg_set(self, gen, set_name, set_code):
+        """Cards name their set ('Collision', set no. 1) -> make sure TCG_Sets has a row for it."""
+        if not (set_name or set_code):
+            return
+        book = self.book("tcg")
+        ws = book.named_sheet("TCG_Sets")
+        r, _ = book.find(ws, lambda x: x.get("hobbyGeneration") == gen and (
+            (set_name and norm_name(x.get("setName")) == norm_name(set_name)) or
+            (not set_name and set_code and str(x.get("setCode")) == str(set_code))))
+        if r is None:
+            book.write(ws, {"setCode": set_code, "setName": set_name, "hobbyName": S.HOBBY_NAME,
+                            "hobbyGeneration": gen, "incompleteData": 1}, "setID", "S")
+            log(f"    + new TCG set: {set_name or set_code} ({gen})")
 
     # ---- runs -----------------------------------------------------------------------
     def run_target(self, target, limit=None):
         if target not in self.cfg["sources"]:
             raise SystemExit(f"Unknown target '{target}'. Use --list-targets.")
+        if target_kind(target) == "products":
+            return self.run_products(target_gen_key(target)[0], limit)
+        return self._run_listed(target, limit)
+
+    def _run_listed(self, target, limit=None):
+        """Category / title-prefix listing -> one row per page."""
         kind = target_kind(target)
         st = self.kstate(target)
         log(f"\n=== {target} -> {os.path.basename(self.book_path(kind))} ===")
@@ -1114,7 +1519,9 @@ class Scraper:
             return
         todo = []
         skipped = 0
+        log(f"  checking the store for {len(titles)} listed pages ...")
         for t in titles:
+            ACTIVITY.set("checking store", t)
             if t in st["done"]:
                 continue
             if not self.refresh_existing and kind != "products" and self.existing_match(target, t)[1]:
@@ -1128,14 +1535,20 @@ class Scraper:
             todo = todo[:limit]
         try:
             bs = max(1, min(50, int(self.cfg["politeness"]["batch_size"])))
-            for batch in chunks(todo, bs):
+            n_batches = (len(todo) + bs - 1) // bs
+            done_n = 0
+            for bi, batch in enumerate(chunks(todo, bs), 1):
+                log(f"\n  --- batch {bi}/{n_batches}: pages {done_n + 1}-{done_n + len(batch)} of {len(todo)} ---")
                 pages = self.get_pages(batch)
                 parsed = self.parse(pages, batch)
                 for t in batch:
                     if t not in parsed:
                         st["failed"][t] = "page missing"
                 imgs = self.images_for_pages(parsed)
+                log(f"  writing {len(parsed)} rows into the workbook ...")
                 for t, (pg, infobox, fields, files) in parsed.items():
+                    done_n += 1
+                    ACTIVITY.set(f"writing row {done_n}/{len(todo)}", t)
                     if kind == "parts":
                         res = self.handle_part(target, t, pg, infobox, fields, files, imgs)
                     elif kind == "products":
@@ -1145,13 +1558,168 @@ class Scraper:
                         res = self.handle_tcg(target, t, pg, infobox, fields, files, imgs)
                     st["done"][t] = res
                     st["failed"].pop(t, None)
-                    log(f"  [{res}] {t}")
+                    log(f"  [{done_n}/{len(todo)}] [{res}] {t}")
                     self.checkpoint()
             st["complete"] = all(t in st["done"] for t in titles)
         finally:
             self.save_all()
             log(f"  saved: {len(st['done'])}/{len(titles)} pages handled for {target}, "
                 f"{self.client.count} requests used this run")
+
+    # ---- products from the wiki's product list pages ---------------------------------
+    def list_pages_for(self, gen, refresh=False):
+        src = self.cfg["sources"].get(f"products:{gen}", {})
+        pages = list(src.get("list_pages", []))
+        rx, cat = src.get("list_page_regex"), src.get("list_pages_category")
+        if rx and cat:
+            cache = self.progress.setdefault("_product_list_pages", {})
+            if cat not in cache or refresh or self.relist:
+                log(f"  discovering product list pages in Category:{cat} ...")
+                cache[cat] = self.client.category_members(cat, depth=0)
+                self.save_state()
+            pages += [t for t in cache[cat] if re.search(rx, t) and t not in pages]
+        return pages
+
+    def match_entry(self, row, limited, key):
+        """Is this list row already in Products? -> (row_number or None, parent productID for a limited re-release)"""
+        book = self.book("products")
+        ws = book.named_sheet("Products")
+        hit = book.log_index("products").get(key)
+        if hit:
+            r, _ = book.find(ws, lambda x: str(x.get("productID")) == str(hit[1]))
+            if r:
+                return r, None
+        n, parent = norm_name(row["productName"]), None
+        for r, x in book.rows(ws):
+            if x.get("manufacturer") != row["manufacturer"] or str(x.get("sku") or "") != str(row.get("sku") or ""):
+                continue
+            if norm_name(x.get("productName")) != n:
+                continue
+            if not limited or str(x.get("releaseDate") or "")[:10] == str(row.get("releaseDate") or "")[:10]:
+                return r, None
+            if not x.get("parentProductId"):
+                parent = x.get("productID")  # same product released earlier/again as a limited -> variant
+        return None, parent
+
+    def run_products(self, gen, limit=None, update=False):
+        target = f"products:{gen}"
+        src = self.cfg["sources"].get(target, {})
+        st = self.kstate(target)
+        log(f"\n=== {target} -> {os.path.basename(self.book_path('products'))} ===")
+        lists = self.list_pages_for(gen, refresh=update)
+        if not lists:
+            if src.get("categories") or src.get("title_prefixes") or src.get("extra_titles"):
+                log("  no product list pages for this generation - using categories / title prefixes instead")
+                return self._run_listed(target, limit)
+            log(f"  !! no product list pages found for {gen}. Add the page titles to sources['{target}']"
+                f"['list_pages'] in scraper_config.json (they are in Category:Product Lists on the wiki)")
+            return
+        log(f"  product list pages: {'; '.join(lists)}")
+        pages = self.get_pages(lists, refresh=update)
+        entries = []
+        for t in lists:
+            pg = pages.get(t)
+            if not pg:
+                log(f"  ! list page not found on the wiki: {t}")
+                continue
+            es = product_entries(t, pg.get("wikitext"), gen)
+            secs = Counter(e["section"] or "(no heading)" for e in es)
+            log(f"  {t}: {len(es)} products ({', '.join(f'{k}: {v}' for k, v in secs.items()) or 'no tables found'})")
+            entries += es
+        if not entries:
+            log("  !! no product tables recognised (a table needs a Name column plus a Code or Release Date column)")
+            return
+        st["titles"] = [entry_key(e) for e in entries]
+        book = self.book("products")
+        prods = book.named_sheet("Products")
+        log(f"  checking {len(entries)} products against the store ...")
+        todo = []
+        for e in entries:
+            k = entry_key(e)
+            row, limited, note = entry_to_row(gen, e)
+            r, parent = self.match_entry(row, limited, k)
+            if r is not None and not self.refresh_existing:
+                st["done"][k] = "in store"
+                continue
+            todo.append((e, k, row, note, r, parent))
+        log(f"  {len(entries) - len(todo)} already in the store, {len(todo)} to add" +
+            (" / refresh" if self.refresh_existing else ""))
+        if limit:
+            todo = todo[:limit]
+        enrich = []
+        try:
+            for i, (e, k, row, note, r, parent) in enumerate(todo, 1):
+                ACTIVITY.set(f"writing product {i}/{len(todo)}", e["name"])
+                if parent and r is None:
+                    row["parentProductId"], row["variantLabel"] = parent, note or "Limited"
+                r, pid, new = book.write(prods, row, "productID", "P", row=r, overwrite=self.overwrite)
+                if new:
+                    book.add_log("products", "Products", pid, k, url=e["list"])
+                st["done"][k] = pid
+                links = self.link_contents(gen, pid, row, {}, e["name"], None, None)
+                log(f"  [{i}/{len(todo)}] [{'new' if new else 'upd'} {pid}] {row.get('sku') or '-'} {e['name']} "
+                    f"[{row['productType']}]{' variant of ' + str(parent) if parent and new else ''}"
+                    f"{f' +{links} contents' if links else ''}")
+                if e["link"] and src.get("fetch_product_pages", True):
+                    enrich.append((pid, row, e["link"]))
+                self.checkpoint()
+            if enrich:
+                self.enrich_products(gen, enrich)
+            st["complete"] = all(entry_key(e) in st["done"] for e in entries)
+        finally:
+            self.save_all()
+            log(f"  saved: {len(st['done'])}/{len(entries)} products handled, {self.client.count} requests used")
+
+    def enrich_products(self, gen, items):
+        """Open each new product's own page: box image, random-booster items (variants), contents."""
+        book = self.book("products")
+        prods = book.named_sheet("Products")
+        src = self.cfg["sources"].get(f"products:{gen}", {})
+        links = list(OrderedDict.fromkeys(link for _, _, link in items))
+        log(f"\n  opening {len(links)} product pages (box image, random-booster items, contents) ...")
+        bs = max(1, min(50, int(self.cfg["politeness"]["batch_size"])))
+        for bi, batch in enumerate(chunks(links, bs), 1):
+            log(f"\n  --- product pages batch {bi}/{(len(links) + bs - 1) // bs} ---")
+            parsed = self.parse(self.get_pages(batch), batch)
+            imgs = self.images_for_pages(parsed)
+            for pid, prow, link in [it for it in items if it[2] in batch]:
+                if link not in parsed:
+                    continue
+                pg, infobox, fields, files = parsed[link]
+                r, _ = book.find(prods, lambda x: str(x.get("productID")) == str(pid))
+                if r is None:
+                    continue
+                info, _ = map_product(gen, link, fields, src, prow["manufacturer"])
+                book.write(prods, {k: info.get(k) for k in ("releaseDate", "itemCost", "currency")}, row=r)
+                full, mini = imgs.get(link, (None, None))
+                book.set_image(prods, r, "boxImageUrl", full)
+                book.set_image(prods, r, "minifiedBoxImage", mini, "min")
+                n = self.link_contents(gen, pid, prow, fields, link, full, mini)
+                v = self.add_variants(gen, pid, prow, pg.get("wikitext"))
+                log(f"  {pid} {prow.get('sku') or ''} {prow['productName']}: {'box image' if full else 'no image'}"
+                    f"{f', +{n} contents' if n else ''}{f', {v} random-booster items' if v else ''}")
+                self.checkpoint()
+
+    def add_variants(self, gen, pid, prow, wikitext):
+        """Random booster items 'CX-05 01: HellsReaper T4-70K (Prize)' -> variant products of the booster."""
+        base = S.parse_code(prow.get("sku") or "")
+        items = [a for a in parse_assortment(wikitext) if base and a["base"] == base["base"]]
+        book = self.book("products")
+        prods = book.named_sheet("Products")
+        for a in items:
+            vrow = {k: prow.get(k) for k in ("manufacturer", "hobbyName", "hobbyGeneration", "productType",
+                                              "releaseDate", "itemCost", "currency", "region")}
+            vrow.update({"productName": a["name"], "sku": a["code"], "parentProductId": pid,
+                         "variantLabel": a["sub"], "description": a["note"], "incompleteData": 1})
+            key = f"variant::{a['code']}::{a['name']}"
+            _, r = self.existing_match("products", key, vrow)
+            r, vid, new = book.write(prods, vrow, "productID", "P", row=r, overwrite=self.overwrite)
+            if new:
+                book.add_log("products", "Products", vid, key)
+            links = self.link_combo(vid, a["name"], a["code"]) if gen == "X" else None
+            log(f"      {'new' if new else 'upd'} {vid} {a['code']} {a['name']}{' (' + a['note'] + ')' if a['note'] else ''}"
+                f"{f' +{links} contents' if links else ''}")
+        return len(items)
 
     # ---- update by release code -----------------------------------------------------
     def code_series(self):
@@ -1162,7 +1730,9 @@ class Scraper:
                 book.write(cs, dict(zip(S.CODE_SERIES_COLUMNS, s)))
         return book, cs
 
-    def run_update(self, prefixes=None, generation=None, manufacturer=None, from_code=None):
+    def run_update(self, prefixes=None, generation=None, manufacturer=None, from_code=None, probe=True):
+        """1) re-read the product list pages (cheap: skipped rows are never downloaded) and add new releases,
+        2) search for codes after the store's last one per series (the lists lag behind / have gaps)."""
         book, cs = self.code_series()
         series = []
         for r, x in book.rows(cs):
@@ -1175,9 +1745,22 @@ class Scraper:
             if manufacturer and x.get("manufacturer") != manufacturer:
                 continue
             series.append((r, x))
+        if generation:
+            gens = [generation]
+        elif prefixes:
+            gens = sorted({x["hobbyGeneration"] for _, x in series if x.get("hobbyGeneration")})
+        else:
+            gens = [g for g in S.GENERATIONS if f"products:{g}" in self.cfg["sources"]]
+        log(f"\n##### update step 1: product list pages for {', '.join(gens) or '-'} #####")
+        for gen in gens:
+            self.run_products(gen, update=True)
+        if not probe:
+            return
+        log("\n##### update step 2: searching for codes newer than the store's last one #####")
         if not series:
             log("No matching sequential series in the CodeSeries sheet.")
             return
+        book, cs = self.code_series()
         try:
             for r, x in series:
                 self.update_series(book, cs, r, x, from_code)
@@ -1220,7 +1803,10 @@ class Scraper:
             checked += 1
         if found_max:
             hdr = book.headers(cs)
-            cs.cell(cs_row, hdr["lastKnownCode"], S.format_code(prefix, found_max, max(digits, len(str(found_max)))))
+            val = S.format_code(prefix, found_max, max(digits, len(str(found_max))))
+            if cs.cell(cs_row, hdr["lastKnownCode"]).value != val:
+                cs.cell(cs_row, hdr["lastKnownCode"], val)
+                book.dirty = True
         log(f"  {prefix}: stopped after {checked} codes checked "
             f"({'gap of ' + str(misses) if misses >= int(up['miss_limit']) else 'per-run limit'})")
 
@@ -1262,6 +1848,9 @@ class Scraper:
 
     # ---- helpers for humans ---------------------------------------------------------
     def inspect(self, target, n):
+        kind = target_kind(target)
+        if kind == "products":
+            return self.inspect_products(target_gen_key(target)[0], n)
         titles = self.list_titles(target)[:n]
         pages = self.get_pages(titles)
         seen = Counter()
@@ -1284,10 +1873,42 @@ class Scraper:
                 gen, _ = target_gen_key(target)
                 log(f"    => {map_product(gen, t, fields, src)[0]}")
             else:
-                log(f"    => {(map_tcg_set if target == 'tcg:sets' else map_tcg_card)(t, fields, src)}")
+                gen, key = target_gen_key(target)
+                log(f"    => {map_tcg_set(t, fields, src, gen) if key == 'sets' else map_tcg_card(t, fields, src, gen, pg['categories'])}")
         log("\nField names seen (add useful ones to this target's 'aliases' in scraper_config.json):")
         for k, c in seen.most_common():
             log(f"  {c:3d}x  {k}")
+        self.save_state()
+
+    def inspect_products(self, gen, n):
+        lists = self.list_pages_for(gen)
+        log(f"product list pages for {gen}: {lists or 'NONE - set list_pages in scraper_config.json'}")
+        pages = self.get_pages(lists)
+        links = []
+        for t in lists:
+            pg = pages.get(t)
+            if not pg:
+                log(f"  ! not found: {t}")
+                continue
+            tables = parse_wikitables(pg.get("wikitext"))
+            log(f"\n--- {t}: {len(tables)} tables")
+            for tb in tables:
+                log(f"    [{tb['section']}] headers={[cell_text_link(h)[0] for h in tb['headers']]} rows={len(tb['rows'])}")
+            es = product_entries(t, pg.get("wikitext"), gen)
+            for e in es[:n]:
+                log(f"    {e}")
+                log(f"      => {entry_to_row(gen, e)[0]}")
+            links += [e["link"] for e in es[:n] if e["link"]]
+        links = list(OrderedDict.fromkeys(links))[:n]
+        if links:
+            parsed = self.parse(self.get_pages(links), links)
+            for t, (pg, infobox, fields, files) in parsed.items():
+                log(f"\n--- product page {t} [infobox: {infobox or 'NONE'}] categories: {', '.join(pg['categories'][:6])}")
+                for k, v in fields.items():
+                    log(f"    {k!r}: {v[:90]}")
+                log(f"    image: {files or pg.get('page_image')}")
+                for a in parse_assortment(pg.get("wikitext")):
+                    log(f"    random-booster item: {a}")
         self.save_state()
 
     def status(self):
@@ -1325,7 +1946,7 @@ def resolve_targets(cfg, a):
             gen, key = target_gen_key(t)
             if kind != a.scope:
                 continue
-            if a.generation and kind != "tcg" and gen != a.generation:
+            if a.generation and gen != a.generation:
                 continue
             if a.part and key not in a.part:
                 continue
@@ -1335,7 +1956,7 @@ def resolve_targets(cfg, a):
 
 def run_cli(argv):
     ap = argparse.ArgumentParser(description="Polite, resumable Beyblade wiki scraper -> parts/products/tcg workbooks")
-    ap.add_argument("--target", action="append", help="e.g. parts:X:blades, products:X, tcg:cards (repeatable)")
+    ap.add_argument("--target", action="append", help="e.g. parts:X:blades, products:X, tcg:Plastic:cards (repeatable)")
     ap.add_argument("--scope", choices=["parts", "products", "tcg"], help="all targets of one workbook")
     ap.add_argument("--generation", choices=S.GENERATION_NAMES, help="limit --scope / --update to a generation")
     ap.add_argument("--part", nargs="+", help="with --scope parts: only these part keys")
@@ -1344,6 +1965,8 @@ def run_cli(argv):
     ap.add_argument("--series", nargs="+", help="with --update: series prefixes, e.g. BX UX CX B")
     ap.add_argument("--manufacturer", choices=S.MANUFACTURERS, help="with --update")
     ap.add_argument("--from-code", help="with --update: start here instead of after the store's last code")
+    ap.add_argument("--no-probe", action="store_true",
+                    help="with --update: only read the product list pages, don't search for newer codes")
     ap.add_argument("--next", action="store_true", help="scrape the next target that is not complete")
     ap.add_argument("--limit", type=int, help="max pages per target this run")
     ap.add_argument("--max-requests", type=int, help="request budget for this run (0 = unlimited)")
@@ -1359,6 +1982,8 @@ def run_cli(argv):
     ap.add_argument("--find-categories", metavar="WORD")
     ap.add_argument("--list-targets", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--quiet", action="store_true", help="hide the per-request lines on screen (still in the log file)")
+    ap.add_argument("--log-file", help="default: <state_dir>/scrape.log")
     ap.add_argument("--config", default=CONFIG_PATH)
     a = ap.parse_args(argv)
 
@@ -1371,6 +1996,10 @@ def run_cli(argv):
         log("NOTE: set a contact in 'user_agent' in scraper_config.json - Fandom asks bots to identify themselves.")
     sc = Scraper(cfg, overwrite=a.overwrite, no_images=a.no_images, relist=a.relist,
                  refresh_existing=a.refresh_existing)
+    LOG_OPTS["quiet"] = a.quiet
+    set_log_file(a.log_file or os.path.join(sc.state_dir, "scrape.log"))
+    log(f"Log file: {_LOG_FILE['path']}  (every request and step is recorded there)")
+    start_heartbeat(int(cfg["politeness"].get("heartbeat_seconds", 15)))
     if a.list_targets:
         for t in sc.targets():
             log(f"  {t}")
@@ -1389,7 +2018,7 @@ def run_cli(argv):
                 log(f"  {title}")
             return 0
         if a.update:
-            sc.run_update(a.series, a.generation, a.manufacturer, a.from_code)
+            sc.run_update(a.series, a.generation, a.manufacturer, a.from_code, probe=not a.no_probe)
             return 0
         targets = resolve_targets(cfg, a)
         if a.next:
@@ -1460,7 +2089,7 @@ def run_gui():
             w.destroy()
         tvars.clear()
         for i, t in enumerate(x for x in cfg["sources"] if target_kind(x) == scope.get()
-                              and (scope.get() == "tcg" or target_gen_key(x)[0] == gen.get())):
+                              and target_gen_key(x)[0] == gen.get()):
             tvars[t] = tk.BooleanVar(value=True)
             ttk.Checkbutton(tf, text=t.split(":", 1)[1], variable=tvars[t]).grid(row=i // 4, column=i % 4,
                                                                                   sticky="w", padx=6)
@@ -1495,11 +2124,16 @@ def run_gui():
     out = scrolledtext.ScrolledText(frm, height=22, state="disabled", bg="black", fg="lightgray",
                                     font=("Consolas", 10))
     out.grid(row=5, column=0, sticky="nsew")
+    status_var = tk.StringVar(value="idle")
+    ttk.Label(frm, textvariable=status_var, foreground="#0066cc").grid(row=6, column=0, sticky="w", pady=(4, 0))
     frm.rowconfigure(5, weight=1)
     frm.columnconfigure(0, weight=1)
     stop_event = threading.Event()
     worker = {"t": None}
     action_btns = []
+    sd = cfg["state_dir"] if os.path.isabs(cfg["state_dir"]) else os.path.join(HERE, cfg["state_dir"])
+    set_log_file(os.path.join(sd, "scrape.log"))
+    start_heartbeat(int(cfg["politeness"].get("heartbeat_seconds", 15)))
 
     def pump():
         try:
@@ -1515,6 +2149,8 @@ def run_gui():
             worker["t"] = None
             for b in action_btns:
                 b.config(state="normal")
+        status_var.set(("Now: " + ACTIVITY.describe()) if worker["t"] else
+                       f"idle - full log: {_LOG_FILE['path']}")
         root.after(150, pump)
 
     def launch(fn):

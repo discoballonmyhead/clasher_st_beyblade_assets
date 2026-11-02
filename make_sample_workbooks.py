@@ -107,6 +107,9 @@ def build_tcg(path, examples):
         base = {"manufacturer": "Takara-Tomy", "hobbyName": "Beyblade", "hobbyGeneration": "X", "incompleteData": 1}
         book.write(sets, dict(base, setID="S1", setCode="EX01", setName="EXAMPLE Set 1", region="JP",
                               cardCount=100, description="EXAMPLE - replace with the real first set"), "setID")
+        book.write(sets, {"setID": "S2", "setCode": "1", "setName": "Collision", "hobbyName": "Beyblade",
+                          "hobbyGeneration": "Plastic", "description": "Original 2000s Beyblade TCG, set no. 1",
+                          "incompleteData": 1}, "setID")
         for r in [
             dict(base, dataID=1, setCode="EX01", cardNumber="EX01-001", name="EXAMPLE Dran Sword card", cardType="Bey",
                  rarity="R", linkedPartType="Parts_X_Blades", linkedPartDataID=65, effectText="EXAMPLE effect text"),
@@ -115,6 +118,13 @@ def build_tcg(path, examples):
                  linkedPartDataID=65, effectText="EXAMPLE variant of card 1 (same number, different finish)"),
             dict(base, dataID=3, setCode="EX01", cardNumber="EX01-002", name="EXAMPLE Blader card",
                  cardType="Blader", rarity="C"),
+            # real card from the original 2000s Beyblade TCG (wiki page "Batranzer (TCG)")
+            dict(dataID=4, hobbyName="Beyblade", hobbyGeneration="Plastic", setCode="1", setName="Collision",
+                 name="Batranzer", subtitle="Swooping Beyblade", cardType="Blade", rarity="Uncommon",
+                 battleEdge=3, spinStrength=7,
+                 effectText="When you make an opponent lose a blue card from his or her spin pile, you gain 1 spin.",
+                 loreText="This Beyblade is able to jump high in the air, then drop down in a powerful Bat Attack.",
+                 incompleteData=1),
         ]:
             book.write(cards, r, "dataID")
     book.save()
