@@ -120,7 +120,9 @@ class Book:
             self.wb = openpyxl.load_workbook(path)
             for ws in self.wb.worksheets:
                 for img in ws._images:
-                    self._pin(img, img._data())
+                    # keep the original bytes: img._data() would re-encode WebP as PNG
+                    raw = img.ref.getvalue() if hasattr(img.ref, "getvalue") else None
+                    self._pin(img, raw or img._data())
         else:
             self.wb = openpyxl.Workbook()
             ws = self.wb.active

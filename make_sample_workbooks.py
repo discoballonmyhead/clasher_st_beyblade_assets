@@ -37,7 +37,7 @@ def png_from_webp(path, width):
     if im.width > width:
         im = im.resize((width, round(im.height * width / im.width)), Image.LANCZOS)
     b = io.BytesIO()
-    im.save(b, "PNG", optimize=True)
+    im.save(b, "WEBP", quality=85, method=6)  # same format the scraper stores and the packager ships
     return b.getvalue()
 
 

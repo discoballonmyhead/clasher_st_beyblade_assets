@@ -66,6 +66,15 @@ python fandom_scraper.py --status
   told apart by the caption text. A variant without a gallery image is written without one. Rows you already
   have (same name + code) are matched and only blank cells are filled, so your existing editions get their
   `parentPartId`. If the release is in the products workbook (sku = code) the part is added to its contents.
+* Stats: type, spin direction, attack/defense/stamina, weight and WBO legality come from the page source; when
+  the source doesn't have them (other field names, a stats sub-template) the rendered infobox is read instead –
+  the same labels you see on the page ("Spin Direction", "Weight", "Attack"). Multi-mold values take the first
+  ("34.6 grams (first mold)"). `rendered_infobox`: `auto` (default) / `always` / `never`.
+* After each part sheet the log prints what's still blank, e.g.
+  `Parts_X_Blades: 412 rows (278 variants), 390 with image; still blank: mass 12, attack 30`.
+* Images inside the workbooks are **WebP** (`workbook_image_format`, default `webp`) – the packager copies them
+  byte-for-byte into `data/images/` for the jsDelivr links and the release zips. Excel 365 and LibreOffice show
+  WebP; set `png` if you edit in an old Excel that shows blank pictures.
 * Anything already in the workbooks is skipped **before** downloading (wiki title, name+code, sku, card number).
   `--relist` finds newly added wiki pages; `--refresh-existing` fills blank cells of existing rows; hand edits
   are kept unless `--overwrite`.
