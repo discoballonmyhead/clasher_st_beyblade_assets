@@ -2171,40 +2171,49 @@ class Scraper:
             done_n = 0
             for bi, batch in enumerate(chunks(todo, bs), 1):
                 log(f"\n  --- batch {bi}/{n_batches}: pages {done_n + 1}-{done_n + len(batch)} of {len(todo)} ---")
-                pages = self.get_pages(batch)
-                parsed = self.parse(pages, batch)
-                for t in batch:
-                    if t not in parsed:
-                        st["failed"][t] = "page missing"
-                if kind == "parts":
-                    self.fill_from_rendered(target, parsed)
-                imgs = self.images_for_pages(parsed)
-                self._gallery_imgs = {}
-                if kind == "parts" and self.cfg["politeness"].get("variant_images", True):
-                    # every gallery image: recolor captions often have no code ("DranSword (Metal Coat: Bronze)")
-                    gal = [f for (pg, _, _, _) in parsed.values() for f, _, _ in self.page_gallery(pg)]
-                    self._gallery_imgs = self.fetch_images(gal, "variant images (gallery)")
-                log(f"  writing {len(parsed)} rows into the workbook ...")
-                for t, (pg, infobox, fields, files) in parsed.items():
-                    done_n += 1
-                    ACTIVITY.set(f"writing row {done_n}/{len(todo)}", t)
-                    if kind == "parts":
-                        res = self.handle_part(target, t, pg, infobox, fields, files, imgs)
-                    elif kind == "products":
-                        gen, _ = target_gen_key(target)
-                        res = self.handle_product(gen, t, pg, infobox, fields, files, imgs)
-                    else:
-                        res = self.handle_tcg(target, t, pg, infobox, fields, files, imgs)
-                    st["done"][t] = res
-                    st["failed"].pop(t, None)
-                    log(f"  [{done_n}/{len(todo)}] [{res}] {t}")
-                    self.checkpoint()
+                done_n = self.process_batch(target, batch, st, done_n, len(todo))
             st["complete"] = all(t in st["done"] for t in titles)
         finally:
             self.save_all()
             log(f"  saved: {len(st['done'])}/{len(titles)} pages handled for {target}, "
                 f"{self.client.count} requests used this run")
             self.completeness_report(target)
+
+    def process_batch(self, target, batch, st=None, done_n=0, total=None):
+        """Fetch, parse and write a batch of pages of one listed target. Also used by
+        missing_data_tool.py to refresh specific pages. Returns the running page count."""
+        kind = target_kind(target)
+        st = st if st is not None else self.kstate(target)
+        total = total or len(batch)
+        pages = self.get_pages(batch)
+        parsed = self.parse(pages, batch)
+        for t in batch:
+            if t not in parsed:
+                st["failed"][t] = "page missing"
+        if kind == "parts":
+            self.fill_from_rendered(target, parsed)
+        imgs = self.images_for_pages(parsed)
+        self._gallery_imgs = {}
+        if kind == "parts" and self.cfg["politeness"].get("variant_images", True):
+            # every gallery image: recolor captions often have no code ("DranSword (Metal Coat: Bronze)")
+            gal = [f for (pg, _, _, _) in parsed.values() for f, _, _ in self.page_gallery(pg)]
+            self._gallery_imgs = self.fetch_images(gal, "variant images (gallery)")
+        log(f"  writing {len(parsed)} rows into the workbook ...")
+        for t, (pg, infobox, fields, files) in parsed.items():
+            done_n += 1
+            ACTIVITY.set(f"writing row {done_n}/{total}", t)
+            if kind == "parts":
+                res = self.handle_part(target, t, pg, infobox, fields, files, imgs)
+            elif kind == "products":
+                gen, _ = target_gen_key(target)
+                res = self.handle_product(gen, t, pg, infobox, fields, files, imgs)
+            else:
+                res = self.handle_tcg(target, t, pg, infobox, fields, files, imgs)
+            st["done"][t] = res
+            st["failed"].pop(t, None)
+            log(f"  [{done_n}/{total}] [{res}] {t}")
+            self.checkpoint()
+        return done_n
 
     # ---- products from the wiki's product list pages ---------------------------------
     def list_pages_for(self, gen, refresh=False):
