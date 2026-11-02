@@ -1,0 +1,46 @@
+--- a/lib/features/beyblade/parts_list.dart
++++ b/lib/features/beyblade/parts_list.dart
+@@ -144,19 +144,38 @@
+ 
+ /// The one hook into your parts catalog.
+ ///
+-/// Implement it against the catalog your deck builder already uses and
+-/// register it once:
++/// BeybladePartCatalog (presentation/part_lists/beyblade_part_catalog.dart)
++/// implements it on top of BeybladeDataRepo and is registered in
++/// BeybladeDependencies.init():
+ ///
+-///     sl.registerLazySingleton<PartCatalog>(() => YourPartCatalog());
++///     sl.registerLazySingleton<PartCatalog>(() => BeybladePartCatalog(sl()));
+ ///
+-/// Until it's registered, [resolvePartCatalog] falls back to
+-/// [ManualEntryPartCatalog] so the flow can be tested end to end.
++/// [resolvePartCatalog] only falls back to [ManualEntryPartCatalog] when
++/// nothing is registered (tests).
+ abstract class PartCatalog {
+   const PartCatalog();
+ 
+   /// Lets the user pick one part. Null if they cancel.
+   Future<PartRef?> pickPart(BuildContext context, {required PartListKind kind});
+ 
++  /// Lets the user pick one or more parts at once (e.g. a part together
++  /// with all its recolors). Empty if they cancel. Defaults to [pickPart].
++  Future<List<PartRef>> pickParts(BuildContext context,
++      {required PartListKind kind}) async {
++    final part = await pickPart(context, kind: kind);
++    return part == null ? const [] : [part];
++  }
++
++  /// True once [nameOf] and [thumbnail] can answer from loaded data.
++  bool get isReady => true;
++
++  /// Loads whatever [nameOf] needs. Widgets that show part names call it
++  /// and rebuild when it completes, so a list never stays on "Blade #12".
++  Future<void> ready() async {}
++
++  /// A small picture of the part, or null when the catalog has none.
++  Widget? thumbnail(PartRef part, {double size = 24}) => null;
++
+   /// Display name for a part, e.g. "Dran Sword". Return something
+   /// readable even when the id is unknown.
+   String nameOf(PartRef part);

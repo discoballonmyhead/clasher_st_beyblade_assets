@@ -108,6 +108,16 @@ def check_required(sheet_key, rows, log):
             + ", ".join(f"{c} x{n}" for c, n in empty.items()))
 
 
+def is_deleted(row):
+    """Rows marked deleted stay in the workbook (dataIDs are never reused) but never reach the app."""
+    return str(row.get("deleted") or "").strip().lower() in ("true", "1", "yes")
+
+
+def drop_deleted(rows):
+    keep = [r for r in rows if not is_deleted(r)]
+    return keep, len(rows) - len(keep)
+
+
 def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, base_url,
                         images_by_generation, manifest, log, images_by_hobby=None):
     headers = [str(c.value) if c.value else "" for c in ws[1]]
@@ -127,7 +137,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         data_id = row.get(id_field)
         for kind, suffix in (("full", ""), ("min", "-min")):
             data = images_by_row.get(i + 2, {}).get(kind)
-            if data_id not in (None, "") and data:
+            if data_id not in (None, "") and data and not is_deleted(row):
                 jobs[(i, kind)] = (f"{prefix}-{data_id}{suffix}.webp", data)
 
     def encode(item):
@@ -142,9 +152,12 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             encoded = dict(ex.map(encode, jobs.items()))
 
     rows, seen_ids = [], set()
-    with_image = without_image = no_id = 0
+    with_image = without_image = no_id = n_deleted = 0
     for i, row in enumerate(raw_rows):
         data_id = row.get(id_field)
+        if is_deleted(row):
+            n_deleted += 1
+            continue
         if data_id in (None, ""):
             no_id += 1
             continue
@@ -182,6 +195,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
     check_required(prefix, rows, log)
     manifest["sheets"][prefix] = {"rowCount": len(rows), "withImage": with_image, "withoutImage": without_image}
     extra = f", {no_id} rows without {id_field} skipped" if no_id else ""
+    extra += f", {n_deleted} deleted rows left out" if n_deleted else ""
     log(f"  {ws.title} -> {prefix}.json: {len(rows)} rows ({with_image} with image, {without_image} without{extra})")
 
 
@@ -215,7 +229,7 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
                 process_image_sheet(ws, cfg["json"], cfg["id"], *cfg["images"],
                                     out_dir, base_url, images_by_generation, manifest, log, images_by_hobby)
             elif name in NO_IMAGE_SHEETS:
-                rows = read_sheet_rows(ws)
+                rows, _ = drop_deleted(read_sheet_rows(ws))
                 _dump(out_dir / f"{NO_IMAGE_SHEETS[name]}.json", rows)
                 check_required(NO_IMAGE_SHEETS[name], rows, log)
                 manifest["sheets"][NO_IMAGE_SHEETS[name]] = {"rowCount": len(rows)}

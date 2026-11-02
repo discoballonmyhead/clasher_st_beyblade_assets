@@ -1,22 +1,13 @@
-// =============================================================================
-// REAL PART CATALOG FOR BAN / ALLOW LISTS
-// -----------------------------------------------------------------------------
-// Why ban/allow lists were "broken": nothing registered a PartCatalog, so
-// resolvePartCatalog() fell back to ManualEntryPartCatalog - "type a part type
-// and a data id by hand". This is the real one, backed by the parts catalog
-// the deck builder already uses (BeybladeDataRepo): search by name/code, filter
-// by part type, images, variants grouped under their original.
+// The real PartCatalog behind ban / approve lists (parts_list.dart).
 //
-// Register once (features/beyblade/di/beyblade_dependencies.dart, end of init()):
+// Backed by the local parts catalog the deck builder already uses
+// (BeybladeDataRepo): search by name or code, filter by part type, images,
+// and recolors listed under their original. Registered in
+// BeybladeDependencies.init(); resolvePartCatalog() then returns it
+// everywhere (create-tournament page, Ban & approve lists page).
 //
-//   sl.registerLazySingleton<PartCatalog>(() => BeybladePartCatalog(sl()));
-//
-// Nothing else changes: create_tournament_page.dart already calls
-// resolvePartCatalog(), and PartList / PartRef keep their exact shape
-// ({"blade": ["12"]}), so saved lists and tournament rules stay compatible.
-// =============================================================================
-
-import 'dart:async';
+// PartList / PartRef keep their exact shape ({"blade": ["12"]}), so saved
+// lists and tournament rules stay compatible.
 
 import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/core/widgets/app_beyblade_loading_indicator.dart';
@@ -76,19 +67,27 @@ class BeybladePartCatalog extends PartCatalog {
 
   final BeybladeDataRepo _repo;
 
-  /// "<refKey>|<dataId>" -> part. Filled by [warm]; nameOf() is synchronous,
+  /// `refKey|dataId` -> part. Filled by [warm]; nameOf() is synchronous,
   /// so it answers from here.
   final Map<String, ListablePart> _byRef = {};
   Future<void>? _warming;
+  bool _loaded = false;
 
   static String _k(String refKey, String dataId) => '$refKey|$dataId';
 
-  /// Loads every listable part once (cheap: local database). Called by the
-  /// picker and the lists page; safe to call repeatedly.
+  /// Loads every listable part (cheap: local database). Safe to call
+  /// repeatedly; [force] re-reads it, which the picker does on every open so
+  /// a catalog update shows up without restarting the app.
   Future<void> warm({bool force = false}) {
     if (force) _warming = null;
     return _warming ??= _load();
   }
+
+  @override
+  bool get isReady => _loaded;
+
+  @override
+  Future<void> ready() => warm();
 
   Future<void> _load() async {
     final loaders = <String, Future<List<BeybladePart>> Function()>{
@@ -114,6 +113,7 @@ class BeybladePartCatalog extends PartCatalog {
     _byRef
       ..clear()
       ..addAll(next);
+    _loaded = true;
   }
 
   List<ListablePart> get all => _byRef.values.toList(growable: false);
@@ -143,34 +143,44 @@ class BeybladePartCatalog extends PartCatalog {
       partTypeByRefKey(partType)?.label ?? super.typeLabel(partType);
 
   @override
+  Widget? thumbnail(PartRef part, {double size = 24}) {
+    final p = lookup(part)?.part;
+    if (p == null) return null;
+    return PartImageThumb(
+      imageUrl: preferredThumbUrl(p),
+      size: size,
+      scale: imageScaleFor(p),
+    );
+  }
+
+  /// One part per pick.
+  @override
   Future<PartRef?> pickPart(
     BuildContext context, {
     required PartListKind kind,
   }) async {
-    unawaited(warm());
     final picked = await PartPickerSheet.show(
       context,
       catalog: this,
       kind: kind,
     );
-    return picked?.single;
+    return (picked == null || picked.isEmpty) ? null : picked.first;
   }
 
-  /// Like [pickPart], but can return the whole variant group when the user
-  /// ticks "include variants". Used by the lists page; the create page keeps
-  /// using pickPart (one part per tap).
-  Future<List<PartRef>?> pickParts(
+  /// A part, or a part with all its recolors when "Include all its
+  /// variants" is ticked (the default).
+  @override
+  Future<List<PartRef>> pickParts(
     BuildContext context, {
     required PartListKind kind,
-  }) async {
-    unawaited(warm());
-    return PartPickerSheet.show(
-      context,
-      catalog: this,
-      kind: kind,
-      allowGroup: true,
-    );
-  }
+  }) async =>
+      await PartPickerSheet.show(
+        context,
+        catalog: this,
+        kind: kind,
+        allowGroup: true,
+      ) ??
+      const [];
 }
 
 // ── Picker ────────────────────────────────────────────────────────────────
@@ -210,7 +220,7 @@ class _PartPickerSheetState extends State<PartPickerSheet> {
   String? _type; // refKey, null = all
   bool _includeVariants = true;
   bool _showVariants = false;
-  late final Future<void> _ready = widget.catalog.warm();
+  late final Future<void> _ready = widget.catalog.warm(force: true);
 
   @override
   void initState() {

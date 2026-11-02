@@ -1,19 +1,13 @@
-// =============================================================================
-// OPTIONAL STADIUM FOR A TOURNAMENT
-// -----------------------------------------------------------------------------
-// "Stadium (optional)": the host can name the stadium the tournament is played
-// on (Xtreme Stadium, Wide Xtreme Stadium, ...), picked from the Accessories in
-// the parts catalog (accessoryType = Stadium). Null = not specified, which is
-// the default and changes nothing for existing tournaments.
+// Optional stadium for a tournament.
 //
-// Wiring (see flutter_integration/README.md, "Stadium"):
-//   TournamentDraft:  String? stadiumDataId;
-//   form block:       TournamentStadiumField(
-//                       value: draft.stadiumDataId,
-//                       onChanged: (id) => draft.update(() => draft.stadiumDataId = id))
-//   request:          CreateTournamentRequest(..., stadiumDataId: stadiumDataId)
-//   server:           tournaments.stadium_data_id (text, nullable)
-// =============================================================================
+// TournamentStadiumField: the "Stadium" block on the create-tournament page.
+//   Picks from the catalog's Accessories with accessoryType Stadium; "No
+//   specific stadium" (null) is the default.
+// TournamentStadiumPanel: shown on the tournament detail page under "How
+//   it's played"; renders nothing when the host didn't pick a stadium.
+//
+// Stored with TournamentStadiumRepository right after the tournament is
+// created (sql/21_tournament_stadium.sql).
 
 import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/core/responsive/responsive.dart';
@@ -22,6 +16,8 @@ import 'package:clasher_st/core/widgets/holow_components.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/domain/repositories/beyblade_data_repo.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
+import 'package:clasher_st/features/tournaments/data/tournament_stadium_repository.dart';
+import 'package:clasher_st/features/tournaments/presentation/widgets/arena_style.dart';
 import 'package:flutter/material.dart';
 
 /// Stadiums in the local catalog, base models first, each group by name.
@@ -90,10 +86,7 @@ class _TournamentStadiumFieldState extends State<TournamentStadiumField> {
               selected == null
                   ? Icon(Icons.stadium_outlined, color: cs.onSurfaceVariant)
                   : PartImageThumb(
-                      imageUrl: preferredImageSource(
-                        selected.minifiedImageUrl,
-                        selected.imageUrl,
-                      ),
+                      imageUrl: preferredAccessoryThumbUrl(selected),
                       size: 40,
                       scale: 1,
                     ),
@@ -188,7 +181,7 @@ class _StadiumSheet extends StatelessWidget {
                 if (s.subType != null) s.subType!,
                 s.manufacturer,
               ].join(' · '),
-              preferredImageSource(s.minifiedImageUrl, s.imageUrl),
+              preferredAccessoryThumbUrl(s),
             ),
           if (stadiums.isEmpty)
             Padding(
@@ -243,6 +236,80 @@ class _StadiumSheet extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The tournament's stadium, if the host picked one. Nothing otherwise
+/// (also while loading, and when it can't be read), so the page never
+/// jumps or shows an error for an optional detail.
+class TournamentStadiumPanel extends StatefulWidget {
+  const TournamentStadiumPanel({super.key, required this.tournamentId});
+
+  final String tournamentId;
+
+  @override
+  State<TournamentStadiumPanel> createState() => _TournamentStadiumPanelState();
+}
+
+class _TournamentStadiumPanelState extends State<TournamentStadiumPanel> {
+  late Future<(String, Accessory?)?> _stadium = _load();
+
+  @override
+  void didUpdateWidget(covariant TournamentStadiumPanel old) {
+    super.didUpdateWidget(old);
+    if (old.tournamentId != widget.tournamentId) _stadium = _load();
+  }
+
+  Future<(String, Accessory?)?> _load() async {
+    try {
+      final id = await sl<TournamentStadiumRepository>()
+          .getStadium(widget.tournamentId);
+      if (id == null) return null;
+      return (id, await sl<BeybladeDataRepo>().getAccessoryByDataId(id));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final rc = ResponsiveProvider.config(context);
+    return FutureBuilder<(String, Accessory?)?>(
+      future: _stadium,
+      builder: (context, snap) {
+        final data = snap.data;
+        if (data == null) return const SizedBox.shrink();
+        final (id, stadium) = data;
+        final image = preferredAccessoryThumbUrl(stadium);
+        return Padding(
+          padding: EdgeInsets.only(top: rc.sm),
+          child: ArenaPanel(
+            padding: EdgeInsets.all(rc.md),
+            child: Row(
+              children: [
+                image == null
+                    ? Icon(Icons.stadium_outlined, color: cs.onSurfaceVariant)
+                    : PartImageThumb(imageUrl: image, size: 44, scale: 1),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Stadium',
+                          style: TextStyle(
+                              fontSize: 12, color: cs.onSurfaceVariant)),
+                      Text(stadium?.name ?? 'Stadium #$id',
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

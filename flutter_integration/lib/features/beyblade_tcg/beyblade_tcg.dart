@@ -1,43 +1,24 @@
-// =============================================================================
-// BEYBLADE TCG CATALOG (hobby "Beyblade TCG")
-// -----------------------------------------------------------------------------
-// The card game is its own hobby: own rows (hobbyName = "Beyblade TCG"), own
-// image packs (beyblade_tcg_images_<Gen>.zip) and data packs. hobbyGeneration
-// tells the games apart: "Original" = the V-Force TCG (Blade / Bit-Beast
-// cards, Battle Edge, Spin Strength), "X" = the Beyblade X TCG (not released yet).
+// Beyblade TCG catalog (hobby "Beyblade TCG").
 //
-// Data comes from the same catalog.zip the parts already use (tcgCards.json,
-// tcgSets.json). Additive only - nothing in the parts catalog changes:
+// The card game is its own hobby: own rows (hobbyName = "Beyblade TCG") and
+// own image packs (beyblade_tcg_images_<Gen>.zip). hobbyGeneration tells the
+// games apart: "Original" = the V-Force TCG (Battle Edge, Spin Strength);
+// "X" = the Beyblade X TCG, not released yet.
 //
-// 1) beyblade_cat_remdsrc.dart, downloadCatalogSheets(): keep these optional
-//    sheets too (don't add them to trackedBeyBladeData - that list is
-//    "required", and older releases don't have them):
+// Wiring (all in this integration):
+//   beyblade_cat_remdsrc.dart  keeps the optional sheets (kOptionalCatalogSheets)
+//   beyblade_sync_cubit.dart   passes the downloaded sheets to ingestSheets()
+//   beyblade_dependencies.dart registers TcgCatalog(HiveTcgStore())
+//   presentation/tcg_cards_page.dart   browse screen (BeybladeRoutes.tcg)
 //
-//        final optional = kOptionalCatalogSheets.toSet();
-//        ...
-//        if (!tracked.contains(sheet) && !optional.contains(sheet)) continue;
-//
-// 2) beyblade_sync_cubit.dart, right after `final sheets = await
-//    _catalogRemote.downloadCatalogSheets(release);`:
-//
-//        await sl<TcgCatalog>().ingestSheets(sheets);
-//
-// 3) DI (beyblade_dependencies.dart):
-//
-//        sl.registerLazySingleton<TcgCatalog>(() => TcgCatalog(
-//            HiveKeyValueStore(sl<Box>(instanceName: AppConstants.appFlagsBoxName))));
-//
-//    (any Box works - TcgCatalog only stores two JSON strings under its own
-//    keys; HiveKeyValueStore is the 6-line adapter at the bottom of this file).
-//
-// Card images: TcgCard.imageUrl / minifiedImageUrl, same rules as parts
-// (preferredImageSource). Image packs key files as tcgCards-<dataID>.webp.
-// =============================================================================
+// Card images: imageUrl / minifiedImageUrl, the same rules as parts
+// (preferredImageSource). Image packs name files tcgCards-<dataID>.webp.
 
 import 'dart:convert';
 import 'dart:developer' as dev;
 
 import 'package:equatable/equatable.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 const kTcgHobbyName = 'Beyblade TCG';
 
@@ -275,69 +256,99 @@ List<T> _parseList<T>(String? raw, T? Function(Map<String, dynamic>) row) {
 
 // ── Store ─────────────────────────────────────────────────────────────────
 
-/// The two calls TcgCatalog needs from local storage. Adapt any Hive box.
-abstract class KeyValueStore {
-  String? getString(String key);
-  Future<void> putString(String key, String value);
+/// The storage TcgCatalog needs: three JSON strings.
+abstract class TcgStore {
+  Future<String?> read(String key);
+  Future<void> write(String key, String value);
+}
+
+/// Its own Hive box, opened on first use (Hive is already initialised by the
+/// app; same pattern as BeyTestsLocalDataSource).
+class HiveTcgStore implements TcgStore {
+  HiveTcgStore({this.boxName = 'beyblade_tcg_catalog'});
+
+  final String boxName;
+  Box<String>? _box;
+
+  Future<Box<String>> _open() async => _box ??= Hive.isBoxOpen(boxName)
+      ? Hive.box<String>(boxName)
+      : await Hive.openBox<String>(boxName);
+
+  @override
+  Future<String?> read(String key) async => (await _open()).get(key);
+
+  @override
+  Future<void> write(String key, String value) async =>
+      (await _open()).put(key, value);
 }
 
 class TcgCatalog {
   TcgCatalog(this._store);
 
-  final KeyValueStore _store;
-  static const _cardsKey = 'tcg_catalog_cards_json';
-  static const _setsKey = 'tcg_catalog_sets_json';
-  static const _imagesKey = 'tcg_catalog_local_images_json';
+  final TcgStore _store;
+  static const _cardsKey = 'cards_json';
+  static const _setsKey = 'sets_json';
+  static const _imagesKey = 'local_images_json';
 
-  List<TcgCard>? _cards;
-  List<TcgSet>? _sets;
+  Future<(List<TcgCard>, List<TcgSet>)>? _loading;
 
   /// Call with the sheets map from downloadCatalogSheets(). A release without
   /// TCG sheets leaves the current TCG catalog as it is.
   Future<void> ingestSheets(Map<String, String> sheets) async {
     final cards = sheets['tcgCards'];
     final sets = sheets['tcgSets'];
-    if (cards != null) await _store.putString(_cardsKey, cards);
-    if (sets != null) await _store.putString(_setsKey, sets);
-    _cards = null;
-    _sets = null;
+    if (cards == null && sets == null) return;
+    if (cards != null) await _store.write(_cardsKey, cards);
+    if (sets != null) await _store.write(_setsKey, sets);
+    _loading = null;
   }
 
   /// Downloaded image pack: {"tcgCards-12": "/path/tcgCards-12.webp", ...}
   /// (same keys the parts image packs use). Stored as an overlay so a later
-  /// catalog update doesn't lose the local paths.
+  /// catalog update keeps the local paths.
   Future<void> applyLocalImagePaths(Map<String, String> pathsByKey) async {
-    final current = _localImages();
+    final current = await _localImages();
     for (final e in pathsByKey.entries) {
       if (e.key.startsWith('tcgCards-') || e.key.startsWith('tcgSets-')) {
         current[e.key] = e.value;
       }
     }
-    await _store.putString(_imagesKey, jsonEncode(current));
-    _cards = null;
-    _sets = null;
+    await _store.write(_imagesKey, jsonEncode(current));
+    _loading = null;
   }
 
-  Map<String, String> _localImages() {
+  Future<Map<String, String>> _localImages() async {
     try {
       return Map<String, String>.from(
-        jsonDecode(_store.getString(_imagesKey) ?? '{}') as Map,
+        jsonDecode(await _store.read(_imagesKey) ?? '{}') as Map,
       );
     } catch (_) {
       return {};
     }
   }
 
-  List<TcgCard> get cards => _cards ??= () {
-    final local = _localImages();
-    return [
-      for (final c in _parseList(_store.getString(_cardsKey), tcgCardFromRow))
-        _withLocal(c, local),
-    ];
-  }();
+  /// Cards and sets, parsed once and kept until the next ingest.
+  Future<(List<TcgCard>, List<TcgSet>)> load() => _loading ??= () async {
+        final local = await _localImages();
+        final cards = [
+          for (final c
+              in _parseList(await _store.read(_cardsKey), tcgCardFromRow))
+            _withLocal(c, local),
+        ]..sort(_byNumber);
+        final sets = _parseList(await _store.read(_setsKey), tcgSetFromRow);
+        return (cards, sets);
+      }();
 
-  List<TcgSet> get sets =>
-      _sets ??= _parseList(_store.getString(_setsKey), tcgSetFromRow);
+  Future<List<TcgCard>> cards() async => (await load()).$1;
+
+  Future<List<TcgSet>> sets() async => (await load()).$2;
+
+  static int _byNumber(TcgCard a, TcgCard b) {
+    final s = (a.setName ?? '').compareTo(b.setName ?? '');
+    if (s != 0) return s;
+    final n = (a.cardNumber ?? '').compareTo(b.cardNumber ?? '');
+    return n != 0 ? n : a.name.compareTo(b.name);
+  }
 
   TcgCard _withLocal(TcgCard c, Map<String, String> local) {
     final full = local['tcgCards-${c.dataId}'];
@@ -373,42 +384,32 @@ class TcgCatalog {
       isIncomplete: c.isIncomplete,
     );
   }
-
-  /// Generations that have cards (for the image-pack sheet / filters).
-  List<String> get generations =>
-      ({for (final c in cards) c.hobbyGeneration}..remove('')).toList()..sort();
-
-  List<TcgCard> cardsOf({String? generation, String? setName, String? query}) {
-    final q = query?.trim().toLowerCase() ?? '';
-    return cards.where((c) {
-      if (generation != null && c.hobbyGeneration != generation) return false;
-      if (setName != null && c.setName != setName) return false;
-      if (q.isEmpty) return true;
-      return c.name.toLowerCase().contains(q) ||
-          (c.cardNumber?.toLowerCase().contains(q) ?? false) ||
-          (c.subtitle?.toLowerCase().contains(q) ?? false);
-    }).toList();
-  }
-
-  /// The original card plus its parallels/foils.
-  List<TcgCard> variantGroup(String dataId) {
-    final c = cards.where((x) => x.dataId == dataId).firstOrNull;
-    if (c == null) return const [];
-    final root = c.parentCardId ?? c.dataId;
-    return cards
-        .where((x) => x.dataId == root || x.parentCardId == root)
-        .toList();
-  }
 }
 
-/// Adapter for any Hive box (`Box` from hive / hive_ce - same API):
-///
-///   class HiveKeyValueStore implements KeyValueStore {
-///     HiveKeyValueStore(this.box);
-///     final Box box;
-///     @override String? getString(String key) => box.get(key) as String?;
-///     @override Future<void> putString(String key, String value) => box.put(key, value);
-///   }
-///
-/// Kept as a comment so this file doesn't import a Hive package the app may
-/// pull in under a different name - paste it next to your DI setup.
+/// Filters for the browse screen. Pure, so it's easy to test.
+List<TcgCard> filterTcgCards(
+  List<TcgCard> cards, {
+  String? generation,
+  String? setName,
+  String? query,
+  bool includeVariants = false,
+}) {
+  final q = query?.trim().toLowerCase() ?? '';
+  return cards.where((c) {
+    if (generation != null && c.hobbyGeneration != generation) return false;
+    if (setName != null && c.setName != setName) return false;
+    if (!includeVariants && q.isEmpty && c.parentCardId != null) return false;
+    if (q.isEmpty) return true;
+    return c.name.toLowerCase().contains(q) ||
+        (c.cardNumber?.toLowerCase().contains(q) ?? false) ||
+        (c.subtitle?.toLowerCase().contains(q) ?? false);
+  }).toList();
+}
+
+/// The original card plus its parallels / foils.
+List<TcgCard> tcgVariantGroup(List<TcgCard> cards, TcgCard card) {
+  final root = card.parentCardId ?? card.dataId;
+  return cards
+      .where((x) => x.dataId == root || x.parentCardId == root)
+      .toList();
+}

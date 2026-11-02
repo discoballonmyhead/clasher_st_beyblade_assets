@@ -1,0 +1,214 @@
+--- a/lib/features/tournaments/presentation/pages/create_tournament_page.dart
++++ b/lib/features/tournaments/presentation/pages/create_tournament_page.dart
+@@ -11,14 +11,18 @@
+ import 'package:clasher_st/core/widgets/app_widgets.dart';
+ import 'package:clasher_st/core/widgets/holow_components.dart';
+ import 'package:clasher_st/features/auth/presentation/cubits/auth_flow_cubit/auth_cubit.dart';
++import 'package:clasher_st/features/beyblade/b_routes/beyblade_routes.dart';
+ import 'package:clasher_st/features/beyblade/parts_list.dart';
+ import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
++import 'package:clasher_st/features/beyblade/presentation/widgets/part_list_editor.dart';
+ import 'package:clasher_st/features/orgs/domain/entities/entities.dart';
+ import 'package:clasher_st/features/orgs/presentation/cubits/org_cubit/org_cubit.dart';
+ import 'package:clasher_st/features/tournaments/data/model/models.dart';
++import 'package:clasher_st/features/tournaments/data/tournament_stadium_repository.dart';
+ import 'package:clasher_st/features/tournaments/domain/entities/entities.dart';
+ import 'package:clasher_st/features/tournaments/presentation/cubits/tournament_cubit.dart';
+ import 'package:clasher_st/features/tournaments/presentation/widgets/create_tournament_widgets/create_tourn_widgets.dart';
++import 'package:clasher_st/features/tournaments/presentation/widgets/stadium_picker_field.dart';
+ import 'package:clasher_st/features/tournaments/presentation/widgets/step_trail.dart';
+ import 'package:clasher_st/features/user_dt/presentation/cubits/profile_CU/profile_cubit.dart';
+ import 'package:clasher_st/features/user_dt/presentation/widgets/timeline_line.dart';
+@@ -268,6 +272,19 @@
+         );
+     if (id == null || !mounted) return;
+ 
++    // Optional stadium: stored right after creation, like the prizes.
++    final stadium = _draft.stadiumDataId;
++    if (stadium != null) {
++      try {
++        await sl<TournamentStadiumRepository>().setStadium(id, stadium);
++      } catch (e) {
++        messenger.showSnackBar(SnackBar(
++            content: Text('Tournament created, but the stadium was not '
++                'saved: $e')));
++      }
++      if (!mounted) return;
++    }
++
+     // The tournament exists now, so the planned prizes can be saved.
+     if (prizes.isNotEmpty || !poolPlan.isEmpty) {
+       setState(() => _savingPrizes = true);
+@@ -777,7 +794,6 @@
+           builder: (context, _) => _MatchSettings(draft: draft),
+         ),
+       ),
+-      //TODO Need to make it so that it selects the parts
+       FormBlock(
+         title: TrTokens.partRulesTitle,
+         hint: const FormHint(
+@@ -790,6 +806,23 @@
+           builder: (context, _) => _PartRulesBlock(draft: draft),
+         ),
+       ),
++      FormBlock(
++        title: 'Stadium',
++        hint: const FormHint(
++          Icons.stadium_outlined,
++          'Optional. Pick the stadium the matches are played on so players '
++              'can prepare for it. Leave it on "No specific stadium" when the '
++              'venue decides.',
++        ),
++        child: _DraftSelect(
++          draft: draft,
++          select: (x) => x.stadiumDataId,
++          builder: (context, stadiumDataId) => TournamentStadiumField(
++            value: stadiumDataId,
++            onChanged: (id) => draft.update(() => draft.stadiumDataId = id),
++          ),
++        ),
++      ),
+     ]);
+   }
+ }
+@@ -1188,6 +1221,19 @@
+         return Column(
+           crossAxisAlignment: CrossAxisAlignment.stretch,
+           children: [
++            Align(
++              alignment: Alignment.centerRight,
++              child: TextButton.icon(
++                // Lists are edited in the Beyblade feature; reload on return.
++                onPressed: () async {
++                  final cubit = context.read<PartListsCubit>();
++                  await context.push(BeybladeRoutes.partLists);
++                  await cubit.load();
++                },
++                icon: const Icon(Icons.tune, size: 18),
++                label: const Text('Manage lists'),
++              ),
++            ),
+             for (final list in state.lists)
+               Padding(
+                 padding: const EdgeInsets.only(bottom: 8),
+@@ -1267,6 +1313,8 @@
+                             fontSize: 12, color: cs.onSurfaceVariant)),
+                   ],
+                 ),
++                const SizedBox(height: 4),
++                PartListPreview(list: list),
+               ],
+             ),
+           ),
+@@ -1284,19 +1332,6 @@
+ 
+   final TournamentDraft draft;
+ 
+-  Future<void> _addPart(BuildContext context, PartCatalog catalog) async {
+-    final part = await catalog.pickPart(context, kind: draft.newList.kind);
+-    if (part == null || !context.mounted) return;
+-    if (draft.newList.contains(part)) {
+-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+-        content: Text(TrTokens.partAlreadyOnListFormat.tr
+-            .replaceFirst('%s', catalog.nameOf(part))),
+-      ));
+-      return;
+-    }
+-    draft.update(() => draft.newList = draft.newList.withPart(part));
+-  }
+-
+   Future<void> _saveToLists(BuildContext context) async {
+     final messenger = ScaffoldMessenger.of(context);
+     final name = draft.partListName.text.trim();
+@@ -1329,76 +1364,16 @@
+   Widget build(BuildContext context) {
+     final cs = Theme.of(context).colorScheme;
+     final rc = ResponsiveProvider.config(context);
+-    final catalog = resolvePartCatalog();
+     final list = draft.newList;
+ 
+     return Column(
+       crossAxisAlignment: CrossAxisAlignment.stretch,
+       children: [
+-        HoloSegmented<PartListKind>(
+-          value: list.kind,
+-          onChanged: (k) =>
+-              draft.update(() => draft.newList = list.copyWith(kind: k)),
+-          options: [
+-            HoloOption(PartListKind.ban, TrTokens.banListTxt.tr,
+-                icon: Icons.block),
+-            HoloOption(PartListKind.approve, TrTokens.approveListTxt.tr,
+-                icon: Icons.verified_outlined),
+-          ],
+-        ),
+-        const SizedBox(height: 8),
+-        Text(list.kind.rule,
+-            style: TextStyle(
+-                fontSize: 12.5, height: 1.35, color: cs.onSurfaceVariant)),
+-        SizedBox(height: rc.md),
+-        if (list.isEmpty)
+-          Container(
+-            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
+-            decoration: BoxDecoration(
+-              borderRadius: BorderRadius.circular(12),
+-              border: Border.all(color: cs.outlineVariant),
+-            ),
+-            child: Text(
+-              TrTokens.noPartsYetTxt.tr,
+-              textAlign: TextAlign.center,
+-              style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
+-            ),
+-          )
+-        else
+-          // One group per part type, each a sub-category of this list.
+-          for (final entry in list.parts.entries) ...[
+-            HoloSubLabel(
+-              title: catalog.typeLabel(entry.key),
+-              trailing: Text('${entry.value.length}',
+-                  style: TextStyle(
+-                      fontSize: 12.5,
+-                      fontWeight: FontWeight.w700,
+-                      color: cs.onSurfaceVariant)),
+-            ),
+-            const SizedBox(height: 6),
+-            Wrap(
+-              spacing: 6,
+-              runSpacing: 6,
+-              children: [
+-                for (final id in entry.value)
+-                  InputChip(
+-                    label: Text(catalog.nameOf(PartRef(entry.key, id))),
+-                    onDeleted: () => draft.update(() => draft.newList =
+-                        draft.newList.withoutPart(PartRef(entry.key, id))),
+-                  ),
+-              ],
+-            ),
+-            SizedBox(height: rc.md),
+-          ],
+-        SizedBox(height: rc.sm),
+-        OutlinedButton.icon(
+-          onPressed: () => _addPart(context, catalog),
+-          icon: const Icon(Icons.add),
+-          label: Text(
+-            TrTokens.addPartBtn.tr,
+-          ),
+-          style: OutlinedButton.styleFrom(
+-              minimumSize: const Size(double.infinity, 46)),
++        // Ban/approve switch, parts by type with images, and the real part
++        // picker (search, type filter, "include all its variants").
++        PartListEditor(
++          list: list,
++          onChanged: (l) => draft.update(() => draft.newList = l),
+         ),
+         if (!list.isEmpty) ...[
+           SizedBox(height: rc.md),
+@@ -2250,6 +2225,9 @@
+   PartList? savedList;
+   PartList newList = const PartList(kind: PartListKind.ban);
+ 
++  // ── Stadium (optional; accessory dataId, null = not specified) ─────────
++  String? stadiumDataId;
++
+   // ── Basics ──────────────────────────────────────────────────────────────
+   HostType hostType = HostType.user;
+   String hostId;
