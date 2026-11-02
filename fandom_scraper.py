@@ -38,6 +38,7 @@ Usage:
 No arguments -> GUI (needs tkinter).
 """
 import argparse
+import concurrent.futures as cf
 import copy
 import hashlib
 import io
@@ -1676,6 +1677,18 @@ class Scraper:
         if need:
             log(f"  looking up {len(need)} image URLs ...")
         urls = self.client.resolve_files(set(need)) if need else {}
+        # Downloads stay one at a time (polite); converting each image (resize + WebP) runs on a worker
+        # thread while the next download waits its turn.
+        pool = cf.ThreadPoolExecutor(max_workers=max(2, min(8, os.cpu_count() or 4)))
+        pending = {}
+
+        def convert(fname, raw, c):
+            full, mini = to_image(raw, p["image_width"], fmt), to_image(raw, p["min_image_width"], fmt)
+            with open(f"{c}.{fmt}", "wb") as a, open(f"{c}-min.{fmt}", "wb") as b:
+                a.write(full)
+                b.write(mini)
+            return full, mini
+
         for i, fname in enumerate(filenames, 1):
             c = self._img_cache(fname)
             cached = self._cached_image(fname, fmt, p)
@@ -1691,16 +1704,14 @@ class Scraper:
             if not raw:
                 log("    no image data - row will be written without an image (rerun with --refresh-existing later)")
                 continue
-            ACTIVITY.set(f"converting image {fname}", f"{len(raw) // 1024} KB")
+            pending[fname] = pool.submit(convert, fname, raw, c)
+        ACTIVITY.set("finishing image conversions", f"{len(pending)} images")
+        for fname, fut in pending.items():
             try:
-                full, mini = to_image(raw, p["image_width"], fmt), to_image(raw, p["min_image_width"], fmt)
+                out[fname] = fut.result()
             except Exception as e:
                 log(f"    image convert failed for {fname}: {e}")
-                continue
-            with open(f"{c}.{fmt}", "wb") as a, open(f"{c}-min.{fmt}", "wb") as b:
-                a.write(full)
-                b.write(mini)
-            out[fname] = (full, mini)
+        pool.shutdown()
         return out
 
     def images_for_pages(self, parsed):
@@ -1952,10 +1963,9 @@ class Scraper:
         for k in keys:
             r, x = book.find(ws, lambda x, i=idx[k][1]: str(x.get("dataID")) == str(i))
             if r and str(x.get("deleted") or "").lower() != "true":
-                ws.cell(r, hdr["deleted"], "true")
-                ws.cell(r, hdr["variantLabel"], (x.get("variantLabel") or "") + f" [moved: {real_gen} series]")
-                book.dirty = True
-                book._rows_cache.pop(ws.title, None)
+                ws.cell(r, hdr["deleted"]).value = "true"
+                ws.cell(r, hdr["variantLabel"]).value = (x.get("variantLabel") or "") + f" [moved: {real_gen} series]"
+                book.touch(ws, r)
                 n += 1
         if n:
             log(f"    {title}: {n} rows an earlier run put in {ws.title} marked deleted ({real_gen} series page)")
@@ -2714,20 +2724,23 @@ def run_gui():
     _LOG_SINK = q.put
     cfg = load_config()
 
+    import tk_ui
     root = tk.Tk()
-    root.title("Beyblade Wiki Scraper (polite / resumable)")
-    root.geometry("900x700")
+    root.title("Beyblade wiki scraper (polite / resumable)")
+    root.geometry("960x740")
+    tk_ui.apply_theme(root)
+    prefs = tk_ui.Prefs("scraper")
     frm = ttk.Frame(root, padding=10)
     frm.pack(fill=tk.BOTH, expand=True)
 
     top = ttk.Frame(frm)
     top.grid(row=0, column=0, sticky="w")
     ttk.Label(top, text="Workbook:").pack(side=tk.LEFT)
-    scope = tk.StringVar(value="parts")
+    scope = tk.StringVar(value=prefs.get("scope", "parts"))
     ttk.Combobox(top, textvariable=scope, values=["parts", "products", "tcg"], width=10, state="readonly"
                  ).pack(side=tk.LEFT, padx=4)
     ttk.Label(top, text="Generation:").pack(side=tk.LEFT, padx=(10, 0))
-    gen = tk.StringVar(value="X")
+    gen = tk.StringVar(value=prefs.get("generation", "X"))
     ttk.Combobox(top, textvariable=gen, values=S.GENERATION_NAMES, width=11, state="readonly").pack(side=tk.LEFT, padx=4)
 
     tf = ttk.LabelFrame(frm, text="Targets (processed one after another, each into its own sheet)", padding=6)
@@ -2749,7 +2762,11 @@ def run_gui():
 
     opts = ttk.Frame(frm)
     opts.grid(row=2, column=0, sticky="w", pady=4)
-    no_img, overwrite, relist, refresh = (tk.BooleanVar() for _ in range(4))
+    no_img, overwrite, relist, refresh = (tk.BooleanVar(value=prefs.get(k, False))
+                                          for k in ("no_images", "overwrite", "relist", "refresh"))
+    for _k, _v in (("scope", scope), ("generation", gen), ("no_images", no_img), ("overwrite", overwrite),
+                   ("relist", relist), ("refresh", refresh)):
+        _v.trace_add("write", lambda *_, k=_k, var=_v: prefs.set(k, var.get()))  # remembered next time
     for text, var in (("Skip images", no_img), ("Overwrite filled cells", overwrite),
                       ("Re-list (find new pages)", relist), ("Refresh rows already in store", refresh)):
         ttk.Checkbutton(opts, text=text, variable=var).pack(side=tk.LEFT, padx=4)

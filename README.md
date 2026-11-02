@@ -13,6 +13,13 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `flutter_integration/` | new Flutter files for the app (ban/allow list picker, lists page, stadium field, TCG catalog) – see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
+| `missing_data_app/` | Flutter desktop version of the missing data tool (get_it, go_router, cubits, clean architecture) – see its README |
+| `tk_ui.py` | shared look and helpers for the Python GUIs (theme, remembered settings, background jobs, status bar) |
+
+**Speed and convenience (all tools):** image encoding uses every CPU core (the packager went from 23.6 s to 7.4 s on
+a 4-core PC for a PNG workbook, with identical output), while wiki requests stay strictly one at a time so your IP
+stays safe. Each GUI does slow work in the background so the window doesn't freeze, and remembers its last paths
+and options in `~/.clasher_tools.json`. Every edit stamps the row's `updated_at` (*last edited*) column.
 
 ## The three workbooks
 * **beyblade_parts.xlsx** – `Parts_<Series>_<PartType>` for the four series:
@@ -131,9 +138,16 @@ Hobbies: parts and products are hobby `Beyblade`; the card game is its own hobby
 Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.
 
 ## Missing data tool (`missing_data_tool.py`)
-A separate tool to see what's empty, field by field, and fill it. Run without arguments for the GUI:
-pick a workbook and tab → the left list shows how many rows miss each field (click one to list those rows) →
-pick a row to edit its values (blank fields are highlighted) or give it an image.
+A separate tool to see what's empty, field by field, and fill it. Run it without arguments for the GUI, or use the
+Flutter app in `missing_data_app/`. Both work the same way. Pick a workbook and a tab, and the left list shows how
+many rows miss each field (click one to list those rows). Pick a row to edit its values (blank fields are
+highlighted) or give it an image.
+
+* **Edits stay in memory until you save** (Ctrl+S, or autosave every 2 min). Every change can be undone with Ctrl+Z,
+  including auto-fills, images and wiki fills. Closing with unsaved changes asks first.
+* **Last edited:** each row shows when it was last changed. Sort by it, or open *Recently edited* to jump back.
+* **Quick keys:** Enter applies the field, Ctrl+Enter applies and jumps to the next row with a gap, Ctrl+F searches.
+  A *Recent* menu reopens your last workbooks.
 
 * **Auto-fill (preview first):** variants copy shared fields from their parent row (type, spin, stats, weight,
   system…, never code/edition/manufacturer); rows with the same name fill a stable field when the others all agree;
@@ -151,4 +165,5 @@ python missing_data_tool.py fill   --workbook beyblade_parts.xlsx --parent --der
 python missing_data_tool.py set    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --field mass --value 34.6
 python missing_data_tool.py image  --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --file found.png
 python missing_data_tool.py wiki   --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --limit 20
+python missing_data_tool.py serve  # JSON lines over stdin/stdout; used by the Flutter app
 ```
