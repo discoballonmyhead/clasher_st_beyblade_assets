@@ -8,7 +8,9 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `beyblade_schema.py` | the layout: generations, part types, sheets, columns, release-code series |
 | `make_sample_workbooks.py` | builds the 3 workbooks (`samples/` = with example rows; `--empty DIR` = blank store) |
 | `fandom_scraper.py` | polite, resumable wiki scraper that fills the workbooks |
-| `beyblade_data.py` | packager: workbooks → `data/` |
+| `beyblade_data.py` | packager: workbooks → `data/` (PNG in the sheet → WebP) |
+| `build_release.py` | release builder: `data/` → `catalog.zip` + manifest, image packs and data packs per hobby/generation |
+| `flutter_integration/` | new Flutter files for the app (ban/allow list picker, lists page, stadium field, TCG catalog) – see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 
 ## The three workbooks
@@ -93,3 +95,20 @@ python beyblade_data.py --parts beyblade_parts.xlsx --products beyblade_products
 (or run without arguments for the GUI). X parts keep their old file names (`blades.json` ...); other
 generations are prefixed (`burstLayers.json`, `metalFightFusionWheels.json`); plus `products.json`,
 `accessories.json`, `productContents.json`, `codeSeries.json`, `tcgSets.json`, `tcgCards.json`.
+
+## Release (GitHub release + app)
+```bash
+python build_release.py --tag 2026-11-02 --user discoballonmyhead --repo clasher_st_beyblade_assets
+```
+Writes `_release/<tag>/`:
+* `catalog.zip` + `catalog_manifest.json` – the values the `beyblade_catalog_manifest` RPC returns
+  (`version`, `dataUrl`, `dataSha256`, `publishedAtMillis`);
+* `beyblade_images_<Gen>.zip` (hobby Beyblade) and `beyblade_tcg_images_<Gen>.zip` (hobby Beyblade TCG) – same
+  flat `<sheet>-<dataID>.webp` / `-min.webp` layout as the existing `beyblade_images_X.zip`;
+* `beyblade_data_<Gen>.zip` / `beyblade_tcg_data_<Gen>.zip` + `packs.json` – optional per hobby/generation data
+  packs for when one catalog gets too big (`--no-data-packs` to skip).
+Zips are deterministic: unchanged data gives the same SHA-256, so apps don't re-download it. Upload the folder's
+files to the release `<tag>`.
+
+Hobbies: parts and products are hobby `Beyblade`; the card game is its own hobby `Beyblade TCG` (own packs).
+Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.

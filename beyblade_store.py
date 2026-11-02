@@ -82,6 +82,8 @@ README = {
     "tcg": [
         "BEYBLADE TCG WORKBOOK",
         "",
+        "hobbyName is 'Beyblade TCG' on every row: the card game is its own hobby in the app",
+        "(own catalog, own image and data packs), separate from the 'Beyblade' parts and products.",
         "Holds every Beyblade card game, told apart by hobbyGeneration:",
         "  Plastic = the original 2000s Beyblade TCG (Blade / Bit-Beast cards with Battle Edge, Spin Strength, Game Text, Lore)",
         "  X       = the Beyblade X TCG",

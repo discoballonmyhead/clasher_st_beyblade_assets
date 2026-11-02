@@ -25,6 +25,10 @@ import re
 from collections import OrderedDict
 
 HOBBY_NAME = "Beyblade"
+# The card game is its own hobby in the app (separate catalog, separate image/data packs),
+# so its rows carry a different hobbyName. Generation still says which era ("X", "Plastic").
+TCG_HOBBY_NAME = "Beyblade TCG"
+HOBBIES = [HOBBY_NAME, TCG_HOBBY_NAME]
 MANUFACTURERS = ["Takara-Tomy", "Hasbro", "Sonokong", "Other"]
 REGIONS = ["JP", "US", "EU", "KR", "Global", "Other"]
 CURRENCIES = ["JPY", "USD", "EUR", "KRW", "GBP", "CAD", "AUD"]
@@ -174,11 +178,23 @@ def parse_part_sheet(sheet_name):
 # -----------------------------------------------------------------------------
 PRODUCT_TYPES = ["Starter", "Booster", "Random Booster", "Set", "Battle Set", "Deck Set", "Entry Set",
                  "Customize Set", "Launcher", "Launcher Grip", "Stadium", "Case", "Tool", "Accessory Set",
-                 "Limited", "Prize", "TCG Booster", "TCG Starter Deck", "TCG Accessory", "Other"]
-ACCESSORY_TYPES = ["Launcher", "Launcher Grip", "Stadium", "Case", "Tool", "Winder", "Other"]
-# product types that are themselves an accessory -> also get an Accessories row
-ACCESSORY_PRODUCT_TYPES = {"Launcher": "Launcher", "Launcher Grip": "Launcher Grip",
-                           "Stadium": "Stadium", "Case": "Case", "Tool": "Tool"}
+                 "Battle Pass", "Limited", "Prize", "TCG Booster", "TCG Starter Deck", "TCG Accessory", "Other"]
+# Must match the app's AccessoryType.parse (lower-cased, no spaces): stadium, launcher, grip, deckbox,
+# battlepass. Anything else is read as "unknown" by the app.
+ACCESSORY_TYPES = ["Stadium", "Launcher", "Grip", "DeckBox", "BattlePass", "Other"]
+# product types that are themselves an accessory -> also get an Accessories row (value = accessoryType)
+ACCESSORY_PRODUCT_TYPES = {"Launcher": "Launcher", "Launcher Grip": "Grip", "Stadium": "Stadium",
+                           "Case": "DeckBox", "Battle Pass": "BattlePass"}
+
+# Columns the app's models read with requiredString(); the packager warns when they're empty.
+APP_REQUIRED = {
+    "_part": ["dataID", "manufacturer", "hobbyName", "hobbyGeneration", "code", "name", "wbolegality"],
+    "_typed": ["type", "spinDir"],                      # blades, over/metal/main/assist blades
+    "bits": ["baseName", "movementStyle"],
+    "products": ["productID", "manufacturer", "hobbyName", "hobbyGeneration", "productName"],
+    "productContents": ["productID", "partType", "partDataID"],
+    "accessories": ["dataID", "accessoryType", "manufacturer", "hobbyName", "hobbyGeneration", "name"],
+}
 
 PRODUCTS_COLUMNS = ["productID", "parentProductId", "variantLabel", "manufacturer", "hobbyName",
                     "hobbyGeneration", "productName", "productType", "releaseDate", "itemCost", "currency",
@@ -287,7 +303,7 @@ def series_for(prefix, manufacturer=None):
 def lists():
     """Values for the dropdown 'Lists' sheet in each workbook."""
     return OrderedDict([
-        ("manufacturer", MANUFACTURERS), ("hobbyGeneration", GENERATION_NAMES), ("type", BEY_TYPES),
+        ("manufacturer", MANUFACTURERS), ("hobbyName", HOBBIES), ("hobbyGeneration", GENERATION_NAMES), ("type", BEY_TYPES),
         ("spinDir", SPIN_DIRS), ("productType", PRODUCT_TYPES), ("accessoryType", ACCESSORY_TYPES),
         ("region", REGIONS), ("currency", CURRENCIES), ("rarity", TCG_RARITIES), ("cardType", TCG_CARD_TYPES),
         ("yesNo", YES_NO),
@@ -295,7 +311,7 @@ def lists():
 
 
 # column name -> list name used for dropdown validation
-DROPDOWNS = {"manufacturer": "manufacturer", "hobbyGeneration": "hobbyGeneration", "type": "type",
+DROPDOWNS = {"manufacturer": "manufacturer", "hobbyName": "hobbyName", "hobbyGeneration": "hobbyGeneration", "type": "type",
              "movementStyle": "type", "spinDir": "spinDir", "productType": "productType",
              "accessoryType": "accessoryType", "region": "region", "currency": "currency",
              "rarity": "rarity", "cardType": "cardType", "incompleteData": "yesNo", "wbolegality": "yesNo",
