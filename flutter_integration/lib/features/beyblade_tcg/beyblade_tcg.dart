@@ -3,8 +3,8 @@
 // -----------------------------------------------------------------------------
 // The card game is its own hobby: own rows (hobbyName = "Beyblade TCG"), own
 // image packs (beyblade_tcg_images_<Gen>.zip) and data packs. hobbyGeneration
-// tells the games apart: "Plastic" = the original 2000s TCG (Blade / Bit-Beast
-// cards, Battle Edge, Spin Strength), "X" = the Beyblade X TCG.
+// tells the games apart: "Original" = the V-Force TCG (Blade / Bit-Beast
+// cards, Battle Edge, Spin Strength), "X" = the Beyblade X TCG (not released yet).
 //
 // Data comes from the same catalog.zip the parts already use (tcgCards.json,
 // tcgSets.json). Additive only - nothing in the parts catalog changes:

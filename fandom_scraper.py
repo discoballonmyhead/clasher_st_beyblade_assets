@@ -10,7 +10,7 @@ Polite, resumable Beyblade Fandom scraper that fills the three human-managed wor
                             box image, random-booster items (CX-05 01 ... as variants) and contents links
                             + "update" mode: re-reads the lists, then checks codes after the store's last one per
                               series and manufacturer (e.g. BX-57 -> BX-58, BX-59 ...) until a gap
-    beyblade_tcg.xlsx       targets tcg:<Gen>:cards / tcg:<Gen>:sets   (Plastic = original 2000s TCG, X = X TCG)
+    beyblade_tcg.xlsx       target tcg:Original:cards (the V-Force TCG; the X TCG isn't released yet)
 
 The workbooks ARE the store: anything already in them (matched by wiki title, name+code, sku,
 card number) is skipped before its page is even downloaded, so re-runs only pull what is new.
@@ -60,7 +60,7 @@ from beyblade_store import Book, norm_name
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "scraper_config.json")
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 # =============================================================================
 # CONFIG
@@ -117,46 +117,35 @@ COLUMN_ALIASES = {
     "cardSetNumber": ["set no", "set number", "setno", "set code"],
 }
 
-_EXCLUDE = r"(?i)(/gallery|/anime|/manga|\(disambiguation\))$"
+# anime / manga pages (episodes, chapters, volumes) are never part of the toy or card data
+_EXCLUDE = (r"(?i)(/gallery|/anime|/manga|\(disambiguation\))$|^(episode|chapter|volume)\b|"
+            r"\b(episode|chapter)\s*\d+|^list of .*(episodes|chapters|volumes)|\((anime|manga|episode|chapter)\)")
 # Products come from the wiki's "List of ... products (Takara Tomy / Hasbro)" pages: one table per line
 # (Basic / Unique / Custom / Limited) with code, name, release date, price -> every release in a few requests.
 # Explicit list pages first; others are discovered in Category:Product Lists by title regex.
 _PRODUCT_LISTS = {
     "X": ["List of Beyblade X products (Takara Tomy)", "List of Beyblade X products (Hasbro)"],
 }
-_PRODUCT_LIST_REGEX = {
-    "Plastic": r"(?i)\b(bakuten|plastic|original series|v-?force|g-?revolution)\b",
-    "HMS": r"(?i)\b(hms|heavy metal)\b",
-    "MetalFight": r"(?i)\b(metal fight|metal fusion|metal masters|metal fury|metal saga|4d)\b",
-    "ZeroG": r"(?i)\b(zero-?g|shogun steel)\b",
-    "Burst": r"(?i)\bburst\b",
-    "X": r"(?i)\bbeyblade x\b",
-}
-_GEN_FILTER = {  # pages listed by shared category names (e.g. "Attack Rings") are kept only if they match
-    "Plastic": {"exclude_category_regex": r"(?i)\b(hms|heavy metal)\b"},
-    "HMS": {"include_category_regex": r"(?i)\b(hms|heavy metal)\b"},
-}
+_PRODUCT_LIST_REGEX = {g: "(?i)" + d["signals"]["words"] for g, d in S.GENERATIONS.items()}
 
 
 def default_sources():
     src = OrderedDict()
     for gen, key, p in S.all_part_targets():
-        src[f"parts:{gen}:{key}"] = dict({
+        src[f"parts:{gen}:{key}"] = {
             "categories": p["categories"], "title_prefixes": [p["label"] + " - "],
-            "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}, **_GEN_FILTER.get(gen, {}))
+            "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
     for gen in S.GENERATIONS:
         src[f"products:{gen}"] = {
             "list_pages": _PRODUCT_LISTS.get(gen, []), "list_pages_category": "Product Lists",
             "list_page_regex": _PRODUCT_LIST_REGEX.get(gen, ""),
             "fetch_product_pages": True,   # open each product's page: box image, random-booster items, contents
             "categories": [], "title_prefixes": [], "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
-    # card games: the old 2000s TCG pages are in Category:Cards (Blade Cards, ...); X TCG names are guesses
-    src["tcg:Plastic:cards"] = {"categories": ["Cards"], "category_depth": 1, "title_prefixes": [],
-                                "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
-    src["tcg:X:cards"] = {"categories": ["Beyblade X TCG Cards", "Beyblade X Trading Card Game cards"],
-                          "title_prefixes": [], "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
-    src["tcg:X:sets"] = {"categories": ["Beyblade X TCG Sets", "Beyblade X Trading Card Game sets"],
-                         "title_prefixes": [], "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": []}
+    # The V-Force TCG (the original series' card game): its card pages are in Category:Cards
+    # (Blade Cards, ...). The Beyblade X TCG isn't released yet - add "tcg:X:cards" here when it is.
+    src["tcg:Original:cards"] = {"categories": ["Cards"], "category_depth": 1, "title_prefixes": [],
+                                 "exclude_title_regex": _EXCLUDE, "aliases": {}, "extra_titles": [],
+                                 "require_card_fields": True}
     return src
 
 
@@ -206,6 +195,13 @@ def load_config(path=CONFIG_PATH):
     for old, new in (("tcg:cards", "tcg:X:cards"), ("tcg:sets", "tcg:X:sets")):  # v3 names
         if old in user.get("sources", {}):
             user["sources"][new] = user["sources"].pop(old)
+    if user.get("config_version", 0) < 5:  # 6 generations -> the 4 series (Original, Metal, Burst, X)
+        srcs = user.get("sources", {})
+        if "tcg:Plastic:cards" in srcs:
+            srcs["tcg:Original:cards"] = srcs.pop("tcg:Plastic:cards")
+        for k in [k for k in srcs if re.match(r"^(parts|products|tcg):(Plastic|HMS|MetalFight|ZeroG|X)(:|$)", k)
+                  and not k.startswith(("parts:X:", "products:X"))]:
+            srcs.pop(k)  # tcg:X:* (not released) and the old generation names
     for gen in S.GENERATIONS:  # v3 guessed product categories that don't exist -> list pages now
         ps = user.get("sources", {}).get(f"products:{gen}")
         if ps is not None and user.get("config_version", 0) < 4:
@@ -550,6 +546,12 @@ class PoliteClient:
         d = self.api_get(action="query", list="search", srsearch=term, srnamespace="14", srlimit="50")
         return [(h["title"], h.get("size")) for h in d["query"]["search"]]
 
+    def rendered_page_html(self, title):
+        """Rendered HTML of the whole page (infobox, Products list, gallery)."""
+        d = self.api_get(action="parse", page=title, prop="text", disablelimitreport="1",
+                         disableeditsection="1", redirects="1")
+        return (d.get("parse") or {}).get("text") or ""
+
     def rendered_lead_html(self, title):
         """Rendered HTML of the top of a page (where the infobox lives)."""
         d = self.api_get(action="parse", page=title, prop="text", section="0", disablelimitreport="1",
@@ -683,6 +685,88 @@ def rendered_infobox_fields(html):
             out.setdefault(norm_key(p.labels[src]), val)
     img = norm_file(p.image) if p.image else None
     return out, img
+
+class RenderedSectionsParser(HTMLParser):
+    """From a rendered page: the 'Products' section's list items (with the Takara Tomy / Hasbro sub-heading
+    they're under) and every gallery image with its caption."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.stack = []
+        self.h2 = self.h3 = ""
+        self._head = None      # [level, text]
+        self._li = None        # [depth, text]
+        self._cap = None       # [depth, text]
+        self._pending_img = None
+        self.products = []     # [(subheading, text)]
+        self.gallery = []      # [(file, caption)]
+
+    def handle_starttag(self, tag, attrs):
+        a = {k: (v or "") for k, v in attrs}
+        cls = a.get("class", "")
+        if tag == "img":
+            key = a.get("data-image-key") or a.get("data-image-name")
+            if key and any(re.search(r"gallery|wikia-gallery|tabber", x.get("class", "")) for _, x in self.stack):
+                self._pending_img = key
+            return
+        if tag in _VOID_TAGS:
+            return
+        self.stack.append((tag, a))
+        if tag in ("h2", "h3"):
+            self._head = [tag, []]
+        elif tag == "li" and self.h2.lower().startswith(("product", "release")) and self._li is None:
+            self._li = [len(self.stack), []]
+        elif re.search(r"lightbox-caption|gallerytext|thumbcaption", cls) and self._cap is None:
+            self._cap = [len(self.stack), []]
+
+    def handle_endtag(self, tag):
+        if tag in _VOID_TAGS:
+            return
+        while self.stack:
+            t, _ = self.stack.pop()
+            depth = len(self.stack)
+            if self._head and t == self._head[0]:
+                text = re.sub(r"\s+", " ", "".join(self._head[1])).replace("[edit]", "").strip()
+                if t == "h2":
+                    self.h2, self.h3 = text, ""
+                else:
+                    self.h3 = text
+                self._head = None
+            if self._li and depth < self._li[0]:
+                text = re.sub(r"\s+", " ", "".join(self._li[1])).strip()
+                if text:
+                    self.products.append((self.h3, text))
+                self._li = None
+            if self._cap and depth < self._cap[0]:
+                text = re.sub(r"\s+", " ", "".join(self._cap[1])).strip()
+                if self._pending_img:
+                    self.gallery.append((self._pending_img, text))
+                    self._pending_img = None
+                self._cap = None
+            if t == tag:
+                break
+
+    def handle_data(self, data):
+        for slot in (self._head, self._li, self._cap):
+            if slot:
+                slot[1].append(data)
+
+
+def rendered_page_parts(html):
+    """-> (infobox fields, infobox image, [(subheading, product line)], [(file, caption)])"""
+    fields, img = rendered_infobox_fields(html)
+    p = RenderedSectionsParser()
+    try:
+        p.feed(html or "")
+    except Exception:
+        pass
+    seen, gallery = set(), []
+    for f, cap in p.gallery:
+        f = norm_file(f)
+        if (f, cap) not in seen:
+            seen.add((f, cap))
+            gallery.append((f, cap))
+    return fields, img, p.products, gallery
 
 # =============================================================================
 # WIKITEXT PARSING
@@ -915,8 +999,51 @@ def title_to_name(title, prefixes=(), label=None):
             break
     if label:  # "Ratchet - 3-60", "Ratchet: 3-60" even when no prefix is configured
         name = re.sub(rf"^{re.escape(label)}\s*[-–:]\s*", "", name, flags=re.I)
+        # any part type's prefix ("Blade - Guilty" routed to Burst layers)
+        m = re.match(r"^([A-Za-z][A-Za-z ]{1,24}?)\s+[-–]\s+(.+)$", name)
+        if m and norm_key(m.group(1)) in _ALL_PART_WORDS:
+            name = m.group(2)
     # drop disambiguators like "(Beyblade X)", "(Burst)", "(Layer)" but keep short ones like "(F)"
     return re.sub(r"\s*\(([^)]{4,})\)\s*$", "", name).strip()
+
+
+def detect_generation(fields, categories=(), title=""):
+    """Which series a wiki page belongs to: series field, then system, then product-code prefix,
+    then categories/title. None if nothing says (the page stays in the target it was listed for)."""
+    def by_words(text):
+        hits = [g for g, d in S.GENERATIONS.items() if text and re.search(d["signals"]["words"], text, re.I)]
+        return hits[0] if len(hits) == 1 else None
+    low = {norm_key(k): v for k, v in (fields or {}).items()}
+    for k in ("series", "system", "line", "toyline", "generation"):
+        g = by_words(low.get(k))
+        if g:
+            return g
+    for k in ("product code", "code", "product number", "release", "first release", "debut"):
+        c = S.parse_code(low.get(k) or "")
+        if c:
+            for g, d in S.GENERATIONS.items():
+                if c["prefix"] in d["signals"]["codes"]:
+                    return g
+    return by_words(" | ".join(categories or [])) or by_words(title)
+
+
+def route_part(gen, fields, fallback_key=None):
+    """Part type in [gen] for a page: by its Classification ('Blade', 'Layer', 'Fusion Wheel'...)."""
+    cls = norm_key((fields or {}).get("classification") or (fields or {}).get("part type") or "")
+    parts = S.GENERATIONS[gen]["parts"]
+    for key, p in parts.items():
+        if cls and (cls == norm_key(p["label"]) or cls in [norm_key(w) for w in p["words"]]):
+            return key
+    if fallback_key in parts:
+        return fallback_key
+    if cls:
+        for key, p in parts.items():
+            if any(norm_key(w) in cls for w in p["words"] if len(w) > 3):
+                return key
+    return None
+
+
+_ALL_PART_WORDS = {norm_key(w) for _, _, p in S.all_part_targets() for w in [p["label"]] + p["words"]}
 
 
 def make_picker(fields, src_aliases):
@@ -1388,10 +1515,10 @@ class Scraper:
 
     def kstate(self, target):
         st = self.progress.setdefault(target, {"titles": None, "done": {}, "failed": {}, "complete": False})
-        if target_kind(target) == "parts" and st.get("schema", 1) < 3:
+        if target_kind(target) == "parts" and st.get("schema", 1) < 4:
             # earlier runs stored one row per part and could miss stats; revisit every page once for its
             # variants + stats (page sources come from the local cache, so no extra page downloads)
-            st["done"], st["complete"], st["schema"] = {}, False, 3
+            st["done"], st["complete"], st["schema"] = {}, False, 4
         return st
 
     def targets(self):
@@ -1448,8 +1575,9 @@ class Scraper:
         return {t: self.pages[t] for t in titles if t in self.pages}
 
     def fill_from_rendered(self, target, parsed):
-        """Pages whose source didn't give type / spin / stats / weight: read the rendered infobox
-        (same labels as on the page) and fill the gaps. One request per such page, cached."""
+        """For pages whose source lacks stats, the Products list or the gallery: read the rendered page
+        (same infobox labels, Products list and gallery captions as on screen) and fill the gaps.
+        One request per such page, cached in the page cache."""
         mode = self.cfg["politeness"].get("rendered_infobox", "auto")
         if mode == "never":
             return
@@ -1459,31 +1587,41 @@ class Scraper:
         want = [c for c in ("type", "spinDir", "attack", "mass") if c in cols]
         need = []
         for t, (pg, infobox, fields, files) in parsed.items():
+            if "rendered_products" in pg and "rendered_gallery" in pg:
+                need.append(t)  # already fetched: just merge from cache
+                continue
             row = map_part(gen, key, t, fields, src)
-            if mode == "always" or any(row.get(c) in (None, "") for c in want):
+            wt = pg.get("wikitext") or ""
+            if (mode == "always" or any(row.get(c) in (None, "") for c in want)
+                    or not parse_part_products(wt) or not parse_gallery(wt)):
                 need.append(t)
         if not need:
             return
-        log(f"  {len(need)} pages lack stats in their source - reading their rendered infobox ...")
+        fetch = [t for t in need if "rendered_gallery" not in parsed[t][0]]
+        if fetch:
+            log(f"  {len(fetch)} pages lack stats / products / gallery in their source - reading the rendered page ...")
         for i, t in enumerate(need, 1):
             pg, infobox, fields, files = parsed[t]
-            cached = pg.get("rendered_fields")
-            if cached is None:
-                ACTIVITY.set(f"rendered infobox {i}/{len(need)}", t)
+            if "rendered_gallery" not in pg:
+                ACTIVITY.set(f"rendered page {i}/{len(need)}", t)
                 try:
-                    rf, img = rendered_infobox_fields(self.client.rendered_lead_html(t))
+                    rf, img, prods, gal = rendered_page_parts(self.client.rendered_page_html(t))
                 except RuntimeError as e:
                     log(f"    {t}: could not render ({e})")
-                    rf, img = {}, None
-                pg["rendered_fields"], pg["rendered_image"] = dict(rf), img
+                    rf, img, prods, gal = {}, None, [], []
+                pg.update(rendered_fields=dict(rf), rendered_image=img, rendered_products=prods,
+                          rendered_gallery=gal)
                 if i % 10 == 0:
                     write_json(self.pages_path, self.pages)
             for k, v in (pg.get("rendered_fields") or {}).items():
                 fields.setdefault(k, v)
             if not files and pg.get("rendered_image"):
                 files.append(pg["rendered_image"])
-            got = map_part(gen, key, t, fields, src)
-            log(f"    {t}: " + ", ".join(f"{c}={got.get(c)}" for c in want + ["defense", "stamina"] if c in cols))
+            if t in fetch:
+                got = map_part(gen, key, t, fields, src)
+                log(f"    {t}: " + ", ".join(f"{c}={got.get(c)}" for c in want + ["defense", "stamina"] if c in cols)
+                    + f"; {len(self.page_releases(pg))} products, {len(self.page_gallery(pg))} gallery images"
+                    + (f"; series {detect_generation(fields, pg.get('categories', []), t)}"))
         write_json(self.pages_path, self.pages)
 
     def completeness_report(self, target):
@@ -1493,14 +1631,14 @@ class Scraper:
         gen, key = target_gen_key(target)
         book = self.book("parts")
         ws = book.part_sheet(gen, key)
-        rows = [x for _, x in book.rows(ws)]
+        rows = [x for _, x in book.rows(ws) if str(x.get("deleted") or "").lower() != "true"]
         cols = [c for c in ("code", "type", "spinDir", "attack", "defense", "stamina", "mass", "wbolegality",
                             "baseName", "protrusions", "heightMm")
                 if c in S.GENERATIONS[gen]["parts"][key]["columns"]]
         hdr = book.headers(ws)
         img_rows = {im.anchor._from.row + 1 for im in ws._images if im.anchor._from.col + 1 == hdr.get("image")}
         blanks = {c: sum(1 for x in rows if x.get(c) in (None, "")) for c in cols}
-        n_img = sum(1 for r, _ in book.rows(ws) if r in img_rows)
+        n_img = sum(1 for r, x in book.rows(ws) if r in img_rows and str(x.get("deleted") or "").lower() != "true")
         log(f"  {ws.title}: {len(rows)} rows ({sum(1 for x in rows if x.get('parentPartId'))} variants), "
             f"{n_img} with image; still blank: " +
             (", ".join(f"{c} {n}" for c, n in blanks.items() if n) or "nothing"))
@@ -1603,7 +1741,12 @@ class Scraper:
                              title_to_name(title, self.cfg["sources"][target].get("title_prefixes"), label))
             code = (row or {}).get("code")
             best = None
+            manu = (row or {}).get("manufacturer")
             for r, x in book.rows(ws):
+                if manu and x.get("manufacturer") not in (None, "", manu):
+                    continue  # "Guilty (Hasbro)" and "Guilty (Takara Tomy)" are different parts
+                if str(x.get("deleted") or "").lower() == "true":
+                    continue
                 if norm_name(x.get("name")) == name:
                     if code and x.get("code") == code:
                         return ws, r
@@ -1676,6 +1819,15 @@ class Scraper:
         (recolors, random-booster items, limited releases, Hasbro releases), each with its own code and,
         when the wiki gallery has it, its own image. Variants get parentPartId = the main release's dataID."""
         gen, key = target_gen_key(target)
+        listed_target = target
+        # Which series is this page really? 'Blade - Guilty (Hasbro)' is a Burst QuadDrive blade, not X.
+        g = detect_generation(fields, pg.get("categories", []), title)
+        if g and g != gen:
+            dest = route_part(g, fields, key)
+            self.retract_misfiled(listed_target, title, g)
+            if not dest or f"parts:{g}:{dest}" not in self.cfg["sources"]:
+                return f"skipped: {g} series page, no matching {g} part type"
+            gen, key, target = g, dest, f"parts:{g}:{dest}"
         src = self.cfg["sources"][target]
         cats = " ".join(pg.get("categories", []))
         if src.get("include_category_regex") and not re.search(src["include_category_regex"], cats):
@@ -1683,9 +1835,10 @@ class Scraper:
         if src.get("exclude_category_regex") and re.search(src["exclude_category_regex"], cats):
             return "filtered (category)"
         row = map_part(gen, key, title, fields, src)
-        wt = pg.get("wikitext") or ""
-        releases = parse_part_products(wt)
-        gallery = parse_gallery(wt)
+        if "layerComponent" in S.GENERATIONS[gen]["parts"][key]["columns"] and fields.get("classification"):
+            row["layerComponent"] = fields["classification"].strip().lower()
+        releases = self.page_releases(pg)
+        gallery = self.page_gallery(pg)
         gimgs = getattr(self, "_gallery_imgs", {})
 
         # main release = first Takara Tomy product with the debut code from the infobox
@@ -1751,9 +1904,61 @@ class Scraper:
             n_new += vnew
             n_upd += not vnew
         res = f"{'new' if new else 'upd'} #{rid}" + ("" if full or self.no_images else " (no image)")
+        if target != listed_target:
+            res = f"{gen} series -> {ws.title}: " + res
         if releases:
             res += f", {len(releases) - (1 if main else 0)} variants ({n_new} new, {n_upd} updated, {n_img} new images)"
         return res
+
+    @staticmethod
+    def page_releases(pg):
+        """Products section from the page source, else from the rendered page."""
+        rel = parse_part_products(pg.get("wikitext") or "")
+        if rel:
+            return rel
+        out = []
+        for sub, line in pg.get("rendered_products") or []:
+            e = parse_product_line(line, norm_manufacturer(sub))
+            if e and (e["manufacturer"], e["code"], e["product"], e["combo"]) not in {
+                    (x["manufacturer"], x["code"], x["product"], x["combo"]) for x in out}:
+                out.append(e)
+        return out
+
+    @staticmethod
+    def page_gallery(pg):
+        """[(file, codes, caption)] from the page source's <gallery>, else from the rendered page."""
+        gal = parse_gallery(pg.get("wikitext") or "")
+        if gal:
+            return gal
+        out = []
+        for f, cap in pg.get("rendered_gallery") or []:
+            codes = [f"{c.group(1)}-{c.group(2)}" + (f" {c.group(3)}" if c.group(3) else "")
+                     for c in S.CODE_RE.finditer(cap)] + S.HASBRO_ITEM_RE.findall(cap)
+            out.append((f, codes, cap))
+        return out
+
+    def retract_misfiled(self, listed_target, title, real_gen):
+        """Rows an earlier run wrote for this page into the wrong series' sheet: mark them deleted
+        (dataIDs are never reused, so they're hidden rather than removed)."""
+        book = self.book("parts")
+        idx = book.log_index(listed_target)
+        keys = [k for k in idx if k == title or str(k).startswith(title + "#")]
+        if not keys:
+            return
+        gen, key = target_gen_key(listed_target)
+        ws = book.part_sheet(gen, key)
+        hdr = book.headers(ws)
+        n = 0
+        for k in keys:
+            r, x = book.find(ws, lambda x, i=idx[k][1]: str(x.get("dataID")) == str(i))
+            if r and str(x.get("deleted") or "").lower() != "true":
+                ws.cell(r, hdr["deleted"], "true")
+                ws.cell(r, hdr["variantLabel"], (x.get("variantLabel") or "") + f" [moved: {real_gen} series]")
+                book.dirty = True
+                book._rows_cache.pop(ws.title, None)
+                n += 1
+        if n:
+            log(f"    {title}: {n} rows an earlier run put in {ws.title} marked deleted ({real_gen} series page)")
 
     def find_variant_row(self, book, ws, name, e):
         """Existing row for this release of the part. Same name and the same code family (BX-17 matches a
@@ -1890,6 +2095,10 @@ class Scraper:
         src = self.cfg["sources"][target]
         book = self.book("tcg")
         gen, key = target_gen_key(target)
+        if key != "sets" and src.get("require_card_fields") and "(tcg)" not in title.lower() and not any(
+                fields.get(k) for k in ("battle edge", "spin strength", "rarity", "game text", "card number",
+                                        "set no", "card type")):
+            return "skipped: not a card page"
         if key == "sets":
             row, sheet, idc, pre = map_tcg_set(title, fields, src, gen), "TCG_Sets", "setID", "S"
         else:
@@ -1973,7 +2182,7 @@ class Scraper:
                 self._gallery_imgs = {}
                 if kind == "parts" and self.cfg["politeness"].get("variant_images", True):
                     # every gallery image: recolor captions often have no code ("DranSword (Metal Coat: Bronze)")
-                    gal = [f for (pg, _, _, _) in parsed.values() for f, _, _ in parse_gallery(pg.get("wikitext"))]
+                    gal = [f for (pg, _, _, _) in parsed.values() for f, _, _ in self.page_gallery(pg)]
                     self._gallery_imgs = self.fetch_images(gal, "variant images (gallery)")
                 log(f"  writing {len(parsed)} rows into the workbook ...")
                 for t, (pg, infobox, fields, files) in parsed.items():
@@ -2388,7 +2597,7 @@ def resolve_targets(cfg, a):
 
 def run_cli(argv):
     ap = argparse.ArgumentParser(description="Polite, resumable Beyblade wiki scraper -> parts/products/tcg workbooks")
-    ap.add_argument("--target", action="append", help="e.g. parts:X:blades, products:X, tcg:Plastic:cards (repeatable)")
+    ap.add_argument("--target", action="append", help="e.g. parts:X:blades, products:X, tcg:Original:cards (repeatable)")
     ap.add_argument("--scope", choices=["parts", "products", "tcg"], help="all targets of one workbook")
     ap.add_argument("--generation", choices=S.GENERATION_NAMES, help="limit --scope / --update to a generation")
     ap.add_argument("--part", nargs="+", help="with --scope parts: only these part keys")
