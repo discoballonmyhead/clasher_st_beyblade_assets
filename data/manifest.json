@@ -1,70 +1,90 @@
 {
-  "packagedAt": "2026-09-05T11:16:39.256562+00:00",
+  "packagedAt": "2026-11-03T01:05:05.154735+00:00",
+  "workbooks": [
+    "beyblade_parts.xlsx",
+    "beyblade_products.xlsx"
+  ],
   "sheets": {
     "blades": {
-      "rowCount": 269,
-      "withImage": 267,
-      "withoutImage": 2
+      "rowCount": 383,
+      "withImage": 283,
+      "withoutImage": 100
+    },
+    "burstLayers": {
+      "rowCount": 84,
+      "withImage": 66,
+      "withoutImage": 18
     },
     "ratchets": {
-      "rowCount": 93,
-      "withImage": 93,
-      "withoutImage": 0
+      "rowCount": 420,
+      "withImage": 304,
+      "withoutImage": 116
     },
     "bits": {
-      "rowCount": 98,
-      "withImage": 98,
-      "withoutImage": 0
+      "rowCount": 440,
+      "withImage": 289,
+      "withoutImage": 151
     },
     "lockChips": {
-      "rowCount": 25,
-      "withImage": 17,
-      "withoutImage": 8
+      "rowCount": 81,
+      "withImage": 61,
+      "withoutImage": 20
     },
     "overBlades": {
-      "rowCount": 6,
-      "withImage": 5,
-      "withoutImage": 1
+      "rowCount": 21,
+      "withImage": 15,
+      "withoutImage": 6
     },
     "metalBlades": {
-      "rowCount": 6,
-      "withImage": 5,
-      "withoutImage": 1
+      "rowCount": 21,
+      "withImage": 15,
+      "withoutImage": 6
     },
     "mainBlades": {
-      "rowCount": 15,
-      "withImage": 12,
-      "withoutImage": 3
+      "rowCount": 55,
+      "withImage": 34,
+      "withoutImage": 21
     },
     "assistBlades": {
-      "rowCount": 19,
-      "withImage": 16,
-      "withoutImage": 3
+      "rowCount": 74,
+      "withImage": 48,
+      "withoutImage": 26
     },
     "products": {
-      "rowCount": 1,
-      "withImage": 0,
-      "withoutImage": 1
-    },
-    "accessories": {
-      "rowCount": 1,
-      "withImage": 0,
-      "withoutImage": 1
+      "rowCount": 422,
+      "withImage": 263,
+      "withoutImage": 159
     },
     "productContents": {
-      "rowCount": 1
+      "rowCount": 636
+    },
+    "accessories": {
+      "rowCount": 30,
+      "withImage": 27,
+      "withoutImage": 3
     }
   },
   "imagesByGeneration": {
     "X": {
-      "blades": 267,
-      "ratchets": 93,
-      "bits": 98,
-      "lockChips": 17,
-      "overBlades": 5,
-      "metalBlades": 5,
-      "mainBlades": 12,
-      "assistBlades": 16
+      "blades": 283,
+      "ratchets": 304,
+      "bits": 289,
+      "lockChips": 61,
+      "overBlades": 15,
+      "metalBlades": 15,
+      "mainBlades": 34,
+      "assistBlades": 48,
+      "products": 263,
+      "accessories": 27
+    },
+    "Burst": {
+      "burstLayers": 66
+    }
+  },
+  "imagesByHobby": {
+    "Beyblade": {
+      "X": 1339,
+      "Burst": 66
     }
   }
 }
