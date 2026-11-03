@@ -10,7 +10,7 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `fandom_scraper.py` | polite, resumable wiki scraper that fills the workbooks |
 | `beyblade_data.py` | packager: workbooks → `data/` (PNG in the sheet → WebP) |
 | `build_release.py` | release builder: `data/` → `catalog.zip` + manifest, image packs and data packs per hobby/generation |
-| `flutter_integration/` | new Flutter files for the app (ban/allow list picker, lists page, stadium field, TCG catalog) – see its README |
+| `flutter_integration/` | drop-in changes for the clasher_st app: real parts picker for ban/approve lists, lists page, optional tournament stadium, card game (TCG) – changed files + `patches/` + SQL, see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
 | `missing_data_app/` | Flutter desktop version of the missing data tool (get_it, go_router, cubits, clean architecture) – see its README |

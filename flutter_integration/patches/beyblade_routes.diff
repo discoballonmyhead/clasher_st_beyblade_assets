@@ -1,0 +1,42 @@
+--- a/lib/features/beyblade/b_routes/beyblade_routes.dart
++++ b/lib/features/beyblade/b_routes/beyblade_routes.dart
+@@ -3,8 +3,11 @@
+ import 'package:clasher_st/features/beyblade/presentation/pages/bey_builder_page.dart';
+ import 'package:clasher_st/features/beyblade/presentation/pages/beyblade_home.dart';
+ import 'package:clasher_st/features/beyblade/presentation/pages/combo_decks_page.dart';
++import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
+ import 'package:clasher_st/features/beyblade/presentation/pages/detail_page.dart';
++import 'package:clasher_st/features/beyblade/presentation/pages/part_lists_page.dart';
+ import 'package:clasher_st/features/beyblade/presentation/pages/part_search_page.dart';
++import 'package:clasher_st/features/beyblade_tcg/presentation/tcg_cards_page.dart';
+ import 'package:clasher_st/features/user_collection/presentation/cubit/build_readiness_cubit/build_readiness_cubit.dart';
+ import 'package:clasher_st/features/user_collection/presentation/cubit/quick_add_cubit/quick_add_cubit.dart';
+ import 'package:clasher_st/features/user_collection/presentation/pages/build_readiness_page.dart';
+@@ -31,6 +34,12 @@
+   static const String collectionAdd = '/beyblade/collection/add';
+   static const String buildCheck = '/beyblade/collection/build-check';
+ 
++  /// Saved ban / approve lists (tournament part rules).
++  static const String partLists = '/beyblade/part-lists';
++
++  /// Beyblade TCG cards (separate hobby, same catalog download).
++  static const String tcg = '/beyblade/tcg';
++
+   static List<RouteBase> get routes => [
+         GoRoute(
+           path: builder,
+@@ -80,6 +89,14 @@
+         ),
+         GoRoute(path: wishlist, builder: (_, __) => const WishlistPage()),
+         GoRoute(
++          path: partLists,
++          builder: (_, __) => BlocProvider(
++            create: (_) => sl<PartListsCubit>()..load(),
++            child: const PartListsPage(),
++          ),
++        ),
++        GoRoute(path: tcg, builder: (_, __) => const TcgCardsPage()),
++        GoRoute(
+           path: analytics,
+           builder: (_, __) => BlocProvider(
+             create: (_) => sl<CollectionAnalyticsCubit>(),

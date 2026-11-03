@@ -1,29 +1,12 @@
-// =============================================================================
-// BAN / ALLOW LISTS ("meta") - managed in the Beyblade feature
-// -----------------------------------------------------------------------------
-// The host's saved lists, the same ones the create-tournament page offers
+// Ban & approve lists, managed in the Beyblade feature.
+//
+// The host's saved lists: the same ones the create-tournament page offers
 // under "My lists". Uses the existing PartListsCubit / PartListsRepository
 // (inventory_get_part_lists / inventory_save_part_list /
-// inventory_delete_part_list) - no new backend.
+// inventory_delete_part_list), so there's no new backend.
 //
-// Route (features/beyblade/b_routes/beyblade_routes.dart):
-//
-//   static const String partLists = '/beyblade/part-lists';
-//   ...
-//   GoRoute(
-//     path: partLists,
-//     builder: (_, __) => BlocProvider(
-//       create: (_) => sl<PartListsCubit>()..load(),
-//       child: const PartListsPage(),
-//     ),
-//   ),
-//
-// and a tile wherever the Beyblade home lists its tools:
-//   context.push(BeybladeRoutes.partLists)
-//
-// PartListEditor is the same editor as a reusable widget, so the
-// create-tournament page can use it too (see flutter_integration/README.md).
-// =============================================================================
+// Reached from the Bey Station "Manage" grid and from "Manage lists" in the
+// create-tournament Part rules block (route BeybladeRoutes.partLists).
 
 import 'package:clasher_st/core/constants/trc_constant_tokens.dart';
 import 'package:clasher_st/core/responsive/responsive.dart';
@@ -33,8 +16,7 @@ import 'package:clasher_st/core/widgets/app_beyblade_loading_indicator.dart';
 import 'package:clasher_st/core/widgets/holow_components.dart';
 import 'package:clasher_st/features/beyblade/parts_list.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
-import 'package:clasher_st/features/beyblade/presentation/part_lists/beyblade_part_catalog.dart';
-import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/part_list_editor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -61,7 +43,7 @@ class PartListsPage extends StatelessWidget {
 
     return ResponsiveScaffold(
       maxWidth: rc.maxContentWidth,
-      appBar: AppBar(title: const Text('Ban & allow lists')),
+      appBar: AppBar(title: const Text('Ban & approve lists')),
       body: BlocBuilder<PartListsCubit, PartListsState>(
         builder: (context, state) {
           if (state.loading && state.lists.isEmpty) {
@@ -72,9 +54,9 @@ class PartListsPage extends StatelessWidget {
             children: [
               Text(
                 'Reusable part rules for your tournaments. A ban list blocks '
-                'the parts on it; an allow list only permits them (part types '
-                'you leave out stay open). Pick one when you create a '
-                'tournament - it gets its own copy.',
+                'the parts on it; an approve list only permits them (part '
+                'types you leave out stay open). Pick one when you create a '
+                'tournament: the tournament keeps its own copy.',
                 style: TextStyle(
                   fontSize: rc.bodySM,
                   color: cs.onSurfaceVariant,
@@ -103,7 +85,7 @@ class PartListsPage extends StatelessWidget {
                 HoloEmptyState(
                   icon: Icons.rule_outlined,
                   title: TrTokens.noSavedListsYetTxt.tr,
-                  message: 'Create a ban or allow list once and reuse it.',
+                  message: 'Create a ban or approve list once and reuse it.',
                 )
               else
                 for (final list in state.lists)
@@ -157,6 +139,8 @@ class PartListsPage extends StatelessWidget {
                                     ),
                                   ],
                                 ),
+                                const SizedBox(height: 4),
+                                PartListPreview(list: list),
                               ],
                             ),
                           ),
@@ -301,149 +285,6 @@ class _PartListEditPageState extends State<PartListEditPage> {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Kind switch + parts grouped by type + "Add part". Stateless: the owner
-/// keeps the [PartList] and gets every change through [onChanged].
-///
-/// Works with any PartCatalog; with [BeybladePartCatalog] it shows images and
-/// can add a part together with all its variants in one go.
-class PartListEditor extends StatelessWidget {
-  const PartListEditor({
-    super.key,
-    required this.list,
-    required this.onChanged,
-  });
-
-  final PartList list;
-  final ValueChanged<PartList> onChanged;
-
-  Future<void> _add(BuildContext context, PartCatalog catalog) async {
-    final refs = catalog is BeybladePartCatalog
-        ? await catalog.pickParts(context, kind: list.kind)
-        : [await catalog.pickPart(context, kind: list.kind)]
-              .whereType<PartRef>()
-              .toList();
-    if (refs == null || refs.isEmpty || !context.mounted) return;
-    var next = list;
-    final already = refs.where(list.contains).toList();
-    for (final r in refs) {
-      next = next.withPart(r);
-    }
-    onChanged(next);
-    if (already.length == refs.length) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            TrTokens.partAlreadyOnListFormat.tr.replaceFirst(
-              '%s',
-              catalog.nameOf(refs.first),
-            ),
-          ),
-        ),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final rc = ResponsiveProvider.config(context);
-    final catalog = resolvePartCatalog();
-    final rich = catalog is BeybladePartCatalog ? catalog : null;
-    if (rich != null) rich.warm();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        HoloSegmented<PartListKind>(
-          value: list.kind,
-          onChanged: (k) => onChanged(list.copyWith(kind: k)),
-          options: [
-            HoloOption(
-              PartListKind.ban,
-              TrTokens.banListTxt.tr,
-              icon: Icons.block,
-            ),
-            HoloOption(
-              PartListKind.approve,
-              TrTokens.approveListTxt.tr,
-              icon: Icons.verified_outlined,
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text(
-          list.kind.rule,
-          style: TextStyle(
-            fontSize: 12.5,
-            height: 1.35,
-            color: cs.onSurfaceVariant,
-          ),
-        ),
-        SizedBox(height: rc.md),
-        if (list.isEmpty)
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: cs.outlineVariant),
-            ),
-            child: Text(
-              TrTokens.noPartsYetTxt.tr,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: cs.onSurfaceVariant),
-            ),
-          )
-        else
-          for (final entry in list.parts.entries) ...[
-            HoloSubLabel(
-              title: catalog.typeLabel(entry.key),
-              trailing: Text(
-                '${entry.value.length}',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: cs.onSurfaceVariant,
-                ),
-              ),
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                for (final id in entry.value)
-                  InputChip(
-                    avatar: rich == null
-                        ? null
-                        : PartImageThumb(
-                            imageUrl: preferredThumbUrl(
-                              rich.lookup(PartRef(entry.key, id))?.part,
-                            ),
-                            size: 24,
-                            scale: 1,
-                          ),
-                    label: Text(catalog.nameOf(PartRef(entry.key, id))),
-                    onDeleted: () =>
-                        onChanged(list.withoutPart(PartRef(entry.key, id))),
-                  ),
-              ],
-            ),
-            SizedBox(height: rc.md),
-          ],
-        SizedBox(height: rc.sm),
-        OutlinedButton.icon(
-          onPressed: () => _add(context, catalog),
-          icon: const Icon(Icons.add),
-          label: Text(TrTokens.addPartBtn.tr),
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(double.infinity, 46),
-          ),
-        ),
-      ],
     );
   }
 }

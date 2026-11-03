@@ -1,144 +1,125 @@
 # Flutter integration (clasher_st app)
 
-New Flutter files for the app, laid out like the app's `lib/` so each one drops into the same path.
-Nothing here replaces an existing file; every change to an existing file is a few lines and is listed below.
+This folder plugs the new catalog data (ban/approve lists, stadiums, the card game) into the feature code you sent
+(`beyblade/`, `presentation/` = `features/tournaments/presentation/`, `bey_testing/`). Its `lib/` mirrors the app's
+`lib/`. Every file is either:
 
-## How data reaches the app
+* **changed**: your file with a few edits. `patches/<file>.diff` shows exactly what changed, and each patch applies
+  with `git apply` to the version you sent; or
+* **new**: a file that doesn't exist in the app yet.
 
-```
-fandom_scraper.py   wiki -> beyblade_parts.xlsx / beyblade_products.xlsx / beyblade_tcg.xlsx   (humans edit these)
-beyblade_data.py    workbooks -> data/*.json + data/images/*.webp (PNG in the sheet -> WebP)   (packager)
-build_release.py    data/ -> _release/<tag>/                                                    (release builder)
-                      catalog.zip + catalog_manifest.json  -> beyblade_catalog_manifest RPC (dataUrl, dataSha256, version)
-                      beyblade_images_<Gen>.zip             -> AssetDownloadCubit / image pack sheet (unchanged format)
-                      beyblade_tcg_images_<Gen>.zip         -> TCG image packs (hobby "Beyblade TCG")
-                      beyblade_*_data_<Gen>.zip + packs.json -> optional per hobby/generation data packs (future)
-```
+## Install
 
-* Image packs keep the exact layout of the current `beyblade_images_X.zip` (flat
-  `<sheet>-<dataID>.webp` / `-min.webp`), so `applyLocalBeyImagePaths` keeps working. Checked: a rebuilt
-  X pack has the same 1026 file names as the one on release `9526Update`.
-* `catalog.zip` contains every sheet. The app only reads `trackedBeyBladeData`, so extra sheets
-  (other generations, `codeSeries`, `tcgCards`, `tcgSets`) are ignored until you opt in.
-* Rows keep the app's columns. New optional columns (`parentProductId`, `variantLabel`, `currency`,
-  `region` on products; variant rows for parts) are read with `ciGet` or ignored.
-* `accessoryType` values now match `AccessoryType.parse`: `Stadium`, `Launcher`, `Grip`, `DeckBox`,
-  `BattlePass`.
-* TCG rows use `hobbyName = "Beyblade TCG"`, a separate hobby from `Beyblade`.
+1. Copy `flutter_integration/lib/` over the app's `lib/`, or apply `patches/*.diff` and copy only the new files.
+2. Run `sql/21_tournament_stadium.sql` in Supabase. First make the one marked `ADJUST` line use the same host check
+   as `tournaments_set_part_rules`.
+3. Run `flutter pub get`. No new packages are needed: it uses `hive_ce_flutter`, `supabase_flutter`, `go_router`
+   and `get_it`, which the app already has.
 
-## 1. Ban / allow lists (the broken "meta")
+## What changes for users, and where it lives
 
-**Why it was broken:** nothing registered a `PartCatalog`, so `resolvePartCatalog()` used
-`ManualEntryPartCatalog` ("type a part type and data id").
+### 1. Ban & approve lists use the real parts catalog
 
-**Files**
-* `lib/features/beyblade/presentation/part_lists/beyblade_part_catalog.dart`: the real catalog plus a
-  part picker sheet (search by name or code, filter by type, images, variants under their original,
-  "include all its variants").
-* `lib/features/beyblade/presentation/pages/part_lists_page.dart`:
-  * `PartListsPage`: manage saved lists in the Beyblade feature;
-  * `PartListEditPage`: create or edit one list;
-  * `PartListEditor`: reusable editor widget.
+**Before:** nothing registered a `PartCatalog`, so `resolvePartCatalog()` returned `ManualEntryPartCatalog`. In
+Create tournament → Part rules → New list, "Add part" asked for a part type and a data id typed by hand. That is the
+`//TODO Need to make it so that it selects the parts` in `create_tournament_page.dart`.
 
-**Edits**
-1. `features/beyblade/di/beyblade_dependencies.dart`, end of `init()`:
-   ```dart
-   sl.registerLazySingleton<PartCatalog>(() => BeybladePartCatalog(sl()));
-   ```
-   This alone fixes the create-tournament page, which already calls `resolvePartCatalog()`.
-2. `features/beyblade/b_routes/beyblade_routes.dart`:
-   ```dart
-   static const String partLists = '/beyblade/part-lists';
-   GoRoute(
-     path: partLists,
-     builder: (_, __) => BlocProvider(
-       create: (_) => sl<PartListsCubit>()..load(),
-       child: const PartListsPage(),
-     ),
-   ),
-   ```
-   Then add a tile on the Beyblade home that calls `context.push(BeybladeRoutes.partLists)`.
-3. Optional, create page: replace the body of `_NewListEditor` with
-   `PartListEditor(list: draft.newList, onChanged: (l) => draft.update(() => draft.newList = l))`. Keep the
-   name field and the "save to my lists" button below it. You get images and "add with variants" in the
-   create flow too.
+**Now:** "Add part" opens a picker over the local parts catalog:
+* search by name or code;
+* filter by part type;
+* thumbnails, with recolors listed under their original;
+* **Include all its variants** is on by default: banning Dran Sword also bans its Metal Coat recolors.
 
-Lists keep their exact shape (`{"blade": ["12", "40"]}`), so saved lists and tournament snapshots
-stay compatible. Server-side checks compare loadout ids directly. If a ban on an original should also
-cover its recolors, either tick "include all its variants" when adding the part, or treat
-`parentPartId` as the same part in the deck check.
+Chips show part names and images instead of `Blade #12`. Saved-list cards show the first few part names. The
+Bey Station home has a **Ban & approve lists** tile for managing saved lists outside the create flow. The create
+page links to it with **Manage lists** and reloads the lists when you come back.
 
-## 2. Stadium (optional) for tournaments
+| file | | what |
+|---|---|---|
+| `features/beyblade/parts_list.dart` | changed | `PartCatalog` gets `pickParts`, `isReady`/`ready()` and `thumbnail()`, all with defaults, so `ManualEntryPartCatalog` still compiles |
+| `features/beyblade/presentation/part_lists/beyblade_part_catalog.dart` | new | `BeybladePartCatalog`: the real catalog plus the picker sheet, built on `BeybladeDataRepo` |
+| `features/beyblade/presentation/widgets/part_list_editor.dart` | new | `PartListEditor` (ban/approve switch, parts by type, Add part) and `PartListPreview`, shared by both pages below |
+| `features/beyblade/presentation/pages/part_lists_page.dart` | new | `PartListsPage` (your saved lists) and `PartListEditPage` (create/edit/delete one), using the existing `PartListsCubit` |
+| `features/beyblade/di/beyblade_dependencies.dart` | changed | `sl.registerLazySingleton<PartCatalog>(() => BeybladePartCatalog(sl()))` |
+| `features/beyblade/b_routes/beyblade_routes.dart` | changed | `BeybladeRoutes.partLists = '/beyblade/part-lists'` (provides `PartListsCubit`) |
+| `features/beyblade/presentation/pages/beyblade_home.dart` | changed | "Ban & approve lists" tile in the Manage grid |
+| `features/tournaments/presentation/pages/create_tournament_page.dart` | changed | `_NewListEditor` uses `PartListEditor`; `SavedListsPicker` gets "Manage lists"; `PartListCard` gets the preview |
 
-**File:** `lib/features/tournaments/presentation/widgets/stadium_picker_field.dart`
-(`TournamentStadiumField`). It picks from catalog Accessories of type Stadium, and "No specific stadium"
-is the default.
+The data shape is unchanged (`{"blade": ["12", "40"]}`), so existing saved lists, tournament snapshots and the
+server-side deck check keep working.
 
-**Edits** (the first two are in `create_tournament_page.dart`; I couldn't finish the last two without
-the tournaments data layer):
-1. `TournamentDraft`: `String? stadiumDataId;`
-2. A `FormBlock` next to the part rules:
-   ```dart
-   FormBlock(
-     title: 'Stadium',
-     child: _DraftSelect(
-       draft: draft,
-       select: (x) => x.stadiumDataId,
-       builder: (context, _) => TournamentStadiumField(
-         value: draft.stadiumDataId,
-         onChanged: (id) => draft.update(() => draft.stadiumDataId = id),
-       ),
-     ),
-   ),
-   ```
-3. `CreateTournamentRequest`: add `String? stadiumDataId`, pass it in `toRequest()`, and send it in
-   the create RPC.
-4. Database: `tournaments.stadium_data_id text null` and the create RPC parameter. Show it on the
-   tournament detail page with `getAccessoryByDataId`.
+### 2. Stadium (optional) on tournaments
 
-To finish 3 and 4 I need `features/tournaments/data/*` and `features/tournaments/domain/*`, plus the
-SQL of the create-tournament RPC.
+The format step of Create tournament gets a **Stadium** block after Part rules. It lists the catalog's Accessories
+with `accessoryType` Stadium; **No specific stadium** is the default. The tournament detail page shows the stadium
+under "How it's played", and shows nothing when none was picked.
 
-## 3. Beyblade TCG (separate hobby)
+The create RPC and `CreateTournamentRequest` (data layer, not in the zip) are **not** touched. The page saves the
+stadium right after the tournament is created, the same way it already saves prizes.
 
-**File:** `lib/features/beyblade_tcg/beyblade_tcg.dart`. It holds:
-* entities `TcgCard` and `TcgSet`, with the same original/variant model as parts;
-* a tolerant row parser;
-* `TcgCatalog`, which ingests the sheets map, stores it, overlays downloaded images, and offers
-  filters and variant groups.
+| file | | what |
+|---|---|---|
+| `features/tournaments/presentation/widgets/stadium_picker_field.dart` | new | `TournamentStadiumField` (create page) and `TournamentStadiumPanel` (detail page) |
+| `features/tournaments/data/tournament_stadium_repository.dart` | new | `setStadium` / `getStadium` (RPCs answer `{status, error}` like the rest of the app; reads are cached) |
+| `sql/21_tournament_stadium.sql` | new | `tournaments.stadium_data_id`, `tournaments_set_stadium`, `tournaments_get_stadium` |
+| `create_tournament_page.dart` | changed | `TournamentDraft.stadiumDataId`, the Stadium `FormBlock`, and `setStadium` in `_submit` after the tournament exists |
+| `tournament_detail_page.dart` | changed | `TournamentStadiumPanel(tournamentId: t.id)` under the stages panel |
+| `beyblade_dependencies.dart` | changed | registers `TournamentStadiumRepository` (move it to the tournaments DI if you prefer) |
 
-It has no Flutter or Hive imports: `dart analyze` is clean and its unit test passes.
+### 3. Card game (Beyblade TCG, a separate hobby)
 
-**Edits**
-1. `beyblade_cat_remdsrc.dart` → `downloadCatalogSheets()`: also keep `kOptionalCatalogSheets`. Don't
-   add them to `trackedBeyBladeData`, which is the required list and would reject older releases.
-   ```dart
-   final optional = kOptionalCatalogSheets.toSet();
-   // in the loop:
-   if (!tracked.contains(sheet) && !optional.contains(sheet)) continue;
-   ```
-2. `beyblade_sync_cubit.dart`, after `downloadCatalogSheets(release)`:
-   `await sl<TcgCatalog>().ingestSheets(sheets);`
-3. DI: `sl.registerLazySingleton<TcgCatalog>(() => TcgCatalog(HiveKeyValueStore(<any Box>)));`
-   The 6-line adapter is at the bottom of the file.
-4. TCG image packs are named `beyblade_tcg_images_<Gen>.zip`. `AssetDownloadService.findAssetForGeneration`
-   isn't in the zip I received. If it matches on `beyblade_images_<gen>`, the TCG packs need a
-   hobby-aware lookup (`<hobby-slug>_images_<gen>.zip`). Send me that service and I'll add it without
-   changing the parts flow.
+`catalog.zip` can carry `tcgCards.json` / `tcgSets.json`. The download now keeps them as **optional** sheets: they are
+never required, so older releases still apply. After a successful update the sync cubit stores them in their own
+Hive box. The Bey Station home gets a **Card game** tile: a page to search cards by name or number, filter by game
+(V-Force / Beyblade X) and set, and open a card's details with its foils and parallels. With no card data yet, the
+page offers "Check for updates".
 
-A TCG browse screen is the next step once the data is flowing.
+| file | | what |
+|---|---|---|
+| `features/beyblade_tcg/beyblade_tcg.dart` | new | entities, row parser, `TcgCatalog`, and `HiveTcgStore` (its own box `beyblade_tcg_catalog`, opened lazily like `BeyTestsLocalDataSource`) |
+| `features/beyblade_tcg/presentation/tcg_cards_page.dart` | new | `TcgCardsPage` |
+| `features/beyblade/data/dsrces/beyblade_cat_remdsrc.dart` | changed | keeps `kOptionalCatalogSheets` (`tcgCards`, `tcgSets`, `codeSeries`) |
+| `features/beyblade/presentation/cubit/beyblade_sync_cubit/beyblade_sync_cubit.dart` | changed | optional `tcgCatalog`; `ingestSheets(sheets)` after an update is applied (a bad TCG sheet only logs) |
+| `beyblade_dependencies.dart`, `beyblade_routes.dart`, `beyblade_home.dart` | changed | `TcgCatalog` registration, `BeybladeRoutes.tcg = '/beyblade/tcg'`, and the "Card game" tile |
 
-## 4. Per hobby / generation data downloads (future)
+Card images use the CDN URLs in the rows, so they show without an image pack. TCG image packs
+(`beyblade_tcg_images_<Gen>.zip`) are built by `build_release.py`, and `TcgCatalog.applyLocalImagePaths` is ready
+for them. Offering them in the image-pack sheet needs `AssetDownloadService.findAssetForGeneration`, which wasn't in
+the zip.
 
-`build_release.py` already writes `beyblade_data_<Gen>.zip` / `beyblade_tcg_data_<Gen>.zip` and
-`packs.json` (hobby, generation, url, sha256, size, row counts). When the catalog gets big, the app can
-offer these exactly like the image packs (same sheet, `ImagePacks` pattern) instead of one catalog.zip.
-Nothing in the app needs to change for that today.
+## Data compatibility (checked against your parsers)
 
-## Still needed from you
-* `features/tournaments/data/*`, `features/tournaments/domain/*` and the create-tournament RPC SQL, to
-  finish the stadium.
-* `core/services/.../asset_download_service.dart` (`findAssetForGeneration`, `extractAndMap`), for TCG
-  image packs.
-* `core/constants/app_constants.dart` and the Hive box setup in `core/init_injection`, to wire the TCG
-  catalog without guessing box names.
+* `data/*.json` from `beyblade_data.py` has every field `models.dart` reads (`dataID`, `parentPartId`,
+  `variantLabel`, `wbolegality`, `type`, `spinDir`, `baseName`, `movementStyle`, `productID`, `partDataID`,
+  `accessoryType` …).
+* `accessoryType` values match `AccessoryType.parse`: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.
+* Rows marked `deleted` in the workbooks are now left out by the packager. The app has no `deleted` filter, so before
+  this they would have shown up.
+* Image packs keep the flat `<sheet>-<dataID>[-min].webp` layout that `applyLocalBeyImagePaths` expects.
+
+## Strings
+
+New text is plain English (`'Stadium'`, `'Manage lists'`, `'Ban & approve lists'`, `'Card game'`, the picker
+labels). `FormBlock` calls `.tr` on its title and hint. If your translation helper doesn't return the key itself
+when no translation exists, add `TrTokens` entries for `'Stadium'` and its hint. Move the rest into `TrTokens`
+whenever you translate them. Existing tokens (`TrTokens.addPartBtn`, `banListTxt` …) are
+reused where they already existed.
+
+## What was verified, and how
+
+The full app wasn't in the zip, so I couldn't build it. Instead:
+* All **new** files and the changed `parts_list.dart`, `beyblade_cat_remdsrc.dart` and `beyblade_sync_cubit.dart` pass
+  `flutter analyze`. The only warnings are two unused imports of `responsive_extras.dart`, and they come from the
+  stubs: the files import it the same way `part_search_page.dart` does. The check used a stub `clasher_st` package with your real entities, `BeybladeDataRepo`,
+  `PartListsCubit`, sync state and `arena_style.dart`. The core widgets that weren't in the zip (`holow_components`,
+  `responsive`, `part_image_thumb`) were stubbed with the signatures your code uses.
+* `test/part_lists_test.dart` and `test/tcg_catalog_test.dart` pass (5 tests) in that package. They cover:
+  * part names come from the catalog;
+  * the editor rebuilds once the catalog loads;
+  * opening the picker, searching "dran" and tapping Dran Sword adds it **and** its recolor;
+  * the list preview;
+  * TCG ingest, sorting, filters, variants and local image paths.
+
+  In the app, if `ResponsiveProvider.config` needs an ancestor widget, wrap the test widgets in it.
+* The changed big files (`create_tournament_page.dart`, `tournament_detail_page.dart`, `beyblade_home.dart`, routes,
+  DI) parse cleanly. Every `patches/*.diff` applies with `git apply --check` to the files you sent.

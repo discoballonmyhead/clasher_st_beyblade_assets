@@ -1,0 +1,39 @@
+--- a/lib/features/beyblade/data/dsrces/beyblade_cat_remdsrc.dart
++++ b/lib/features/beyblade/data/dsrces/beyblade_cat_remdsrc.dart
+@@ -3,6 +3,7 @@
+ 
+ import 'package:archive/archive.dart';
+ import 'package:clasher_st/core/constants/app_constants.dart';
++import 'package:clasher_st/features/beyblade_tcg/beyblade_tcg.dart';
+ import 'package:crypto/crypto.dart';
+ import 'package:http/http.dart' as http;
+ import 'package:supabase_flutter/supabase_flutter.dart';
+@@ -46,7 +47,8 @@
+ 
+   /// Downloads catalog.zip, verifies its SHA-256 against the release,
+   /// and returns sheet name -> raw JSON text: the same shape the bundled
+-  /// loader produces, so both feed one parser.
++  /// loader produces, so both feed one parser. Optional sheets
++  /// ([kOptionalCatalogSheets]) are included when the release has them.
+   Future<Map<String, String>> downloadCatalogSheets(CatalogRelease release);
+ }
+ 
+@@ -109,6 +111,9 @@
+ 
+     final archive = ZipDecoder().decodeBytes(bytes);
+     final tracked = AppConstants.trackedBeyBladeData.toSet();
++    // Extra sheets (TCG cards/sets, code series) are kept when present but
++    // never required, so older releases still apply.
++    final optional = kOptionalCatalogSheets.toSet();
+     final sheets = <String, String>{};
+ 
+     for (final file in archive) {
+@@ -118,7 +123,7 @@
+       final name = file.name.split('/').last.split('\\').last;
+       if (!name.endsWith('.json')) continue;
+       final sheet = name.substring(0, name.length - '.json'.length);
+-      if (!tracked.contains(sheet)) continue;
++      if (!tracked.contains(sheet) && !optional.contains(sheet)) continue;
+       sheets[sheet] = utf8.decode(file.content as List<int>);
+     }
+ 
