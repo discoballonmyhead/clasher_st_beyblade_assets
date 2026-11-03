@@ -19,11 +19,17 @@ release. Separate from the scraper (fandom_scraper.py) and the packager (beyblad
                   packs.json                        index of every file above (hobby, generation, url, sha256,
                                                     size, counts) for an app that lets users pick packs
 
+Before anything is written, the catalog is checked against what the app accepts (catalog_check.py): every
+required sheet present, no row missing a field the app requires, no duplicate ids, ProductContents pointing at
+part types the app resolves. Errors stop the build; --drop-invalid leaves those rows out instead.
+
 Usage:
     python build_release.py --tag 9526Update --user discoballonmyhead --repo clasher_st_beyblade_assets
     python build_release.py --tag 2026-11-02 --data data --out _release --no-data-packs
+    python build_release.py --tag 2026-11-02 --drop-invalid --app-assets ../clasher_st/assets/beyblade_data
 Then upload everything in _release/<tag>/ to the GitHub release <tag> and point the
-beyblade_catalog_manifest RPC at catalog_manifest.json's values.
+beyblade_catalog_manifest RPC at catalog_manifest.json's values. --app-assets also writes the bundled catalog
+(the app's first-launch / offline copy) into the app's assets folder - see WORKFLOW.md.
 
 Zips are written deterministically (fixed timestamps, sorted names), so the same data gives the same
 SHA-256 - an unchanged catalog doesn't make every app re-download it.
@@ -41,6 +47,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
+
+import catalog_check
 
 FIXED_TIME = (2020, 1, 1, 0, 0, 0)
 SKIP_JSON = {"manifest.json"}  # bookkeeping, not catalog sheets
@@ -135,6 +143,17 @@ def data_pack_rows(sheets, hobby, generation):
     return out
 
 
+def write_app_assets(dest, sheets, manifest):
+    """The bundled catalog: exactly the sheets loadPartsDataBundle() reads, plus manifest.json. Same rows as
+    catalog.zip, so a fresh install starts on this release's data."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in catalog_check.APP_SHEETS:
+        (dest / f"{name}.json").write_text(json.dumps(sheets.get(name, []), separators=(",", ":"),
+                                                      ensure_ascii=False), encoding="utf-8")
+    (dest / "manifest.json").write_text(json.dumps({**manifest, "bundled": True}, indent=2), encoding="utf-8")
+    print(f"app assets: {len(catalog_check.APP_SHEETS)} sheets + manifest.json -> {dest}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Build GitHub release files from the packager's data folder")
     ap.add_argument("--data", default="data", help="packager output folder (default: data)")
@@ -144,6 +163,12 @@ def main(argv=None):
     ap.add_argument("--user", default="discoballonmyhead")
     ap.add_argument("--repo", default="clasher_st_beyblade_assets")
     ap.add_argument("--no-data-packs", action="store_true", help="skip the per hobby/generation data packs")
+    ap.add_argument("--drop-invalid", action="store_true",
+                    help="leave out rows the app can't read (listed) instead of stopping")
+    ap.add_argument("--force", action="store_true", help="build even with catalog errors (not recommended)")
+    ap.add_argument("--app-assets", metavar="DIR",
+                    help="also write the bundled catalog (the app's required sheets + manifest.json) to DIR, "
+                         "the folder AppConstants.beyBladePartsAssetpaths points at")
     a = ap.parse_args(argv)
 
     data_dir = Path(a.data)
@@ -163,10 +188,26 @@ def main(argv=None):
         print(f"  {filename:38s} {len(data) / 1024 / 1024:7.2f} MB  {counts}")
         return entry
 
-    # 1) catalog.zip - every sheet, the file the app's catalog sync downloads and verifies
+    # 0) the gate: what the app would reject or fail to read
     sheets = load_sheets(data_dir)
     if not sheets:
         sys.exit(f"No sheet JSON files in {data_dir}.")
+    report = catalog_check.check(sheets)
+    report.print()
+    if not report.ok:
+        if a.drop_invalid:
+            sheets, dropped = catalog_check.drop_invalid(sheets, report)
+            print(f"--drop-invalid: left out {dropped} rows; fix them in the workbook (missing_data_tool.py) "
+                  f"and they come back in the next release")
+            again = catalog_check.check(sheets)
+            if not again.ok:  # e.g. a required sheet is missing - dropping rows can't fix that
+                again.print()
+                sys.exit("Catalog still has errors; nothing written.")
+        elif not a.force:
+            sys.exit("\nNothing written. Fix these in the workbooks (missing_data_tool.py shows them per field), "
+                     "re-run the packager, or use --drop-invalid to release without those rows.")
+
+    # 1) catalog.zip - every sheet, the file the app's catalog sync downloads and verifies
     print(f"catalog: {len(sheets)} sheets")
     cat = emit("catalog", None, None, "catalog.zip",
                write_zip([(f"{n}.json", json.dumps(r, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
@@ -175,6 +216,8 @@ def main(argv=None):
     manifest = {"version": version, "releaseTag": a.tag, "dataUrl": cat["url"], "dataSha256": cat["sha256"],
                 "publishedAtMillis": int(datetime.now(timezone.utc).timestamp() * 1000)}
     (out / "catalog_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if a.app_assets:
+        write_app_assets(Path(a.app_assets), sheets, manifest)
 
     # 2) image packs per hobby + generation
     images_dir = data_dir / "images"

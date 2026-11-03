@@ -1,14 +1,15 @@
 --- a/lib/features/beyblade/presentation/cubit/beyblade_sync_cubit/beyblade_sync_cubit.dart
 +++ b/lib/features/beyblade/presentation/cubit/beyblade_sync_cubit/beyblade_sync_cubit.dart
-@@ -5,6 +5,7 @@
+@@ -5,6 +5,8 @@
  import 'package:clasher_st/features/beyblade/data/dsrces/beyblade_cat_remdsrc.dart';
  import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
  import 'package:clasher_st/features/beyblade/domain/usecases/usecases.dart';
++import 'package:clasher_st/features/beyblade/presentation/widgets/accessory_picker.dart';
 +import 'package:clasher_st/features/beyblade_tcg/beyblade_tcg.dart';
  import 'package:flutter_bloc/flutter_bloc.dart';
  import 'dart:developer' as dev;
  import 'beyblade_sync_state.dart';
-@@ -26,8 +27,10 @@
+@@ -26,8 +28,10 @@
    BeybladeSyncCubit({
      required SyncBeybladeDataUseCase syncUseCase,
      required BeybladeCatalogRemoteDataSource catalogRemote,
@@ -19,7 +20,7 @@
          super(const SyncIdle()) {
      dev.log('Initialized', name: _logName);
    }
-@@ -37,6 +40,10 @@
+@@ -37,6 +41,10 @@
    final SyncBeybladeDataUseCase _syncUseCase;
    final BeybladeCatalogRemoteDataSource _catalogRemote;
  
@@ -30,10 +31,11 @@
    bool _hasCheckedThisSession = false;
    bool _updateCheckedThisSession = false;
    bool _checkingForUpdate = false;
-@@ -153,6 +160,12 @@
+@@ -153,6 +161,13 @@
        _metadata = await _syncUseCase.getSyncMetadata();
  
        if (state is SyncFinished) {
++        AccessoryCache.clear(); // stadium / launcher names from the new data
 +        // Never blocks the parts update: a bad TCG sheet only logs.
 +        try {
 +          await _tcgCatalog?.ingestSheets(sheets);

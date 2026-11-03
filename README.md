@@ -1,6 +1,8 @@
 # Clasher ST – Beyblade data store
 
 Humans manage three Excel workbooks → the packager turns them into `data/*.json` + `data/images/*.webp`
+
+**How it all fits together, what each step creates, and what goes in the app's assets: [WORKFLOW.md](WORKFLOW.md)** (with flow graphs).
 (served via jsDelivr) → the scraper can fill/update the workbooks from the Beyblade Fandom wiki.
 
 | file | what it does |
@@ -10,6 +12,7 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `fandom_scraper.py` | polite, resumable wiki scraper that fills the workbooks |
 | `beyblade_data.py` | packager: workbooks → `data/` (PNG in the sheet → WebP) |
 | `build_release.py` | release builder: `data/` → `catalog.zip` + manifest, image packs and data packs per hobby/generation |
+| `catalog_check.py` | the release gate: checks `data/` against what the app accepts (required sheets and fields, duplicate ids, ProductContents keys) |
 | `flutter_integration/` | drop-in changes for the clasher_st app: real parts picker for ban/approve lists, lists page, optional tournament stadium, card game (TCG) – changed files + `patches/` + SQL, see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
@@ -131,6 +134,9 @@ Writes `_release/<tag>/`:
   flat `<sheet>-<dataID>.webp` / `-min.webp` layout as the existing `beyblade_images_X.zip`;
 * `beyblade_data_<Gen>.zip` / `beyblade_tcg_data_<Gen>.zip` + `packs.json` – optional per hobby/generation data
   packs for when one catalog gets too big (`--no-data-packs` to skip).
+Before writing anything it checks the data against what the app accepts (`catalog_check.py`) and stops with a
+list of rows if the app would reject or fail to read them. `--drop-invalid` releases without those rows;
+`--app-assets DIR` also writes the bundled catalog for the app's assets folder (see [WORKFLOW.md](WORKFLOW.md)).
 Zips are deterministic: unchanged data gives the same SHA-256, so apps don't re-download it. Upload the folder's
 files to the release `<tag>`.
 

@@ -5,6 +5,7 @@ import 'package:clasher_st/core/services/wakelock_service/beyblade_wake_lock_ser
 import 'package:clasher_st/features/beyblade/data/dsrces/beyblade_cat_remdsrc.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/domain/usecases/usecases.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/accessory_picker.dart';
 import 'package:clasher_st/features/beyblade_tcg/beyblade_tcg.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'dart:developer' as dev;
@@ -160,6 +161,7 @@ class BeybladeSyncCubit extends Cubit<BeybladeSyncState> {
       _metadata = await _syncUseCase.getSyncMetadata();
 
       if (state is SyncFinished) {
+        AccessoryCache.clear(); // stadium / launcher names from the new data
         // Never blocks the parts update: a bad TCG sheet only logs.
         try {
           await _tcgCatalog?.ingestSheets(sheets);
