@@ -104,6 +104,46 @@ Card images use the CDN URLs in the rows, so they show without an image pack. TC
 for them. Offering them in the image-pack sheet needs `AssetDownloadService.findAssetForGeneration`, which wasn't in
 the zip.
 
+### 5. Scorekeeper: optimistic and fast, gradient selection borders
+
+`features/tournaments/presentation/pages/score_keeper_page.dart` (changed, `patches/score_keeper_page.diff`). Only
+this page changes: no cubit, entity or backend changes.
+
+**Why it felt slow:**
+* Every bey tap waited for `selectBey` and then for `loadMatches` (a reload of **all** the tournament's matches)
+  before the page counted the pick. The 4-second `_pending` timer could flip the pick back while the reload was
+  still running.
+* Logging a round put a full-screen scrim and spinner over the page until the same reload finished.
+* Every selected button pulsed its glow on the shared animation, so all of them repainted 60 times a second.
+
+**Now:**
+* **Bey picks are optimistic.** The pick shows the moment you tap, and the step unlocks as soon as both players have
+  one. When the save finishes, the server value takes over; if it failed, the picker falls back to the server's pick
+  and the error snack says why. There's no timer.
+* **Rounds are optimistic.** Score, pips, round number, flash and history update on tap. The history shows
+  `· SAVING` until the server confirms. Rounds queue: you can log the next one while earlier ones save. They are sent
+  in order, each waits for the bey saves, and numbering stays correct. If one fails, it and any later rounds are taken
+  back off the board, and the snack shows the error. Undo and restart wait until nothing is saving.
+* **No scrim.** A 2 px progress line at the top shows saving, and the page stays usable.
+* **Selection look.** Every selectable control (finish buttons, compact chips, foul, player tags, bey rows, deck
+  panels, compact player cards) has a neutral fill and a **theme-gradient border** (primary → tertiary → secondary,
+  mirrored on player 2's side) when selected:
+  * no inner tint, no glow and no pulse;
+  * the foul button uses a warm foul → error gradient;
+  * a deck panel with a picked bey uses success → player colour;
+  * "Log round" fills with the theme gradient once a winner and finish are picked;
+  * the border fades in over 110 ms, and the tap ripple is instant and faint.
+* The pulse remains only on the round chip, the flip warning and the awaiting icon.
+
+Checked in the stand-in package (with your original file as the baseline):
+* `flutter analyze` shows only the two issues already in your original.
+* 3 widget tests pass against a fake cubit whose server calls are held open:
+  * picks and rounds show before the server answers, rounds wait for the bey saves, and the queue numbers rounds
+    correctly;
+  * a failed round save reverts that round and the ones after it;
+  * a failed bey save falls back to the server's pick.
+* The new look was rendered and compared with the old one.
+
 ## Data compatibility (checked against your parsers)
 
 Checked by running a release through the app's own `downloadCatalogSheets`, `parseMetadataSheets` and `models.dart`
