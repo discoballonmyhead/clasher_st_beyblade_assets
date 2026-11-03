@@ -1,5 +1,8 @@
 # Flutter integration (clasher_st app)
 
+For how data gets from the workbooks to the app, and what goes in the assets folder, see
+[../WORKFLOW.md](../WORKFLOW.md).
+
 This folder plugs the new catalog data (ban/approve lists, stadiums, the card game) into the feature code you sent
 (`beyblade/`, `presentation/` = `features/tournaments/presentation/`, `bey_testing/`). Its `lib/` mirrors the app's
 `lib/`. Every file is either:
@@ -48,7 +51,21 @@ page links to it with **Manage lists** and reloads the lists when you come back.
 The data shape is unchanged (`{"blade": ["12", "40"]}`), so existing saved lists, tournament snapshots and the
 server-side deck check keep working.
 
-### 2. Stadium (optional) on tournaments
+### 2. One accessory picker for tournaments and bey_testing
+
+bey_testing already had a stadium and launcher picker (`AccessoryPickerSheet`, `AccessoryName` and a private cache
+in `test_setup_widgets.dart`). It now lives in the beyblade feature, so the tournament stadium uses the **same**
+picker. bey_testing re-exports it, so `test_session_page.dart` and `matchup_score_page.dart` don't change.
+Additions: thumbnails, a `noneLabel`, `AccessoryField` (a tappable card with clear) and `AccessoryThumb`. The cache
+is cleared when a catalog update is applied.
+
+| file | | what |
+|---|---|---|
+| `features/beyblade/presentation/widgets/accessory_picker.dart` | new | `AccessoryCache`, `AccessoryChoice`, `AccessoryPickerSheet`, `AccessoryName`, `AccessoryField`, `AccessoryThumb`, `accessoryTypeLabel` |
+| `features/bey_testing/presentation/widgets/test_setup_widgets.dart` | changed | the moved classes replaced by `export '.../accessory_picker.dart'`; `SetupTile` and `TestBeyName` stay |
+| `beyblade_sync_cubit.dart` | changed | `AccessoryCache.clear()` after an update |
+
+### 3. Stadium (optional) on tournaments
 
 The format step of Create tournament gets a **Stadium** block after Part rules. It lists the catalog's Accessories
 with `accessoryType` Stadium; **No specific stadium** is the default. The tournament detail page shows the stadium
@@ -59,14 +76,14 @@ stadium right after the tournament is created, the same way it already saves pri
 
 | file | | what |
 |---|---|---|
-| `features/tournaments/presentation/widgets/stadium_picker_field.dart` | new | `TournamentStadiumField` (create page) and `TournamentStadiumPanel` (detail page) |
+| `features/tournaments/presentation/widgets/stadium_picker_field.dart` | new | `TournamentStadiumField` (create page; an `AccessoryField` for stadiums) and `TournamentStadiumPanel` (detail page) |
 | `features/tournaments/data/tournament_stadium_repository.dart` | new | `setStadium` / `getStadium` (RPCs answer `{status, error}` like the rest of the app; reads are cached) |
 | `sql/21_tournament_stadium.sql` | new | `tournaments.stadium_data_id`, `tournaments_set_stadium`, `tournaments_get_stadium` |
 | `create_tournament_page.dart` | changed | `TournamentDraft.stadiumDataId`, the Stadium `FormBlock`, and `setStadium` in `_submit` after the tournament exists |
 | `tournament_detail_page.dart` | changed | `TournamentStadiumPanel(tournamentId: t.id)` under the stages panel |
 | `beyblade_dependencies.dart` | changed | registers `TournamentStadiumRepository` (move it to the tournaments DI if you prefer) |
 
-### 3. Card game (Beyblade TCG, a separate hobby)
+### 4. Card game (Beyblade TCG, a separate hobby)
 
 `catalog.zip` can carry `tcgCards.json` / `tcgSets.json`. The download now keeps them as **optional** sheets: they are
 never required, so older releases still apply. After a successful update the sync cubit stores them in their own
@@ -89,12 +106,17 @@ the zip.
 
 ## Data compatibility (checked against your parsers)
 
+Checked by running a release through the app's own `downloadCatalogSheets`, `parseMetadataSheets` and `models.dart`
+(`test/release_contract_test.dart`). `build_release.py` now refuses data the app would reject (see WORKFLOW.md).
+
 * `data/*.json` from `beyblade_data.py` has every field `models.dart` reads (`dataID`, `parentPartId`,
   `variantLabel`, `wbolegality`, `type`, `spinDir`, `baseName`, `movementStyle`, `productID`, `partDataID`,
   `accessoryType` …).
 * `accessoryType` values match `AccessoryType.parse`: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.
 * Rows marked `deleted` in the workbooks are now left out by the packager. The app has no `deleted` filter, so before
   this they would have shown up.
+* Ids are written as text, and `ProductContents.partType` uses the app's keys (`blades`, `accessories`), which
+  `detail_page.dart` looks up. The old data used sheet names (`Parts_X_Blades`), so "in the box" couldn't resolve.
 * Image packs keep the flat `<sheet>-<dataID>[-min].webp` layout that `applyLocalBeyImagePaths` expects.
 
 ## Strings
@@ -113,12 +135,17 @@ The full app wasn't in the zip, so I couldn't build it. Instead:
   stubs: the files import it the same way `part_search_page.dart` does. The check used a stub `clasher_st` package with your real entities, `BeybladeDataRepo`,
   `PartListsCubit`, sync state and `arena_style.dart`. The core widgets that weren't in the zip (`holow_components`,
   `responsive`, `part_image_thumb`) were stubbed with the signatures your code uses.
-* `test/part_lists_test.dart` and `test/tcg_catalog_test.dart` pass (5 tests) in that package. They cover:
+* `test/part_lists_test.dart`, `test/tcg_catalog_test.dart`, `test/accessory_picker_test.dart` and
+  `test/release_contract_test.dart` pass (9 tests) in that package. The release contract test needs
+  `E2E_RELEASE=<_release/tag>` and `E2E_ASSETS=<--app-assets dir>`. The tests cover:
   * part names come from the catalog;
   * the editor rebuilds once the catalog loads;
   * opening the picker, searching "dran" and tapping Dran Sword adds it **and** its recolor;
   * the list preview;
-  * TCG ingest, sorting, filters, variants and local image paths.
+  * TCG ingest, sorting, filters, variants and local image paths;
+  * the tournament stadium field (pick, name, clear);
+  * bey_testing's `SetupTile` with `AccessoryPickerSheet` through its own import;
+  * a built release read by the app's real download, parse and model code.
 
   In the app, if `ResponsiveProvider.config` needs an ancestor widget, wrap the test widgets in it.
 * The changed big files (`create_tournament_page.dart`, `tournament_detail_page.dart`, `beyblade_home.dart`, routes,

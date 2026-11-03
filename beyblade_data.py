@@ -118,6 +118,35 @@ def drop_deleted(rows):
     return keep, len(rows) - len(keep)
 
 
+# Id columns are text in the app (requiredString / String? fields); Excel hands back 65 or 65.0 for them.
+ID_FIELDS = {"dataID", "parentPartId", "productID", "parentProductId", "partDataID", "setID", "parentSetId",
+             "parentCardId", "linkedPartDataID", "productId"}
+
+
+def text_ids(row):
+    for k in ID_FIELDS & row.keys():
+        v = row[k]
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        if v is not None and not isinstance(v, str):
+            row[k] = str(v)
+        elif isinstance(v, str):
+            row[k] = v.strip() or None
+    return row
+
+
+def app_part_type(value):
+    """ProductContents.partType as the app looks it up: the JSON sheet key, e.g. 'Parts_X_Blades' -> 'blades',
+    'Parts_Burst_Layers' -> 'burstLayers', 'Accessories' -> 'accessories'. Already-short keys pass through."""
+    v = str(value or "").strip()
+    part = S.parse_part_sheet(v)
+    if part:
+        return S.part_json_prefix(part[0], part[1])
+    if v in S.SHEETS and S.SHEETS[v].get("json"):
+        return S.SHEETS[v]["json"]
+    return v
+
+
 def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, base_url,
                         images_by_generation, manifest, log, images_by_hobby=None):
     headers = [str(c.value) if c.value else "" for c in ws[1]]
@@ -166,6 +195,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         seen_ids.add(str(data_id))
         row.pop(img_field, None)
         row.pop(min_field, None)
+        text_ids(row)
 
         if (i, "full") in encoded:
             name, digest = encoded[(i, "full")]
@@ -230,6 +260,11 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
                                     out_dir, base_url, images_by_generation, manifest, log, images_by_hobby)
             elif name in NO_IMAGE_SHEETS:
                 rows, _ = drop_deleted(read_sheet_rows(ws))
+                for r in rows:
+                    text_ids(r)
+                if NO_IMAGE_SHEETS[name] == "productContents":  # the app resolves contents by JSON sheet key
+                    for r in rows:
+                        r["partType"] = app_part_type(r.get("partType"))
                 _dump(out_dir / f"{NO_IMAGE_SHEETS[name]}.json", rows)
                 check_required(NO_IMAGE_SHEETS[name], rows, log)
                 manifest["sheets"][NO_IMAGE_SHEETS[name]] = {"rowCount": len(rows)}
@@ -245,6 +280,10 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
     manifest["imagesByHobby"] = {h: {g: sum(len(v) for v in s.values()) for g, s in gs.items()}
                                  for h, gs in images_by_hobby.items()}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    # what the app would reject or fail to read (build_release.py blocks on these)
+    import catalog_check
+    log("\nChecking the catalog against what the app accepts...")
+    catalog_check.check(catalog_check.load_sheets(out_dir)).print(log=log, limit=15)
     log(f"\nDone. Output in {out_dir}")
     return manifest
 
