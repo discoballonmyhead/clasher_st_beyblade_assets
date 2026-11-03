@@ -3,7 +3,42 @@
 This page covers how Beyblade data gets from the Fandom wiki into the clasher_st app, what each tool creates, and
 what you publish where.
 
-## The whole flow
+## In short
+
+```mermaid
+flowchart LR
+    A[1. Wiki] --> B[2. Scraper]
+    B --> C[3. Workbooks]
+    C <--> D[4. Missing data tool]
+    C --> E[5. Packager]
+    E --> F{6. Check}
+    F -->|problems| D
+    F -->|ok| G[7. Release files]
+    G --> H[8. Upload to GitHub<br/>+ update Supabase]
+    H --> I[9. App updates itself]
+    G -.->|only when you<br/>build a new app| J[App assets folder]
+```
+
+1. **Wiki**: the Beyblade Fandom wiki is where the data comes from.
+2. **Scraper** (`fandom_scraper.py`): reads the wiki slowly and safely, and writes what it finds into the workbooks.
+3. **Workbooks** (3 Excel files: parts, products, card game): the master copy. You can open and edit them.
+4. **Missing data tool** (`missing_data_tool.py` or the Flutter `missing_data_app`): shows what's empty and helps you
+   fill it in. Save when you're done.
+5. **Packager** (`beyblade_data.py`): turns the workbooks into the `data/` folder (JSON files plus WebP images).
+   Commit and push `data/` to GitHub so the images are online.
+6. **Check** (runs inside the release builder): makes sure the app can read everything. If something is missing, it
+   lists the rows. Fix them (back to step 4), or skip them with `--drop-invalid`.
+7. **Release files** (`build_release.py --tag <date>`): builds `catalog.zip` (all the data in one file) and the
+   image packs in `_release/<tag>/`.
+8. **Upload**: create a GitHub release with that tag and upload the files. Then put the printed
+   `catalog_manifest.json` values where your Supabase `beyblade_catalog_manifest` function reads them.
+9. **App**: on its next launch the app sees the new version, downloads `catalog.zip`, checks it and switches over.
+   Nothing to do on the phone.
+
+**Assets folder:** only when you build a new version of the app. Add `--app-assets <folder>` in step 7 and it writes
+the copy of the data that ships inside the app (used on first launch and offline). Images are never put in assets.
+
+## The whole flow (detailed)
 
 ```mermaid
 flowchart TD

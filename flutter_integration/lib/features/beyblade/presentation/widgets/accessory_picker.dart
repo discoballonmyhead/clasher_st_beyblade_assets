@@ -21,8 +21,11 @@ class AccessoryChoice {
   final String? dataId;
 }
 
-/// Catalog accessories, loaded once per app run. The picker refreshes it on
-/// every open, so a catalog update shows up without a restart.
+/// A memory of the catalog's accessories (stadiums, launchers, grips ...), so
+/// screens don't re-read the local database every time they need a name or
+/// a list. It reads once, then answers from memory. The picker re-reads on
+/// every open, and the sync cubit calls [clear] after a catalog update, so
+/// the names never go stale.
 class AccessoryCache {
   AccessoryCache._();
 
