@@ -50,7 +50,15 @@ On first start, open **Settings** (gear icon) and check:
 * **Fill from wiki** runs the scraper's polite client on the ticked rows. Progress shows in the log panel and you
   can stop it.
 * **Recently edited** lists the latest edits across all tabs.
-* **Undo** (Ctrl+Z) undoes edits, auto-fills, images and wiki fills. **Save** (Ctrl+S) writes the workbook and keeps
+* **New row** (rows panel) adds a row with the next free id and asks for its name. In the editor, **Duplicate as
+  variant** creates a recolor of the open row (shared fields copied, parent id set), and **Copy row** copies every
+  field. The new row opens in the editor.
+* **Add column** (top bar) adds a field to this tab or to every tab. Choose whether variants copy it from their parent
+  and whether it's optional. New columns are marked `+` in the field list and in the editor.
+* **Change log** lists everything changed with the tool (this app, the Python GUI or the CLI): when, which tool, tab,
+  row, field, and old → new. Search it, limit it to the open tab, and tap an entry to jump to its row. It's kept in the
+  workbook's `_edit_log` tab, and the packager exports it.
+* **Undo** (Ctrl+Z) undoes edits, auto-fills, images, new rows and new columns (and their change-log entries). **Save** (Ctrl+S) writes the workbook and keeps
   a `.bak` copy. Closing with unsaved changes asks first.
 
 ## Structure (clean architecture + service locator)

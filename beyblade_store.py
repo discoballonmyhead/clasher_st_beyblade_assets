@@ -26,7 +26,8 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 import beyblade_schema as S
 
-HEAD_FILL = {"id": "7F6000", "variant": "806000", "data": "1F3864", "image": "375623", "meta": "595959"}
+HEAD_FILL = {"id": "7F6000", "variant": "806000", "data": "1F3864", "image": "375623", "meta": "595959",
+             "custom": "7030A0"}  # custom = added with missing_data_tool
 IMAGE_DISPLAY = {"full": 110, "min": 44}
 LOG_SHEET = "_scrape_log"
 LOG_COLUMNS = ["target", "sheet", "id", "wikiTitle", "url", "revid", "imageFile", "scrapedAt"]
@@ -56,6 +57,8 @@ README = {
         "Green headers = image columns, gold = ids/variants, blue = data, grey = bookkeeping.",
         "Dropdown values live in the Lists sheet; add new values there.",
         "_scrape_log (if present) records which wiki page each scraped row came from - the scraper uses it to avoid duplicates.",
+        "Purple headers = columns added with the missing data tool (listed in _columns). _edit_log lists every change",
+        "made with that tool: when, which tab/row/field, old and new value.",
     ],
     "products": [
         "BEYBLADE PRODUCTS & RELEASES WORKBOOK",
@@ -326,6 +329,93 @@ class Book:
         self.touch(ws, row)
         ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 15, img.height * 0.75 + 4)
         return True
+
+    # ---- custom columns + change log (missing_data_tool) -------------------------------
+    def add_column(self, ws, name):
+        """Append a column after the last one (images stay anchored where they are). -> column number"""
+        hdr = self.headers(ws)
+        if name in hdr:
+            raise ValueError(f"{ws.title} already has a column '{name}'")
+        col = max(hdr.values()) + 1
+        cell = ws.cell(1, col, name)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor=HEAD_FILL["custom"])
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(col)].width = 14
+        self._forget(ws)
+        return col
+
+    def remove_column(self, ws, col):
+        """Undo of add_column: clear the header and every value in that column."""
+        for r in range(1, ws.max_row + 1):
+            ws.cell(r, col).value = None
+        ws.cell(1, col).fill = PatternFill(fill_type=None)
+        self._forget(ws)
+
+    def clear_row(self, ws, row):
+        """Undo of an appended row: empty every cell and drop its images."""
+        for c in range(1, ws.max_column + 1):
+            ws.cell(row, c).value = None
+        idx = self.image_index(ws)
+        gone = [k for k in idx if k[0] == row]
+        for k in gone:
+            img = idx.pop(k)
+            ws._images = [i for i in ws._images if i is not img]
+        self._forget(ws)
+
+    def _forget(self, ws):
+        self.dirty = True
+        self.__dict__.get("_hdr_cache", {}).pop(ws.title, None)
+        self._rows_cache.pop(ws.title, None)
+        if ws.title == S.CUSTOM_COLUMNS_SHEET:
+            self.__dict__.pop("_custom_cols", None)
+
+    def custom_columns(self):
+        """{sheet: {column: {"optional", "inherit", "note", "addedAt", "source"}}} from the _columns tab."""
+        cache = self.__dict__.get("_custom_cols")
+        if cache is None:
+            cache = {}
+            if S.CUSTOM_COLUMNS_SHEET in self.wb.sheetnames:
+                for _, x in self.rows(self.wb[S.CUSTOM_COLUMNS_SHEET]):
+                    if x.get("sheet") and x.get("column"):
+                        cache.setdefault(x["sheet"], {})[x["column"]] = {
+                            "optional": str(x.get("optional") or "").strip().lower() in ("1", "true", "yes"),
+                            "inherit": str(x.get("inherit") or "").strip().lower() in ("1", "true", "yes"),
+                            "note": x.get("note") or "", "addedAt": str(x.get("addedAt") or ""),
+                            "source": x.get("source") or ""}
+            self._custom_cols = cache
+        return cache
+
+    def append_rows(self, sheet_name, columns, entries):
+        """Append dicts to a bookkeeping tab (created on first use). -> row numbers written"""
+        ws = self.sheet(sheet_name, columns)
+        nxt = self.__dict__.setdefault("_next_row", {})
+        if sheet_name not in nxt:
+            nxt[sheet_name] = len(self.rows(ws)) + 2
+        hdr = self.headers(ws)
+        start = nxt[sheet_name]
+        for i, e in enumerate(entries):
+            for k, v in e.items():
+                if k in hdr:
+                    ws.cell(start + i, hdr[k]).value = v
+        nxt[sheet_name] = start + len(entries)
+        self._rows_cache.pop(ws.title, None)
+        if sheet_name == S.CUSTOM_COLUMNS_SHEET:
+            self.__dict__.pop("_custom_cols", None)
+        self.dirty = True
+        return list(range(start, start + len(entries)))
+
+    def remove_appended(self, sheet_name, rows):
+        """Undo of append_rows (rows are the last ones written)."""
+        if sheet_name not in self.wb.sheetnames or not rows:
+            return
+        ws = self.wb[sheet_name]
+        for r in rows:
+            for c in range(1, ws.max_column + 1):
+                ws.cell(r, c).value = None
+        nxt = self.__dict__.setdefault("_next_row", {})
+        nxt[sheet_name] = min(min(rows), nxt.get(sheet_name, min(rows)))
+        self._forget(ws)
 
     # ---- scrape log -----------------------------------------------------------------
     def log_sheet(self):

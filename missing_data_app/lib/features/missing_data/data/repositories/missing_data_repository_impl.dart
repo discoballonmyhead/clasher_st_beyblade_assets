@@ -5,6 +5,7 @@ import '../../../../core/error/failure.dart';
 import '../../domain/entities/fill_proposal.dart';
 import '../../domain/entities/row.dart';
 import '../../domain/entities/sheet_analysis.dart';
+import '../../domain/entities/structure.dart';
 import '../../domain/entities/workbook.dart';
 import '../../domain/repositories/missing_data_repository.dart';
 import '../datasources/engine_data_source.dart';
@@ -84,6 +85,33 @@ class MissingDataRepositoryImpl implements MissingDataRepository {
 
   @override
   Future<Result<void>> stopWiki() => _guard(() => _ds.stopWiki());
+
+  @override
+  Future<Result<void>> addColumn({
+    required List<String> sheets,
+    required String name,
+    bool optional = false,
+    bool inherit = false,
+    String? defaultValue,
+    String note = '',
+  }) =>
+      _guard(() => _ds.addColumn(sheets, name, optional, inherit,
+          (defaultValue?.trim().isEmpty ?? true) ? null : defaultValue!.trim(), note));
+
+  @override
+  Future<Result<String>> addRow(String sheet,
+          {Map<String, String>? values, String? copyFrom, NewRowMode mode = NewRowMode.empty}) =>
+      _guard(() async => '${(await _ds.addRow(sheet, values, copyFrom, mode.name))['id']}');
+
+  @override
+  Future<Result<List<ColumnInfo>>> columns(String sheet) => _guard(() async => [
+        for (final c in ((await _ds.columns(sheet))['columns'] as List? ?? const []))
+          columnFromJson(Map<String, dynamic>.from(c as Map)),
+      ]);
+
+  @override
+  Future<Result<EditLogPage>> editLog({int limit = 500, String? sheet, String query = ''}) =>
+      _guard(() async => editLogFromJson(await _ds.editLog(limit, sheet, query)));
 
   @override
   Stream<String> get logLines => _ds.log;

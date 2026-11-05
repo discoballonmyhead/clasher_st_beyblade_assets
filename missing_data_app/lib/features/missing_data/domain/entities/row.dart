@@ -54,11 +54,15 @@ class RowDetail extends Equatable {
     required this.values,
     required this.missing,
     required this.image,
+    this.customFields = const [],
   });
 
   final int row;
   final String id;
   final String? parentId;
+
+  /// Columns added with the tool (shown with a marker in the editor).
+  final List<String> customFields;
   final DateTime? updatedAt;
 
   /// Editable columns in sheet order.
@@ -75,5 +79,5 @@ class RowDetail extends Equatable {
   }
 
   @override
-  List<Object?> get props => [row, id, parentId, updatedAt, fields, values, missing, image?.length];
+  List<Object?> get props => [row, id, parentId, updatedAt, fields, values, missing, image?.length, customFields];
 }

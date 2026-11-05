@@ -26,7 +26,10 @@ class RowEditorCubit extends Cubit<RowEditorState> {
     _sub = changes.stream.listen((c) {
       if (c == DataChange.workbookOpened) {
         emit(const RowEditorState());
-      } else if ((c == DataChange.undone || c == DataChange.wikiFinished || c == DataChange.filled) &&
+      } else if ((c == DataChange.undone ||
+              c == DataChange.wikiFinished ||
+              c == DataChange.filled ||
+              c == DataChange.structureChanged) &&
           state.detail != null &&
           !state.hasDrafts) {
         load(state.sheet!, state.detail!.id);

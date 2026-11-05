@@ -25,6 +25,14 @@ import re
 from collections import OrderedDict
 
 HOBBY_NAME = "Beyblade"
+
+# Bookkeeping tabs written by missing_data_tool.py (never packaged as catalog data):
+#   _edit_log  one row per change made with the tool (cell, auto-fill, image, new row/column, wiki fill)
+#   _columns   columns people added to a tab with the tool, and how the tool treats them
+EDIT_LOG_SHEET = "_edit_log"
+EDIT_LOG_COLUMNS = ["at", "source", "action", "sheet", "rowId", "field", "oldValue", "newValue", "note"]
+CUSTOM_COLUMNS_SHEET = "_columns"
+CUSTOM_COLUMNS_COLUMNS = ["sheet", "column", "optional", "inherit", "note", "addedAt", "source"]
 # The card game is its own hobby in the app (separate catalog, separate image/data packs),
 # so its rows carry a different hobbyName. Generation still says which series ("Original" = V-Force TCG, "X").
 TCG_HOBBY_NAME = "Beyblade TCG"

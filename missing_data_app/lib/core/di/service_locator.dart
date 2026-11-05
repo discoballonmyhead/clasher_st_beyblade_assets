@@ -7,10 +7,12 @@ import '../../features/missing_data/domain/repositories/missing_data_repository.
 import '../../features/missing_data/domain/usecases/fill_usecases.dart';
 import '../../features/missing_data/domain/usecases/row_usecases.dart';
 import '../../features/missing_data/domain/usecases/sheet_usecases.dart';
+import '../../features/missing_data/domain/usecases/structure_usecases.dart';
 import '../../features/missing_data/domain/usecases/workbook_usecases.dart';
 import '../../features/missing_data/presentation/cubits/autofill/autofill_cubit.dart';
 import '../../features/missing_data/presentation/cubits/row_editor/row_editor_cubit.dart';
 import '../../features/missing_data/presentation/cubits/sheet/sheet_cubit.dart';
+import '../../features/missing_data/presentation/cubits/structure/structure_cubit.dart';
 import '../../features/missing_data/presentation/cubits/wiki/wiki_cubit.dart';
 import '../../features/missing_data/presentation/cubits/workbook/workbook_cubit.dart';
 import '../../features/settings/presentation/cubit/settings_cubit.dart';
@@ -52,7 +54,11 @@ Future<void> initDependencies({
     ..registerLazySingleton(() => GetParentImage(sl()))
     ..registerLazySingleton(() => GetFillProposals(sl()))
     ..registerLazySingleton(() => ApplyFillProposals(sl()))
-    ..registerLazySingleton(() => FillFromWiki(sl()));
+    ..registerLazySingleton(() => FillFromWiki(sl()))
+    ..registerLazySingleton(() => AddColumn(sl()))
+    ..registerLazySingleton(() => AddRow(sl()))
+    ..registerLazySingleton(() => GetColumns(sl()))
+    ..registerLazySingleton(() => GetEditLog(sl()));
 
   // ── presentation ──
   // App-wide (one workbook open at a time): singletons. Dialog-scoped: factories.
@@ -64,5 +70,6 @@ Future<void> initDependencies({
         getRow: sl(), updateRow: sl(), setImage: sl(), parentImage: sl(), picker: sl(), changes: sl()))
     ..registerLazySingleton(() => WikiCubit(fill: sl(), changes: sl()))
     ..registerFactory(() => AutofillCubit(proposals: sl(), apply: sl(), changes: sl()))
+    ..registerFactory(() => StructureCubit(addColumn: sl(), addRow: sl(), changes: sl()))
     ..registerFactory(() => SettingsCubit(sl(), sl()));
 }

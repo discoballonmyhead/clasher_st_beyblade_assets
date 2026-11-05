@@ -2,9 +2,11 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:missing_data_app/core/bridge/engine_bridge.dart';
+import 'package:missing_data_app/core/error/failure.dart';
 import 'package:missing_data_app/features/missing_data/data/datasources/engine_data_source.dart';
 import 'package:missing_data_app/features/missing_data/data/repositories/missing_data_repository_impl.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/row.dart';
+import 'package:missing_data_app/features/missing_data/domain/entities/structure.dart';
 import 'package:missing_data_app/core/settings/app_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -72,5 +74,46 @@ void main() {
 
     final bad = await repo.row('Parts_X_Blades', '99999');
     expect(bad.fold((f) => f.message, (_) => ''), contains('No row'));
+  }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
+
+  test('columns, rows and the change log against the real engine', () async {
+    await repo.open(workbook);
+    const tab = 'Parts_X_Blades';
+
+    expect((await repo.addColumn(sheets: [tab, 'Parts_X_Bits'], name: 'tipShape', inherit: true)) is Ok, isTrue);
+    final dup = await repo.addColumn(sheets: [tab], name: 'tipShape');
+    expect(dup.fold((f) => f.message, (_) => ''), contains('already has a column'));
+    final cols = (await repo.columns(tab)).valueOrNull!;
+    expect(cols.last.name, 'tipShape');
+    expect(cols.last.custom && cols.last.inherit, isTrue);
+    final gap = (await repo.analyze(tab)).valueOrNull!.fields.firstWhere((f) => f.field == 'tipShape');
+    expect(gap.custom, isTrue);
+
+    final base = (await repo.rows(tab)).valueOrNull!.rows.first.id;
+    await repo.updateRow(tab, base, {'tipShape': 'flat'});
+    final id = (await repo.addRow(tab, copyFrom: base, mode: NewRowMode.variant, values: {'variantLabel': 'Gold'}))
+        .valueOrNull!;
+    final v = (await repo.row(tab, id)).valueOrNull!;
+    expect(v.parentId, base);
+    expect(v.values['tipShape'], 'flat', reason: 'inherited custom column copied');
+    expect(v.customFields, contains('tipShape'));
+
+    final log = (await repo.editLog()).valueOrNull!;
+    expect(log.entries.first.action, 'add_row');
+    expect(log.entries.first.source, 'missing_data_app');
+    expect(log.entries.map((e) => e.action), containsAll(['add_column', 'set', 'add_row']));
+    expect((await repo.editLog(query: 'add_column')).valueOrNull!.total, 2, reason: 'one per tab');
+
+    // undo the row: it and its log line are gone
+    await repo.undo();
+    expect((await repo.row(tab, id)).fold((f) => f.message, (_) => ''), contains('No row'));
+    expect((await repo.editLog()).valueOrNull!.entries.first.action, 'set');
+
+    // saved and reopened: the column, its registry and the log survive
+    await repo.save();
+    await repo.open(workbook);
+    expect((await repo.columns(tab)).valueOrNull!.any((c) => c.name == 'tipShape' && c.custom), isTrue);
+    expect((await repo.editLog()).valueOrNull!.total, 3);
+    expect((await repo.summary()).valueOrNull!.customColumns, 2);
   }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
 }

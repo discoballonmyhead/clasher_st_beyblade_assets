@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/entities/row.dart';
+import 'new_row_dialog.dart';
 import '../cubits/sheet/sheet_cubit.dart';
 import '../cubits/sheet/sheet_state.dart';
 import 'formatting.dart';
@@ -55,6 +56,16 @@ class RowsPanel extends StatelessWidget {
               Chip(label: Text('${st.selected.length} ticked'), onDeleted: cubit.clearSelection),
             ],
             const Spacer(),
+            TextButton.icon(
+              onPressed: st.sheet == null
+                  ? null
+                  : () async {
+                      final id = await addRowWithPrompt(context, st.sheet!);
+                      if (id != null) cubit.focus(id);
+                    },
+              icon: const Icon(Icons.playlist_add, size: 18),
+              label: const Text('New row'),
+            ),
             TextButton(onPressed: cubit.selectAllListed, child: const Text('Tick all listed')),
             if (st.loading) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
           ]),
