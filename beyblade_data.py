@@ -229,13 +229,91 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
     log(f"  {ws.title} -> {prefix}.json: {len(rows)} rows ({with_image} with image, {without_image} without{extra})")
 
 
+# ── what changed: vs the previous package, and what the missing data tool did ──
+
+ROW_KEY = {"productContents": ("productID", "partType", "partDataID"), "codeSeries": ("seriesPrefix", "manufacturer")}
+UNCOMPARED = {"updated_at"}  # a re-stamp alone isn't a change
+
+
+def _row_key(sheet, row):
+    keys = ROW_KEY.get(sheet)
+    if keys:
+        return "|".join(str(row.get(k)) for k in keys)
+    for k in ("dataID", "productID", "setID"):
+        if k in row:
+            return str(row.get(k))
+    return None
+
+
+def load_previous(out_dir):
+    """The package currently in out_dir (before it's overwritten): ({sheet: rows}, packagedAt or None)."""
+    prev, when = {}, None
+    for p in Path(out_dir).glob("*.json"):
+        if p.name.startswith("_"):
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if p.name == "manifest.json":
+            when = data.get("packagedAt") if isinstance(data, dict) else None
+        elif isinstance(data, list):
+            prev[p.stem] = data
+    return prev, when
+
+
+def package_diff(prev, out_dir):
+    """Per sheet: rows added / removed / changed and columns added / removed since the previous package."""
+    out = {}
+    for p in sorted(Path(out_dir).glob("*.json")):
+        if p.name.startswith("_") or p.name == "manifest.json":
+            continue
+        new = json.loads(p.read_text(encoding="utf-8"))
+        old = prev.get(p.stem)
+        if not isinstance(new, list):
+            continue
+        new_cols = sorted({k for r in new for k in r})
+        if old is None:
+            out[p.stem] = {"newSheet": True, "rows": len(new), "columns": new_cols}
+            continue
+        old_cols = {k for r in old for k in r}
+        old_by = {_row_key(p.stem, r): r for r in old}
+        new_by = {_row_key(p.stem, r): r for r in new}
+        added = [k for k in new_by if k not in old_by]
+        removed = [k for k in old_by if k not in new_by]
+        changed = []
+        for k, r in new_by.items():
+            o = old_by.get(k)
+            if o is not None and any(r.get(f) != o.get(f) for f in (set(r) | set(o)) - UNCOMPARED):
+                changed.append(k)
+        cols_added = sorted(set(new_cols) - old_cols)
+        entry = {k: v for k, v in {
+            "rowsAdded": added, "rowsRemoved": removed, "rowsChanged": changed,
+            "columnsAdded": [{"column": c, "filled": sum(1 for r in new if r.get(c) not in (None, ""))}
+                             for c in cols_added],
+            "columnsRemoved": sorted(old_cols - set(new_cols))}.items() if v}
+        if entry:
+            out[p.stem] = entry
+    return out
+
+
+def read_bookkeeping(wb, workbook_name):
+    """_edit_log and _columns of one workbook -> (log entries, custom columns), tagged with the workbook."""
+    def rows(name):
+        return [{**r, "workbook": workbook_name} for r in read_sheet_rows(wb[name])] \
+            if name in wb.sheetnames else []
+    return rows(S.EDIT_LOG_SHEET), rows(S.CUSTOM_COLUMNS_SHEET)
+
+
 def package(workbooks, out_dir: Path, base_url: str, log=print):
     """workbooks: list of xlsx paths (parts / products / tcg, or one legacy master)."""
     if not base_url.endswith("/"):
         base_url += "/"
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    prev, prev_when = load_previous(out_dir)
     manifest = {"packagedAt": datetime.now(timezone.utc).isoformat(), "workbooks": [], "sheets": {}}
+    edit_log, custom_cols = [], []
     images_by_generation = {}
     images_by_hobby = {}  # hobby -> generation -> sheet prefix -> [dataID]; used by build_release.py
     done = {}
@@ -244,6 +322,9 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
         log(f"Loading workbook (this may take a moment): {path.name}...")
         wb = openpyxl.load_workbook(path, data_only=True)  # data_only: formulas -> values
         manifest["workbooks"].append(path.name)
+        entries, cols = read_bookkeeping(wb, path.name)
+        edit_log += entries
+        custom_cols += cols
         for name in wb.sheetnames:
             if name in done:
                 log(f"  WARNING: sheet {name} also in {done[name]} - skipped the copy in {path.name}")
@@ -280,12 +361,72 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
     manifest["imagesByHobby"] = {h: {g: sum(len(v) for v in s.values()) for g, s in gs.items()}
                                  for h, gs in images_by_hobby.items()}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    report_changes(out_dir, prev, prev_when, edit_log, custom_cols, manifest, log)
+
     # what the app would reject or fail to read (build_release.py blocks on these)
     import catalog_check
     log("\nChecking the catalog against what the app accepts...")
     catalog_check.check(catalog_check.load_sheets(out_dir)).print(log=log, limit=15)
     log(f"\nDone. Output in {out_dir}")
     return manifest
+
+
+def report_changes(out_dir, prev, prev_when, edit_log, custom_cols, manifest, log):
+    """Writes _package_diff.json, _edit_log.json, _custom_columns.json and prints what's new."""
+    out_dir = Path(out_dir)
+    diff = package_diff(prev, out_dir) if prev else {}
+    (out_dir / "_package_diff.json").write_text(json.dumps(
+        {"previousPackagedAt": prev_when, "packagedAt": manifest["packagedAt"], "sheets": diff},
+        indent=1, default=_json_default), encoding="utf-8")
+    (out_dir / "_edit_log.json").write_text(json.dumps(edit_log, indent=1, default=_json_default), encoding="utf-8")
+    (out_dir / "_custom_columns.json").write_text(json.dumps(custom_cols, indent=1, default=_json_default),
+                                                  encoding="utf-8")
+    def when(v):
+        try:
+            return datetime.fromisoformat(str(v))
+        except ValueError:
+            return None
+    cutoff = when(prev_when) if prev_when else None
+    since = [e for e in edit_log if cutoff is None or (when(e.get("at")) or cutoff) > cutoff]
+    by_action = {}
+    for e in since:
+        by_action[e.get("action")] = by_action.get(e.get("action"), 0) + 1
+    manifest["changes"] = {
+        "previousPackagedAt": prev_when,
+        "sheets": {k: {kk: (len(v) if isinstance(v, list) else v) for kk, v in d.items()} for k, d in diff.items()},
+        "missingDataTool": {"entriesSincePrevious": len(since), "byAction": by_action, "totalEntries": len(edit_log)},
+        "customColumns": [f"{c.get('sheet')}.{c.get('column')}" for c in custom_cols]}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    log("\nWhat changed " + (f"since the last package ({prev_when[:19].replace('T', ' ')} UTC):" if prev_when
+                             else "(no earlier package in this folder to compare with):"))
+    if not prev:
+        pass
+    elif not diff:
+        log("  nothing - same rows and columns as the last package")
+    for sheet, d in diff.items():
+        if d.get("newSheet"):
+            log(f"  {sheet}: new file ({d['rows']} rows)")
+            continue
+        bits = []
+        if d.get("rowsAdded"):
+            ids = d["rowsAdded"]
+            bits.append(f"+{len(ids)} rows ({', '.join(ids[:8])}{' ...' if len(ids) > 8 else ''})")
+        if d.get("rowsRemoved"):
+            bits.append(f"-{len(d['rowsRemoved'])} rows")
+        if d.get("rowsChanged"):
+            bits.append(f"{len(d['rowsChanged'])} changed")
+        for c in d.get("columnsAdded", []):
+            bits.append(f"new column {c['column']} ({c['filled']} filled)")
+        if d.get("columnsRemoved"):
+            bits.append(f"columns gone: {', '.join(d['columnsRemoved'])}")
+        log(f"  {sheet}: " + "; ".join(bits))
+    if since:
+        log(f"Made with the missing data tool{' since then' if prev_when else ''}: {len(since)} change(s) - "
+            + ", ".join(f"{n} {a}" for a, n in sorted(by_action.items(), key=lambda x: -x[1])))
+        log("  details: _edit_log.json (who/when/old -> new), _package_diff.json (rows/columns per file)")
+    if custom_cols:
+        log("Columns added with the tool: " + ", ".join(f"{c.get('sheet')}.{c.get('column')}" for c in custom_cols))
 
 
 def validate_piece(label, raw):

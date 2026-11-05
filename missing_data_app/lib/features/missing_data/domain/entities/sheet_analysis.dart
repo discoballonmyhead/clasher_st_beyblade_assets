@@ -2,7 +2,8 @@ import 'package:equatable/equatable.dart';
 
 /// How many rows of a tab miss one field.
 class FieldGap extends Equatable {
-  const FieldGap({required this.field, required this.missing, required this.ids, required this.never});
+  const FieldGap(
+      {required this.field, required this.missing, required this.ids, required this.never, this.custom = false});
 
   final String field;
   final int missing;
@@ -11,8 +12,11 @@ class FieldGap extends Equatable {
   /// No row in the tab has it - probably not used by this game/series.
   final bool never;
 
+  /// A column added with the tool.
+  final bool custom;
+
   @override
-  List<Object?> get props => [field, missing, ids, never];
+  List<Object?> get props => [field, missing, ids, never, custom];
 }
 
 class SheetAnalysis extends Equatable {

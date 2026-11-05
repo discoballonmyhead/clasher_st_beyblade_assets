@@ -5,6 +5,7 @@ import 'package:missing_data_app/core/error/failure.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/fill_proposal.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/row.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/sheet_analysis.dart';
+import 'package:missing_data_app/features/missing_data/domain/entities/structure.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/workbook.dart';
 import 'package:missing_data_app/features/missing_data/domain/repositories/missing_data_repository.dart';
 
@@ -18,17 +19,39 @@ class FakeRepository implements MissingDataRepository {
   int undoSteps = 0;
   final _log = StreamController<String>.broadcast();
 
+  /// Columns added through [addColumn] (counted as missing like the others).
+  final customColumns = <String>[];
+  final editLogEntries = <EditLogEntry>[];
+
+  List<String> get _checked => ['type', 'mass', ...customColumns];
+
   List<String> _missing(String id) => [
-        for (final f in ['type', 'mass'])
+        for (final f in _checked)
           if (rowsData[id]![f] == null) f,
       ];
+
+  void _logEntry(String action, {String? rowId, String? field, String? oldValue, String? newValue, String? note}) =>
+      editLogEntries.insert(
+          0,
+          EditLogEntry(
+              at: DateTime.now().toUtc(),
+              source: 'missing_data_app',
+              action: action,
+              sheet: 'Parts_X_Blades',
+              rowId: rowId,
+              field: field,
+              oldValue: oldValue,
+              newValue: newValue,
+              note: note));
 
   WorkbookSummary get _summary => WorkbookSummary(
         path: '/tmp/beyblade_parts.xlsx',
         kind: 'parts',
-        sheets: [SheetInfo(name: 'Parts_X_Blades', rows: 2, rowsWithMissing: rowsData.keys.where((k) => _missing(k).isNotEmpty).length, hasImages: true)],
+        sheets: [SheetInfo(name: 'Parts_X_Blades', rows: rowsData.length, rowsWithMissing: rowsData.keys.where((k) => _missing(k).isNotEmpty).length, hasImages: true)],
         dirty: dirty,
         undoSteps: undoSteps,
+        logEntries: editLogEntries.length,
+        customColumns: customColumns.length,
       );
 
   @override
@@ -39,10 +62,15 @@ class FakeRepository implements MissingDataRepository {
   @override
   Future<Result<SheetAnalysis>> analyze(String sheet, {bool includeOptional = false}) async => Ok(SheetAnalysis(
         sheet: sheet,
-        total: 2,
+        total: rowsData.length,
         fields: [
-          for (final f in ['type', 'mass'])
-            FieldGap(field: f, missing: rowsData.keys.where((k) => _missing(k).contains(f)).length, ids: const [], never: false),
+          for (final f in _checked)
+            FieldGap(
+                field: f,
+                missing: rowsData.keys.where((k) => _missing(k).contains(f)).length,
+                ids: const [],
+                never: false,
+                custom: customColumns.contains(f)),
         ],
       ));
 
@@ -71,17 +99,21 @@ class FakeRepository implements MissingDataRepository {
   Future<Result<RowDetail>> row(String sheet, String id) async => Ok(RowDetail(
         row: int.parse(id),
         id: id,
-        parentId: null,
         updatedAt: null,
-        fields: const ['name', 'code', 'type', 'mass'],
+        fields: ['name', 'code', 'parentPartId', 'type', 'mass', ...customColumns],
         values: rowsData[id]!,
         missing: _missing(id),
         image: null,
+        parentId: rowsData[id]!['parentPartId'] == null ? null : '${rowsData[id]!['parentPartId']}',
+        customFields: customColumns,
       ));
 
   @override
   Future<Result<int>> updateRow(String sheet, String id, Map<String, String> values) async {
-    values.forEach((k, v) => rowsData[id]![k] = v);
+    values.forEach((k, v) {
+      _logEntry('set', rowId: id, field: k, oldValue: rowsData[id]![k]?.toString(), newValue: v);
+      rowsData[id]![k] = v;
+    });
     dirty = true;
     undoSteps++;
     return Ok(values.length);
@@ -121,6 +153,64 @@ class FakeRepository implements MissingDataRepository {
   Future<Result<int>> fillFromWiki(String sheet, List<String> ids) async => const Ok(0);
   @override
   Future<Result<void>> stopWiki() async => const Ok(null);
+  @override
+  Future<Result<void>> addColumn({
+    required List<String> sheets,
+    required String name,
+    bool optional = false,
+    bool inherit = false,
+    String? defaultValue,
+    String note = '',
+  }) async {
+    if (customColumns.contains(name) || _checked.contains(name)) {
+      return Err(Failure('Parts_X_Blades already has a column \'$name\''));
+    }
+    customColumns.add(name);
+    for (final r in rowsData.values) {
+      r[name] = (defaultValue == null || defaultValue.isEmpty) ? null : defaultValue;
+    }
+    _logEntry('add_column', field: name, note: note.isEmpty ? null : note);
+    dirty = true;
+    undoSteps++;
+    return const Ok(null);
+  }
+
+  @override
+  Future<Result<String>> addRow(String sheet,
+      {Map<String, String>? values, String? copyFrom, NewRowMode mode = NewRowMode.empty}) async {
+    final id = '${rowsData.keys.map(int.parse).reduce((a, b) => a > b ? a : b) + 1}';
+    final src = copyFrom == null ? null : rowsData[copyFrom];
+    rowsData[id] = {
+      'name': null, 'code': null, 'parentPartId': null, 'type': null, 'mass': null,
+      for (final c in customColumns) c: null,
+      if (src != null && mode == NewRowMode.copy) ...src,
+      if (src != null && mode == NewRowMode.variant) ...{
+        'name': src['name'], 'type': src['type'], 'mass': src['mass'], 'parentPartId': copyFrom,
+      },
+      ...?values,
+    };
+    _logEntry('add_row', rowId: id, note: src == null ? 'new' : '${mode.name} of #$copyFrom');
+    dirty = true;
+    undoSteps++;
+    return Ok(id);
+  }
+
+  @override
+  Future<Result<List<ColumnInfo>>> columns(String sheet) async => Ok([
+        for (final c in ['dataID', 'name', 'code', 'type', 'mass', ...customColumns])
+          ColumnInfo(name: c, custom: customColumns.contains(c), isId: c == 'dataID'),
+      ]);
+
+  @override
+  Future<Result<EditLogPage>> editLog({int limit = 500, String? sheet, String query = ''}) async {
+    final q = query.toLowerCase();
+    final list = [
+      for (final e in editLogEntries)
+        if (q.isEmpty || '${e.action} ${e.rowId} ${e.field} ${e.newValue}'.toLowerCase().contains(q)) e,
+    ];
+    return Ok(EditLogPage(total: list.length, entries: list.take(limit).toList()));
+  }
+
   @override
   Stream<String> get logLines => _log.stream;
 }

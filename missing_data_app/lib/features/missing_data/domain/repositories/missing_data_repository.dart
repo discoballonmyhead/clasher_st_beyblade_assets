@@ -4,6 +4,7 @@ import '../../../../core/error/failure.dart';
 import '../entities/fill_proposal.dart';
 import '../entities/row.dart';
 import '../entities/sheet_analysis.dart';
+import '../entities/structure.dart';
 import '../entities/workbook.dart';
 
 /// Everything the missing-data screens need. Implemented today by the Python engine
@@ -26,5 +27,23 @@ abstract class MissingDataRepository {
   Future<Result<List<RecentEdit>>> recentEdits({int limit = 50});
   Future<Result<int>> fillFromWiki(String sheet, List<String> ids);
   Future<Result<void>> stopWiki();
+
+  // ── structure + change log ──
+  /// Appends a column to each tab (after the last column) and registers it.
+  Future<Result<void>> addColumn({
+    required List<String> sheets,
+    required String name,
+    bool optional = false,
+    bool inherit = false,
+    String? defaultValue,
+    String note = '',
+  });
+
+  /// A new row with the next id -> its id.
+  Future<Result<String>> addRow(String sheet, {Map<String, String>? values, String? copyFrom, NewRowMode mode});
+  Future<Result<List<ColumnInfo>>> columns(String sheet);
+
+  /// Changes made with the tool, newest first.
+  Future<Result<EditLogPage>> editLog({int limit = 500, String? sheet, String query = ''});
   Stream<String> get logLines;
 }

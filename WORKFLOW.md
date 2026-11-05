@@ -23,9 +23,11 @@ flowchart LR
 2. **Scraper** (`fandom_scraper.py`): reads the wiki slowly and safely, and writes what it finds into the workbooks.
 3. **Workbooks** (3 Excel files: parts, products, card game): the master copy. You can open and edit them.
 4. **Missing data tool** (`missing_data_tool.py` or the Flutter `missing_data_app`): shows what's empty and helps you
-   fill it in. Save when you're done.
-5. **Packager** (`beyblade_data.py`): turns the workbooks into the `data/` folder (JSON files plus WebP images).
-   Commit and push `data/` to GitHub so the images are online.
+   fill it in. It can also add what the scraper didn't create: **new rows** (blank, a variant of an existing part, or a
+   copy) and **new columns**. Every change goes into the workbook's change log. Save when you're done.
+5. **Packager** (`beyblade_data.py`): turns the workbooks into the `data/` folder (JSON files plus WebP images). New
+   rows and columns go into the JSON automatically. It also prints what's new since the last package and what was
+   done with the missing data tool. Commit and push `data/` to GitHub so the images are online.
 6. **Check** (runs inside the release builder): makes sure the app can read everything. If something is missing, it
    lists the rows. Fix them (back to step 4), or skip them with `--drop-invalid`.
 7. **Release files** (`build_release.py --tag <date>`): builds `catalog.zip` (all the data in one file) and the
@@ -86,8 +88,8 @@ flowchart TD
 | step | command | creates |
 |---|---|---|
 | scrape | `python fandom_scraper.py` (GUI) or `--target parts:X:blades ...` | rows and images in the three workbooks, `scrape_state/` (resume point and log) |
-| fill gaps | `python missing_data_tool.py` or the `missing_data_app` | edits in the workbooks (each edit stamps `updated_at`), a `.bak` on every save |
-| package | `python beyblade_data.py --parts ... --products ... --tcg ... --out data` | `data/<sheet>.json` for every sheet, `data/images/<sheet>-<id>[-min].webp`, `manifest.json`, `_images_by_hobby.json`, and a catalog check report |
+| fill gaps | `python missing_data_tool.py` or the `missing_data_app` | edits, new rows and new columns in the workbooks (each edit stamps `updated_at`); the `_edit_log` tab (every change: when, tool, tab, row, field, old → new) and the `_columns` tab (columns added with the tool); a `.bak` on every save |
+| package | `python beyblade_data.py --parts ... --products ... --tcg ... --out data` | `data/<sheet>.json` for every sheet (including new rows and columns), `data/images/<sheet>-<id>[-min].webp`, `manifest.json` (with a `changes` summary), `_images_by_hobby.json`, `_package_diff.json` (rows/columns added, removed or changed since the last package), `_edit_log.json`, `_custom_columns.json`, and a catalog check report |
 | release | `python build_release.py --tag <tag> [--drop-invalid] [--app-assets DIR]` | `_release/<tag>/`: `catalog.zip`, `catalog_manifest.json`, image packs, data packs, `packs.json` (and the bundled catalog in `DIR`) |
 | check only | `python catalog_check.py --data data` | a report; exits 1 when the app would reject or break on the data |
 
@@ -97,7 +99,9 @@ What the packager does on the way out:
 * `ProductContents.partType` becomes the key the app resolves (`Parts_X_Blades` becomes `blades`, `Accessories`
   becomes `accessories`);
 * X parts keep their file names (`blades.json` ...). Other series are prefixed (`burstLayers.json`) and ignored by
-  the app for now.
+  the app for now;
+* columns added with the missing data tool are written like any other field. The app reads only the fields its models
+  know, so a new column is ready for the app once a model reads it.
 
 ## The release gate
 

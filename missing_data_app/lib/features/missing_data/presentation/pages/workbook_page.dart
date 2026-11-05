@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/router/app_router.dart';
+import '../../domain/entities/workbook.dart';
 import '../cubits/row_editor/row_editor_cubit.dart';
 import '../cubits/row_editor/row_editor_state.dart';
 import '../cubits/sheet/sheet_cubit.dart';
@@ -12,7 +13,9 @@ import '../cubits/wiki/wiki_cubit.dart';
 import '../cubits/wiki/wiki_state.dart';
 import '../cubits/workbook/workbook_cubit.dart';
 import '../cubits/workbook/workbook_state.dart';
+import '../widgets/add_column_dialog.dart';
 import '../widgets/autofill_dialog.dart';
+import '../widgets/edit_log_dialog.dart';
 import '../widgets/formatting.dart';
 import '../widgets/log_panel.dart';
 import '../widgets/recent_edits_dialog.dart';
@@ -93,6 +96,22 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final sheet = context.read<SheetCubit>();
     if (sheet.state.sheet != e.sheet) await sheet.selectSheet(e.sheet);
     sheet.focus(e.id);
+  }
+
+  Future<void> _addColumn() async {
+    final sheet = context.read<SheetCubit>().state.sheet;
+    final all = <String>[for (final s in context.read<WorkbookCubit>().state.summary?.sheets ?? const <SheetInfo>[]) s.name];
+    if (sheet == null) return;
+    final ok = await showAddColumnDialog(context, sheet: sheet, allSheets: all);
+    if (ok == true && mounted) _snack('Column added - save to keep (Ctrl+Z undoes). It shows in the field list and editor.');
+  }
+
+  Future<void> _changeLog() async {
+    final e = await showEditLogDialog(context, sheet: context.read<SheetCubit>().state.sheet);
+    if (e == null || e.rowId == null || !mounted) return;
+    final sheet = context.read<SheetCubit>();
+    if (sheet.state.sheet != e.sheet) await sheet.selectSheet(e.sheet);
+    sheet.focus(e.rowId!);
   }
 
   Future<void> _close() async {
@@ -182,7 +201,10 @@ class _WorkbookPageState extends State<WorkbookPage> {
                     label: const Text('Fill from wiki'),
                   ),
                 ),
-                TextButton.icon(onPressed: _recent, icon: const Icon(Icons.history), label: const Text('Recently edited')),
+                TextButton.icon(
+                    onPressed: _addColumn, icon: const Icon(Icons.view_column_outlined), label: const Text('Add column')),
+                TextButton.icon(onPressed: _changeLog, icon: const Icon(Icons.receipt_long), label: const Text('Change log')),
+                IconButton(tooltip: 'Recently edited', onPressed: _recent, icon: const Icon(Icons.history)),
                 IconButton(
                     tooltip: 'Settings', onPressed: () => context.push(Routes.settings), icon: const Icon(Icons.settings_outlined)),
                 const SizedBox(width: 8),

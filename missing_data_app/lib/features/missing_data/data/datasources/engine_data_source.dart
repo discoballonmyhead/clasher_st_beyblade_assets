@@ -55,6 +55,22 @@ class EngineDataSource {
   Future<Json> wiki(String sheet, List<String> ids) => _map('wiki', {'sheet': sheet, 'ids': ids}, null);
   Future<Json> stopWiki() => _map('stop');
 
+  Future<Json> addColumn(List<String> sheets, String name, bool optional, bool inherit, String? defaultValue,
+          String note) =>
+      _map('addColumn', {
+        'sheets': sheets,
+        'name': name,
+        'optional': optional,
+        'inherit': inherit,
+        'default': defaultValue,
+        'note': note,
+      });
+  Future<Json> addRow(String sheet, Map<String, String>? values, String? copyFrom, String mode) =>
+      _map('addRow', {'sheet': sheet, 'values': values, 'copyFrom': copyFrom, 'mode': mode});
+  Future<Json> columns(String sheet) => _map('columns', {'sheet': sheet});
+  Future<Json> editLog(int limit, String? sheet, String query) =>
+      _map('log', {'limit': limit, 'sheet': sheet, 'query': query});
+
   /// Engine log lines (scraper progress during wiki fills, errors on stderr).
   Stream<String> get log => _bridge.events
       .where((e) => e['message'] != null)

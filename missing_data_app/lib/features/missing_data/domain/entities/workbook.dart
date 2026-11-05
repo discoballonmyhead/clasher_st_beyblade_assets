@@ -21,6 +21,8 @@ class WorkbookSummary extends Equatable {
     required this.dirty,
     required this.undoSteps,
     this.lastSaved,
+    this.logEntries = 0,
+    this.customColumns = 0,
   });
 
   final String path;
@@ -34,10 +36,16 @@ class WorkbookSummary extends Equatable {
   final int undoSteps;
   final DateTime? lastSaved;
 
+  /// Lines in the workbook's change log (_edit_log tab).
+  final int logEntries;
+
+  /// Columns added with the tool, over all tabs.
+  final int customColumns;
+
   String get fileName => path.split(RegExp(r'[\\/]')).last;
 
   @override
-  List<Object?> get props => [path, kind, sheets, dirty, undoSteps, lastSaved];
+  List<Object?> get props => [path, kind, sheets, dirty, undoSteps, lastSaved, logEntries, customColumns];
 }
 
 /// A row someone (or the scraper) changed, newest first.

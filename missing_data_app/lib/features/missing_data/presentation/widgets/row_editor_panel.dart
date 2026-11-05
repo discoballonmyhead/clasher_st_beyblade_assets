@@ -6,7 +6,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../cubits/row_editor/row_editor_cubit.dart';
 import '../cubits/row_editor/row_editor_state.dart';
+import '../../domain/entities/structure.dart';
 import '../cubits/sheet/sheet_cubit.dart';
+import 'new_row_dialog.dart';
 import 'formatting.dart';
 
 const _optional = {
@@ -57,10 +59,15 @@ class RowEditorPanel extends StatelessWidget {
                     onChanged: (v) => cubit.edit(f, v),
                     onFieldSubmitted: (_) => cubit.apply(),
                     decoration: InputDecoration(
-                      labelText: f,
+                      // + marks a column added with the tool (purple header in the workbook)
+                      labelText: d.customFields.contains(f) ? '$f  +' : f,
                       filled: d.missing.contains(f),
                       fillColor: Theme.of(context).brightness == Brightness.light ? AppTheme.missing : cs.tertiaryContainer,
-                      labelStyle: _optional.contains(f) ? TextStyle(color: cs.outline) : null,
+                      labelStyle: d.customFields.contains(f)
+                          ? TextStyle(color: cs.tertiary)
+                          : _optional.contains(f)
+                              ? TextStyle(color: cs.outline)
+                              : null,
                       suffixIcon: s.drafts.containsKey(f) ? Icon(Icons.edit, size: 16, color: cs.primary) : null,
                     ),
                   ),
@@ -85,12 +92,31 @@ class RowEditorPanel extends StatelessWidget {
                   label: const Text('Next gap'),
                 ),
               ),
+              Tooltip(
+                message: 'New row with the shared fields of this one (type, spin, stats ...) and parent #${d.parentId ?? d.id}',
+                child: TextButton.icon(
+                  onPressed: () => _newFrom(context, s.sheet!, d.id, NewRowMode.variant),
+                  icon: const Icon(Icons.copy_all_outlined, size: 18),
+                  label: const Text('Duplicate as variant'),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _newFrom(context, s.sheet!, d.id, NewRowMode.copy),
+                icon: const Icon(Icons.content_copy, size: 18),
+                label: const Text('Copy row'),
+              ),
             ]),
           ),
         ]);
       },
     );
   }
+}
+
+Future<void> _newFrom(BuildContext context, String sheet, String id, NewRowMode mode) async {
+  final sheetCubit = context.read<SheetCubit>();
+  final newId = await addRowWithPrompt(context, sheet, mode: mode, copyFrom: id);
+  if (newId != null) sheetCubit.focus(newId);
 }
 
 class _ImageBox extends StatefulWidget {

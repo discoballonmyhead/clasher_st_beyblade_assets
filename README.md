@@ -162,6 +162,19 @@ highlighted) or give it an image.
   images) and fills blank cells only. Pages come from `_scrape_log`, or are guessed from the name (`Blade - DranSword`).
 * **Manual:** type values; images from a file, URL, the clipboard or the parent row – trimmed, fitted in 600 px,
   128 px minified copy, both WebP.
+* **New rows** (data the scraper didn't create):
+  * **New row:** the next free id, plus the series and hobby taken from the tab.
+  * **Duplicate as variant:** copies the fields a recolor shares with its base part (type, spin, stats, weight …)
+    and sets `parentPartId`. It never copies the code, edition or images.
+  * **Copy row:** copies every field.
+* **New columns:** *Add column* appends a field to one tab or to every tab, after the last column, so images stay in
+  place. It gets a purple header and is listed in the workbook's `_columns` tab.
+  * **Optional:** not counted as missing.
+  * **Variants copy it from their parent:** auto-fill and "Duplicate as variant" carry it over.
+  * The packager writes it into the JSON like any other field, and the scraper leaves it alone.
+* **Change log:** every change made with the tool goes into the workbook's `_edit_log` tab: when, which tool (GUI,
+  Flutter app, CLI), action, tab, row, field, and old → new. That covers cell edits, auto-fills, images, new rows and
+  columns, and wiki fills. Open it with *Change log*; Ctrl+Z also removes the entry. The packager exports it.
 * Every save keeps a `.bak`. Rows marked `deleted` are ignored.
 
 ```bash
@@ -171,5 +184,16 @@ python missing_data_tool.py fill   --workbook beyblade_parts.xlsx --parent --der
 python missing_data_tool.py set    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --field mass --value 34.6
 python missing_data_tool.py image  --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --file found.png
 python missing_data_tool.py wiki   --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --limit 20
+python missing_data_tool.py add-column --workbook beyblade_parts.xlsx --sheet Parts_X_Bits --name tipShape --inherit
+python missing_data_tool.py add-column --workbook beyblade_parts.xlsx --all-tabs --name releaseRegion --optional
+python missing_data_tool.py add-row    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --variant-of 65 --set variantLabel="Gold"
+python missing_data_tool.py log        --workbook beyblade_parts.xlsx --limit 50
 python missing_data_tool.py serve  # JSON lines over stdin/stdout; used by the Flutter app
 ```
+
+**What the packager reports:** after packaging it compares the new `data/` with the previous one and prints what
+changed. For example: `blades: +1 rows (73); 1 changed; new column tipShape (2 filled)` and
+`Made with the missing data tool since then: 3 change(s) - 1 add_column, 1 set, 1 add_row`. The details go to
+`data/_package_diff.json` (rows and columns per file), `data/_edit_log.json` (the change logs of every workbook) and
+`data/_custom_columns.json`. A summary goes to `manifest.json` → `changes`. Files starting with `_` never go into
+`catalog.zip`.

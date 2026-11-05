@@ -78,8 +78,12 @@ class SheetSidebar extends StatelessWidget {
               for (final f in gaps)
                 ListTile(
                   selected: st.field == f.field,
-                  title: Text(f.field + (f.never ? '  (never filled)' : ''),
-                      style: f.never ? TextStyle(color: cs.onSurfaceVariant) : null),
+                  title: Text(f.field + (f.custom ? '  +' : '') + (f.never ? '  (never filled)' : ''),
+                      style: f.custom
+                          ? TextStyle(color: cs.tertiary)
+                          : f.never
+                              ? TextStyle(color: cs.onSurfaceVariant)
+                              : null),
                   subtitle: LinearProgressIndicator(
                     value: a.total == 0 ? 0 : f.missing / a.total,
                     minHeight: 3,

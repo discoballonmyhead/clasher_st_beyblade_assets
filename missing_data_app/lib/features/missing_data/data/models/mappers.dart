@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../../domain/entities/fill_proposal.dart';
 import '../../domain/entities/row.dart';
 import '../../domain/entities/sheet_analysis.dart';
+import '../../domain/entities/structure.dart';
 import '../../domain/entities/workbook.dart';
 
 /// Engine JSON -> domain entities. Tolerant: missing keys get safe defaults.
@@ -34,6 +35,8 @@ WorkbookSummary workbookFromJson(Json j) => WorkbookSummary(
       lastSaved: j['lastSaved'] is num
           ? DateTime.fromMillisecondsSinceEpoch(((j['lastSaved'] as num) * 1000).round())
           : null,
+      logEntries: _i(j['logEntries']),
+      customColumns: _i(j['customColumns']),
     );
 
 SheetAnalysis analysisFromJson(Json j) => SheetAnalysis(
@@ -46,6 +49,7 @@ SheetAnalysis analysisFromJson(Json j) => SheetAnalysis(
             missing: _i(f['missing']),
             ids: [for (final id in (f['ids'] as List? ?? const [])) _s(id)],
             never: f['never'] == true,
+            custom: f['custom'] == true,
           ),
       ],
     );
@@ -77,6 +81,7 @@ RowDetail rowDetailFromJson(Json j) => RowDetail(
       values: Map<String, Object?>.from(j['values'] as Map? ?? const {}),
       missing: [for (final m in (j['missing'] as List? ?? const [])) _s(m)],
       image: bytesFromBase64(j['image']),
+      customFields: [for (final f in (j['customFields'] as List? ?? const [])) _s(f)],
     );
 
 FillProposal proposalFromJson(Json j) => FillProposal(
@@ -87,7 +92,38 @@ FillProposal proposalFromJson(Json j) => FillProposal(
       source: _s(j['source']),
     );
 
-Json proposalToJson(FillProposal p) => {'row': p.row, 'field': p.field, 'value': p.value};
+/// id and source go along so the change log says where each value came from.
+Json proposalToJson(FillProposal p) =>
+    {'row': p.row, 'id': p.id, 'field': p.field, 'value': p.value, 'source': p.source};
+
+ColumnInfo columnFromJson(Json j) => ColumnInfo(
+      name: _s(j['name']),
+      custom: j['custom'] == true,
+      optional: j['optional'] == true,
+      inherit: j['inherit'] == true,
+      note: _s(j['note']),
+      isImage: j['image'] == true,
+      isId: j['id'] == true,
+    );
+
+String? _opt(Object? v) => v == null || '$v'.isEmpty ? null : '$v';
+
+EditLogEntry editLogEntryFromJson(Json j) => EditLogEntry(
+      at: _date(j['at']),
+      source: _s(j['source']),
+      action: _s(j['action']),
+      sheet: _s(j['sheet']),
+      rowId: _opt(j['rowId']),
+      field: _opt(j['field']),
+      oldValue: _opt(j['oldValue']),
+      newValue: _opt(j['newValue']),
+      note: _opt(j['note']),
+    );
+
+EditLogPage editLogFromJson(Json j) => EditLogPage(
+      total: _i(j['total']),
+      entries: [for (final e in (j['entries'] as List? ?? const [])) editLogEntryFromJson(e as Json)],
+    );
 
 RecentEdit recentEditFromJson(Json j) => RecentEdit(
       sheet: _s(j['sheet']),

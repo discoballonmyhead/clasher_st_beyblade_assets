@@ -18,6 +18,12 @@ What it does
     rendered-infobox fallback, gallery images) and fills only blank cells.
   * Manual: type a value into a field, or put an image (file / URL / clipboard) on a row - it's trimmed,
     fitted inside 600 px, a 128 px minified copy is made, both WebP.
+  * New rows: an empty row with the next id, a "variant" of a row (copies the shared fields, parent id set)
+    or a full copy.
+  * New columns: added after the last column of one or more tabs (purple header), listed in the _columns tab.
+    Mark a column optional (not reported as missing) or inherited (variants copy it from their parent).
+  * Change log: every change made with this tool goes into the _edit_log tab of the workbook (when, which
+    tool, action, tab, row, field, old -> new). Undo removes the entry too. The packager exports it.
   Every save keeps a .bak of the workbook first.
 
 GUI:  python missing_data_tool.py
@@ -26,6 +32,9 @@ CLI:  python missing_data_tool.py report --workbook beyblade_parts.xlsx [--sheet
       python missing_data_tool.py set    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --field mass --value 34.6
       python missing_data_tool.py image  --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 65 --file found.png   (or --url)
       python missing_data_tool.py wiki   --workbook beyblade_parts.xlsx --sheet Parts_X_Blades [--ids 65 72] [--limit 20]
+      python missing_data_tool.py add-column --workbook beyblade_parts.xlsx --sheet Parts_X_Bits --name tipShape [--optional] [--inherit] [--default x]
+      python missing_data_tool.py add-row    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades [--variant-of 65 | --copy-of 65] [--set name=Foo]
+      python missing_data_tool.py log        --workbook beyblade_parts.xlsx [--sheet ...] [--limit 50]
 """
 import argparse
 import base64
@@ -35,6 +44,7 @@ import os
 import re
 import sys
 from collections import OrderedDict
+from datetime import datetime, timezone
 
 from PIL import Image
 
@@ -90,10 +100,31 @@ def data_sheets(book):
     return [n for n in book.wb.sheetnames if sheet_info(n)]
 
 
+def custom_columns(book, sheet):
+    """Columns added to this tab with the tool -> {name: {"optional", "inherit", ...}}"""
+    return book.custom_columns().get(sheet, {}) if hasattr(book, "custom_columns") else {}
+
+
 def expected_fields(book, sheet, include_optional=False):
     idc, img, mini = sheet_info(sheet)
     cols = [c for c in book.headers(book.wb[sheet]) if c not in (idc, img, mini)]
-    return cols if include_optional else [c for c in cols if c not in OPTIONAL]
+    optional = OPTIONAL | {c for c, m in custom_columns(book, sheet).items() if m["optional"]}
+    return cols if include_optional else [c for c in cols if c not in optional]
+
+
+COLUMN_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,40}$")
+
+
+def now_iso():
+    """UTC, to the millisecond (the packager compares log entries with its own timestamp)."""
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _short(v, n=200):
+    if v is None:
+        return None
+    t = v if isinstance(v, (int, float)) else str(v)
+    return t[:n] if isinstance(t, str) else t
 
 
 def parse_value(text):
@@ -211,7 +242,8 @@ def propose_fills(book, sheet, parent=True, siblings=True, derive=True):
             p = by_id.get(str(pid)) if pid is not None else None
             if p is None:
                 continue
-            for f in sorted(INHERIT):
+            inherit = INHERIT | {c for c, m in custom_columns(book, sheet).items() if m["inherit"]}
+            for f in sorted(inherit):
                 if f == "name" and not blank(x.get("name")):
                     continue
                 add(r, x, f, p.get(f), f"parent #{pid}")
@@ -376,8 +408,9 @@ class Engine:
     (saving a big workbook with hundreds of images takes seconds, so it's never done per edit).
     Every edit stamps the row's updated_at and can be undone."""
 
-    def __init__(self, log=print):
+    def __init__(self, log=print, source="missing_data_tool"):
         self.log = log
+        self.source = source       # written into _edit_log ("missing_data_tool" / "missing_data_app" / "cli")
         self.book = None
         self.path = None
         self.cfg = None            # scraper config override (tests)
@@ -394,6 +427,125 @@ class Engine:
         self.last_saved = os.path.getmtime(path) if os.path.exists(path) else None
         return self.summary()
 
+    # ---- change log -------------------------------------------------------------
+    def _logged(self, label, changes, entries):
+        """Write entries to _edit_log and push one undo step that also removes them."""
+        if not changes and not entries:
+            return
+        if entries:
+            stamp = now_iso()
+            rows = self.book.append_rows(S.EDIT_LOG_SHEET, S.EDIT_LOG_COLUMNS, [
+                {"at": stamp, "source": self.source, **{k: _short(v) for k, v in e.items()}} for e in entries])
+            changes = list(changes) + [("logrows", S.EDIT_LOG_SHEET, rows, None, None)]
+        self._push(label, changes)
+
+    def edit_log(self, limit=200, sheet=None, action=None, query=""):
+        """Changes made with the tool, newest first."""
+        if S.EDIT_LOG_SHEET not in self.book.wb.sheetnames:
+            return {"total": 0, "entries": []}
+        q = (query or "").strip().lower()
+        out = []
+        for _, x in self.book.rows(self.book.wb[S.EDIT_LOG_SHEET]):
+            if sheet and x.get("sheet") != sheet or action and x.get("action") != action:
+                continue
+            e = {k: (v if isinstance(v, (int, float, str)) or v is None else str(v)) for k, v in x.items()}
+            if q and q not in " ".join(str(v) for v in e.values() if v is not None).lower():
+                continue
+            out.append(e)
+        out.reverse()
+        return {"total": len(out), "entries": out[:limit] if limit else out}
+
+    def columns(self, sheet):
+        """Every column of a tab and whether it was added with the tool."""
+        idc, img, mini = sheet_info(sheet)
+        custom = custom_columns(self.book, sheet)
+        return {"sheet": sheet, "idColumn": idc, "columns": [
+            {"name": c, "custom": c in custom, "optional": c in OPTIONAL or custom.get(c, {}).get("optional", False),
+             "inherit": c in INHERIT or custom.get(c, {}).get("inherit", False),
+             "note": custom.get(c, {}).get("note", ""), "image": c in (img, mini), "id": c == idc}
+            for c in self.book.headers(self.book.wb[sheet])]}
+
+    # ---- structure: new columns / rows -----------------------------------------
+    def add_column(self, sheets, name, optional=False, inherit=False, default=None, note=""):
+        name = (name or "").strip()
+        if not COLUMN_NAME.match(name):
+            raise ValueError("Column names start with a letter and use letters, digits or _ (e.g. tipShape).")
+        sheets = [sheets] if isinstance(sheets, str) else list(sheets)
+        for sh in sheets:
+            if not sheet_info(sh):
+                raise ValueError(f"{sh} is not a data tab")
+            if name in self.book.headers(self.book.wb[sh]):
+                raise ValueError(f"{sh} already has a column '{name}'")
+        default = parse_value(default) if isinstance(default, str) else default
+        changes, entries, registry = [], [], []
+        for sh in sheets:
+            ws = self.book.wb[sh]
+            col = self.book.add_column(ws, name)
+            changes.append(("column", sh, None, col, None))
+            filled = 0
+            if not blank(default):
+                for r, x in self.book.rows(ws):
+                    if not is_deleted(x):
+                        ws.cell(r, col).value = default
+                        filled += 1
+                self.book._rows_cache.pop(sh, None)
+            registry.append({"sheet": sh, "column": name, "optional": 1 if optional else 0,
+                             "inherit": 1 if inherit else 0, "note": note or None, "addedAt": now_iso(),
+                             "source": self.source})
+            entries.append({"action": "add_column", "sheet": sh, "field": name, "newValue": default,
+                            "note": "; ".join(x for x in (
+                                "optional" if optional else "", "variants inherit it" if inherit else "",
+                                f"default set on {filled} rows" if filled else "", note or "") if x) or None})
+            self._cache.pop(sh, None)
+        reg_rows = self.book.append_rows(S.CUSTOM_COLUMNS_SHEET, S.CUSTOM_COLUMNS_COLUMNS, registry)
+        changes.append(("registry", S.CUSTOM_COLUMNS_SHEET, reg_rows, None, None))
+        self._logged(f"add column {name} ({len(sheets)} tab{'s' if len(sheets) != 1 else ''})", changes, entries)
+        return {"added": sheets, "column": name}
+
+    def add_row(self, sheet, values=None, copy_from=None, mode="variant"):
+        """New row with the next id. mode: "empty" (only values + what follows from the tab), "variant" (copies
+        the fields a variant shares, parent id = copy_from's root) or "copy" (every field of copy_from)."""
+        info = sheet_info(sheet)
+        if not info:
+            raise ValueError(f"{sheet} is not a data tab")
+        idc, _, _ = info
+        ws = self.book.wb[sheet]
+        hdr = self.book.headers(ws)
+        prefix = "" if S.parse_part_sheet(sheet) else (S.SHEETS.get(sheet, {}).get("id_prefix") or "")
+        vals, note = {}, "new"
+        part = S.parse_part_sheet(sheet)
+        if part:
+            vals.update({"hobbyGeneration": part[0], "hobbyName": S.HOBBY_NAME})
+        elif sheet.startswith("TCG_"):
+            vals["hobbyName"] = S.TCG_HOBBY_NAME
+        if copy_from not in (None, "") and mode != "empty":
+            sr = find_row(self.book, sheet, copy_from)
+            if sr is None:
+                raise ValueError(f"No row {copy_from} in {sheet}")
+            src = dict(self.book.rows(ws))[sr]
+            skip = {idc, "updated_at", "deleted"}
+            if mode == "copy":
+                vals.update({k: v for k, v in src.items() if k not in skip and not blank(v)})
+                note = f"copy of #{copy_from}"
+            else:
+                share = INHERIT | {"manufacturer"} | {c for c, m in custom_columns(self.book, sheet).items()
+                                                     if m["inherit"]}
+                vals.update({k: v for k, v in src.items() if k in share and not blank(v)})
+                pcol = next((c for c in PARENT_COL.get(idc, ()) if c in hdr), None)
+                if pcol:  # always point at the base part, never at another variant
+                    vals[pcol] = src.get(pcol) if not blank(src.get(pcol)) else src.get(idc)
+                note = f"variant of #{vals.get(pcol, copy_from)}"
+        for k, v in (values or {}).items():
+            vals[k] = parse_value(v) if isinstance(v, str) else v
+        if blank(vals.get(idc)):
+            vals.pop(idc, None)  # next free id
+        r, rid, _ = self.book.write(ws, vals, id_col=idc, id_prefix=prefix)
+        self.book.touch(ws, r)
+        self._refresh_row(sheet, r)
+        self._logged(f"new row {sheet} #{rid}", [("row", sheet, r, None, None)],
+                     [{"action": "add_row", "sheet": sheet, "rowId": rid, "note": note}])
+        return {"row": r, "id": rid}
+
     def summary(self):
         sheets = []
         for name in data_sheets(self.book):
@@ -404,8 +556,12 @@ class Engine:
             sheets.append({"name": name, "rows": len(rows),
                            "rowsWithMissing": sum(1 for m in idx["missing"].values() if m),
                            "hasImages": bool(sheet_info(name)[1])})
+        log_rows = (len(self.book.rows(self.book.wb[S.EDIT_LOG_SHEET]))
+                    if S.EDIT_LOG_SHEET in self.book.wb.sheetnames else 0)
         return {"path": self.path, "kind": kind_of_workbook(self.path), "sheets": sheets,
-                "dirty": bool(self.book.dirty), "undo": len(self._undo), "lastSaved": self.last_saved}
+                "dirty": bool(self.book.dirty), "undo": len(self._undo), "lastSaved": self.last_saved,
+                "logEntries": log_rows,
+                "customColumns": sum(len(v) for v in self.book.custom_columns().values())}
 
     def save(self):
         if self.book.dirty:
@@ -454,9 +610,11 @@ class Engine:
             _, small = image_rows(self.book, sheet)
             counts[sheet_info(sheet)[2]] = [x.get(idc) for r, x in c["rows"].items() if r not in small]
         total = len(c["rows"])
+        custom = custom_columns(self.book, sheet)
         return {"sheet": sheet, "total": total,
                 "fields": [{"field": f, "missing": len(ids), "ids": ids[:500],
-                            "never": total > 0 and len(ids) == total} for f, ids in counts.items()]}
+                            "never": total > 0 and len(ids) == total, "custom": f in custom}
+                           for f, ids in counts.items()]}
 
     def _row_summary(self, sheet, r):
         c = self._cache[sheet]
@@ -497,6 +655,7 @@ class Engine:
         data = current_image(self.book, sheet, r) if with_image else None
         return {"row": r, "id": x.get(idc), "parentId": pid, "updatedAt": str(x.get("updated_at") or ""),
                 "fields": expected_fields(self.book, sheet, True),
+                "customFields": sorted(custom_columns(self.book, sheet)),
                 "values": {k: (v if isinstance(v, (int, float, str, bool)) or v is None else str(v)) for k, v in x.items()},
                 "missing": self._cache[sheet]["missing"].get(r, []),
                 "image": base64.b64encode(data).decode() if data else None}
@@ -513,7 +672,7 @@ class Engine:
             raise ValueError(f"No row {row_id} in {sheet}")
         ws = self.book.wb[sheet]
         hdr = self.book.headers(ws)
-        changes = []
+        changes, entries = [], []
         for f, v in values.items():
             if f not in hdr:
                 continue
@@ -521,12 +680,14 @@ class Engine:
             cell = ws.cell(r, hdr[f])
             if str(cell.value if cell.value is not None else "") != str(new if new is not None else ""):
                 changes.append(("cell", sheet, r, hdr[f], cell.value))
+                entries.append({"action": "set", "sheet": sheet, "rowId": row_id, "field": f,
+                                "oldValue": cell.value, "newValue": new})
                 cell.value = new
         if changes:
             changes.append(("cell", sheet, r, hdr.get("updated_at"), ws.cell(r, hdr["updated_at"]).value)
                            if hdr.get("updated_at") else ("noop", sheet, r, None, None))
             self.book.touch(ws, r)
-            self._push(f"edit {sheet} #{row_id}", changes)
+            self._logged(f"edit {sheet} #{row_id}", changes, entries)
             self._refresh_row(sheet, r)
         return {"changed": len([c for c in changes if c[0] == "cell" and c[3] != hdr.get("updated_at")])}
 
@@ -537,19 +698,23 @@ class Engine:
     def apply(self, sheet, items):
         ws = self.book.wb[sheet]
         hdr = self.book.headers(ws)
-        changes, rows = [], set()
+        changes, rows, entries = [], set(), []
+        idc = sheet_info(sheet)[0]
         for it in items:
             r, f = int(it["row"]), it["field"]
             if f in hdr and blank(ws.cell(r, hdr[f]).value):
                 changes.append(("cell", sheet, r, hdr[f], None))
                 ws.cell(r, hdr[f]).value = it["value"]
                 rows.add(r)
+                entries.append({"action": "auto-fill", "sheet": sheet,
+                                "rowId": it.get("id", ws.cell(r, hdr[idc]).value), "field": f,
+                                "newValue": it["value"], "note": it.get("source")})
         for r in rows:
             if hdr.get("updated_at"):
                 changes.append(("cell", sheet, r, hdr["updated_at"], ws.cell(r, hdr["updated_at"]).value))
             self.book.touch(ws, r)
             self._refresh_row(sheet, r)
-        self._push(f"auto-fill {sheet} ({len(rows)} rows)", changes)
+        self._logged(f"auto-fill {sheet} ({len(rows)} rows)", changes, entries)
         return {"filled": len([c for c in changes if c[3] != hdr.get("updated_at")]), "rows": len(rows)}
 
     def set_image(self, sheet, row_id, data):
@@ -561,8 +726,11 @@ class Engine:
         old = [("image", sheet, r, hdr[c], idx[(r, hdr[c])]._data() if (r, hdr[c]) in idx else None) for c in (img, mini)]
         if hdr.get("updated_at"):
             old.append(("cell", sheet, r, hdr["updated_at"], ws.cell(r, hdr["updated_at"]).value))
+        had = any(o[4] for o in old if o[0] == "image")
         set_row_image(self.book, sheet, row_id, data)
-        self._push(f"image {sheet} #{row_id}", old)
+        self._logged(f"image {sheet} #{row_id}", old, [{"action": "image", "sheet": sheet, "rowId": row_id,
+                                                         "field": img, "oldValue": "image" if had else None,
+                                                         "newValue": f"image ({len(data) // 1024} KB source)"}])
         self._refresh_row(sheet, r)
         return {"row": r}
 
@@ -579,7 +747,18 @@ class Engine:
             return {"undone": None, "undo": 0}
         label, changes = self._undo.pop()
         for kind, sheet, r, col, old in reversed(changes):
+            if kind in ("logrows", "registry"):
+                self.book.remove_appended(sheet, r)
+                continue
             ws = self.book.wb[sheet]
+            if kind == "column":
+                self.book.remove_column(ws, col)
+                self._cache.pop(sheet, None)
+                continue
+            if kind == "row":
+                self.book.clear_row(ws, r)
+                self._cache.pop(sheet, None)
+                continue
             if kind == "cell" and col:
                 ws.cell(r, col).value = old
             elif kind == "image":
@@ -610,6 +789,12 @@ class Engine:
         self.save()
         n = wiki_fill(self.path, sheet, ids, limit, log=self.log, stop_event=stop_event, cfg=self.cfg)
         self.open(self.path)
+        if n:  # the scraper wrote the cells; record that it ran, and keep the record
+            self.book.append_rows(S.EDIT_LOG_SHEET, S.EDIT_LOG_COLUMNS, [{
+                "at": now_iso(), "source": self.source, "action": "wiki", "sheet": sheet,
+                "rowId": ", ".join(str(i) for i in ids[:20]) + (" ..." if len(ids) > 20 else ""),
+                "note": f"re-read {n} wiki page(s); only blank cells were filled"}])
+            self.save()
         return {"pages": n}
 
 
@@ -628,7 +813,7 @@ def serve(stdin=None, stdout=None):
             stdout.write(json.dumps(obj, default=str) + "\n")
             stdout.flush()
 
-    eng = Engine(log=lambda m: send({"event": "log", "message": str(m)}))
+    eng = Engine(log=lambda m: send({"event": "log", "message": str(m)}), source="missing_data_app")
     try:
         import fandom_scraper as fs
         fs._LOG_SINK = lambda m: send({"event": "log", "message": str(m)})
@@ -636,7 +821,7 @@ def serve(stdin=None, stdout=None):
         pass
     stop = threading.Event()
     commands = {
-        "ping": lambda a: {"pong": True, "version": 1},
+        "ping": lambda a: {"pong": True, "version": 2},
         "open": lambda a: eng.open(a["path"]),
         "summary": lambda a: eng.summary(),
         "analyze": lambda a: eng.analyze(a["sheet"], a.get("includeOptional", False)),
@@ -653,10 +838,15 @@ def serve(stdin=None, stdout=None):
         "undo": lambda a: eng.undo(),
         "save": lambda a: eng.save(),
         "recent": lambda a: eng.recent_edits(a.get("limit", 30)),
+        "log": lambda a: eng.edit_log(a.get("limit", 200), a.get("sheet"), a.get("action"), a.get("query", "")),
+        "columns": lambda a: eng.columns(a["sheet"]),
+        "addColumn": lambda a: eng.add_column(a.get("sheets") or [a["sheet"]], a["name"], a.get("optional", False),
+                                              a.get("inherit", False), a.get("default"), a.get("note", "")),
+        "addRow": lambda a: eng.add_row(a["sheet"], a.get("values"), a.get("copyFrom"), a.get("mode", "variant")),
         "wiki": lambda a: eng.wiki(a["sheet"], a["ids"], a.get("limit"), stop),
         "stop": lambda a: (stop.set(), {"stopping": True})[1],
     }
-    send({"event": "ready", "version": 1})
+    send({"event": "ready", "version": 2})
     for line in stdin:
         line = line.strip()
         if not line:
@@ -693,10 +883,26 @@ def run_cli(argv):
         return serve()
     ap = argparse.ArgumentParser(description="Find and fill missing data in the workbooks")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("report", "fill", "set", "image", "wiki"):
+    for name in ("report", "fill", "set", "image", "wiki", "add-column", "add-row", "log"):
         p = sub.add_parser(name)
         p.add_argument("--workbook", required=True)
-        p.add_argument("--sheet", required=name in ("set", "image"))
+        p.add_argument("--sheet", required=name in ("set", "image", "add-row"),
+                       action="append" if name == "add-column" else "store",
+                       help="add-column: repeat for several tabs, or --all-tabs")
+        if name == "add-column":
+            p.add_argument("--name", required=True)
+            p.add_argument("--all-tabs", action="store_true", help="every data tab of the workbook")
+            p.add_argument("--optional", action="store_true", help="don't report it as missing")
+            p.add_argument("--inherit", action="store_true", help="variants copy it from their parent")
+            p.add_argument("--default", help="value for every existing row")
+            p.add_argument("--note", default="")
+        if name == "add-row":
+            g = p.add_mutually_exclusive_group()
+            g.add_argument("--variant-of", help="copy the shared fields of this id, parent id set")
+            g.add_argument("--copy-of", help="copy every field of this id")
+            p.add_argument("--set", nargs="*", default=[], metavar="FIELD=VALUE")
+        if name == "log":
+            p.add_argument("--limit", type=int, default=50)
         if name == "report":
             p.add_argument("--csv")
             p.add_argument("--all-columns", action="store_true", help="also count optional columns")
@@ -716,6 +922,33 @@ def run_cli(argv):
             p.add_argument("--ids", nargs="*", help="row ids (default: every row with something missing)")
             p.add_argument("--limit", type=int)
     a = ap.parse_args(argv)
+    if a.cmd in ("add-column", "add-row", "log"):  # through the engine: logged in _edit_log, saved
+        eng = Engine(source="cli")
+        eng.open(a.workbook)
+        try:
+            if a.cmd == "add-column":
+                tabs = data_sheets(eng.book) if a.all_tabs else (a.sheet or [])
+                if not tabs:
+                    sys.exit("Give --sheet (repeatable) or --all-tabs.")
+                res = eng.add_column(tabs, a.name, a.optional, a.inherit, a.default, a.note)
+                print(f"Column {res['column']} added to {', '.join(res['added'])}")
+            elif a.cmd == "add-row":
+                values = dict(kv.split("=", 1) for kv in a.set)
+                src = a.variant_of or a.copy_of
+                res = eng.add_row(a.sheet, values, src, "copy" if a.copy_of else "variant" if src else "empty")
+                print(f"{a.sheet}: new row {res['id']} (sheet row {res['row']})")
+            else:
+                for e in eng.edit_log(a.limit, a.sheet)["entries"]:
+                    what = (f"{e['field']}: {e.get('oldValue')!r} -> {e.get('newValue')!r}"
+                            if e.get("action") in ("set", "auto-fill", "image") else e.get("field") or "")
+                    print(f"{e.get('at')}  {e.get('source'):<17} {e.get('action'):<10} {e.get('sheet')} "
+                          f"#{e.get('rowId') or ''} {what} {e.get('note') or ''}".rstrip())
+                return
+        except ValueError as e:
+            sys.exit(str(e))
+        eng.save()
+        print(f"{a.workbook} saved (.bak kept); the change is in its _edit_log tab")
+        return
     book = Book(a.workbook, kind_of_workbook(a.workbook))
     sheets = [a.sheet] if a.sheet else data_sheets(book)
     for sh in sheets:
@@ -802,14 +1035,17 @@ def run_gui(workbook=""):
     ttk.Button(tb, text="Wiki: all listed rows", command=lambda: wiki(False)).pack(side=tk.LEFT)
     stop_btn = ttk.Button(tb, text="Stop", command=lambda: st["stop"].set(), state="disabled")
     stop_btn.pack(side=tk.LEFT, padx=4)
-    ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
-    ttk.Button(tb, text="Recently edited", command=lambda: recent_dialog()).pack(side=tk.LEFT)
-    ttk.Button(tb, text="Export CSV...", command=lambda: export()).pack(side=tk.LEFT, padx=4)
+    tb2 = ttk.Frame(root, padding=(8, 0, 8, 6))  # second row: structure, history, options
+    tb2.pack(fill=tk.X)
+    ttk.Button(tb2, text="Add column...", command=lambda: add_column_dialog()).pack(side=tk.LEFT)
+    ttk.Button(tb2, text="Change log", command=lambda: log_dialog()).pack(side=tk.LEFT, padx=4)
+    ttk.Button(tb2, text="Recently edited", command=lambda: recent_dialog()).pack(side=tk.LEFT)
+    ttk.Button(tb2, text="Export CSV...", command=lambda: export()).pack(side=tk.LEFT, padx=4)
     autosave = tk.BooleanVar(value=prefs.get("autosave", True))
-    ttk.Checkbutton(tb, text="Autosave every 2 min", variable=autosave,
+    ttk.Checkbutton(tb2, text="Autosave every 2 min", variable=autosave,
                     command=lambda: prefs.set("autosave", autosave.get())).pack(side=tk.RIGHT)
     all_cols = tk.BooleanVar(value=False)
-    ttk.Checkbutton(tb, text="Count optional columns", variable=all_cols,
+    ttk.Checkbutton(tb2, text="Count optional columns", variable=all_cols,
                     command=lambda: reload_sheet()).pack(side=tk.RIGHT, padx=8)
 
     panes = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
@@ -839,6 +1075,13 @@ def run_gui(workbook=""):
     filt.pack(side=tk.LEFT, padx=4)
     rows_lbl = ttk.Label(bar, text="", style="Muted.TLabel")
     rows_lbl.pack(side=tk.LEFT, padx=6)
+    rowbar = ttk.Frame(mid)  # row actions on their own line: always visible, whatever the width
+    rowbar.pack(fill=tk.X, pady=(4, 4))
+    ttk.Button(rowbar, text="New row", command=lambda: new_row("empty")).pack(side=tk.LEFT)
+    ttk.Button(rowbar, text="Duplicate as variant", command=lambda: new_row("variant")).pack(side=tk.LEFT, padx=4)
+    ttk.Button(rowbar, text="Copy row", command=lambda: new_row("copy")).pack(side=tk.LEFT)
+    ttk.Label(rowbar, text="variant = shared fields + parent id; copy = every field", style="Muted.TLabel").pack(
+        side=tk.LEFT, padx=8)
     rtree = ttk.Treeview(mid, columns=("name", "code", "edition", "n", "updated", "missing"), selectmode="extended")
     for c, w, t in (("#0", 60, "id"), ("name", 150, "name"), ("code", 80, "code"), ("edition", 170, "edition / label"),
                     ("n", 40, "gaps"), ("updated", 140, "last edited"), ("missing", 280, "missing")):
@@ -1042,11 +1285,15 @@ def run_gui(workbook=""):
             w.destroy()
         st["editors"] = {}
         missing = set(info["missing"])
+        custom = set(info.get("customFields", []))
         for i, f in enumerate(info["fields"]):
             v = info["values"].get(f)
             optional = f in OPTIONAL
-            ttk.Label(form, text=f, style="Muted.TLabel" if optional else "TLabel").grid(
-                row=i, column=0, sticky="w", padx=(0, 6))
+            lbl = ttk.Label(form, text=f + ("  +" if f in custom else ""),
+                            style="Muted.TLabel" if optional else "TLabel")
+            if f in custom:  # added with this tool (purple header in the workbook)
+                lbl.configure(foreground="#7030A0")
+            lbl.grid(row=i, column=0, sticky="w", padx=(0, 6))
             var = tk.StringVar(value="" if blank(v) else str(v))
             e = tk.Entry(form, textvariable=var, width=30, relief="solid", bd=1,
                          bg=tk_ui.COLORS["warn_bg"] if f in missing else "white")
@@ -1247,6 +1494,138 @@ def run_gui(workbook=""):
             win.destroy()
         tv.bind("<Double-1>", go)
         ttk.Label(win, text="Double-click to jump to the row.", style="Muted.TLabel").pack(anchor="w", padx=6, pady=4)
+
+    # ── structure: rows / columns, and the change log ──
+    def refresh_tabs():
+        summary = eng.summary()
+        for sh in summary["sheets"]:
+            if stree.exists(sh["name"]):
+                stree.item(sh["name"], values=(sh["rows"], sh["rowsWithMissing"]))
+
+    def new_row(mode):
+        sh = st["sheet"]
+        if not sh:
+            return
+        src = None
+        if mode != "empty":
+            if not st["row"]:
+                add_log("Pick the row to copy first.")
+                return
+            src = st["row"]["id"]
+        values = None
+        if mode == "empty":
+            from tkinter import simpledialog
+            name = simpledialog.askstring("New row", f"Name of the new row in {sh} (you can fill the rest after):",
+                                          parent=root)
+            if name is None:
+                return
+            values = {"name": name} if name.strip() and "name" in eng.book.headers(eng.book.wb[sh]) else None
+        try:
+            res = eng.add_row(sh, values, src, mode)
+        except ValueError as e:
+            err(e)
+            return
+        add_log(f"{sh}: new row #{res['id']} ({mode}{f' of #{src}' if src is not None else ''}) - save to keep")
+        refresh_tabs()
+        reload_sheet()
+        root.after(400, lambda: [rtree.selection_set(i) or rtree.see(i)
+                                 for i in rtree.get_children() if rtree.item(i, "text") == str(res["id"])])
+
+    def add_column_dialog():
+        if not eng.book or not st["sheet"]:
+            return
+        win = tk.Toplevel(root)
+        win.title("Add a column")
+        win.transient(root)
+        f = ttk.Frame(win, padding=12)
+        f.pack(fill=tk.BOTH, expand=True)
+        name_v, default_v, note_v = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        scope_v = tk.StringVar(value="this")
+        opt_v, inh_v = tk.BooleanVar(value=False), tk.BooleanVar(value=True)
+        ttk.Label(f, text="Column name (letters, digits, _), e.g. tipShape").grid(row=0, column=0, columnspan=2, sticky="w")
+        ent = ttk.Entry(f, textvariable=name_v, width=34)
+        ent.grid(row=1, column=0, columnspan=2, sticky="we", pady=(0, 8))
+        ttk.Radiobutton(f, text=f"This tab ({st['sheet']})", variable=scope_v, value="this").grid(row=2, column=0, columnspan=2, sticky="w")
+        ttk.Radiobutton(f, text="Every data tab in this workbook", variable=scope_v, value="all").grid(row=3, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(f, text="Variants copy it from their parent (auto-fill)", variable=inh_v).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(f, text="Optional (don't report it as missing)", variable=opt_v).grid(row=5, column=0, columnspan=2, sticky="w")
+        ttk.Label(f, text="Value for every existing row (optional)").grid(row=6, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(f, textvariable=default_v).grid(row=7, column=0, columnspan=2, sticky="we")
+        ttk.Label(f, text="Note (what it's for)").grid(row=8, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(f, textvariable=note_v).grid(row=9, column=0, columnspan=2, sticky="we")
+        ttk.Label(f, text="Added after the last column (purple header), listed in the _columns tab.\n"
+                          "The packager puts it into the JSON; the app ignores fields it doesn't know.",
+                  style="Muted.TLabel").grid(row=10, column=0, columnspan=2, sticky="w", pady=(8, 0))
+
+        def ok():
+            tabs = data_sheets(eng.book) if scope_v.get() == "all" else [st["sheet"]]
+            try:
+                res = eng.add_column(tabs, name_v.get(), opt_v.get(), inh_v.get(), default_v.get() or None,
+                                     note_v.get())
+            except ValueError as e:
+                messagebox.showerror("Add a column", str(e), parent=win)
+                return
+            add_log(f"Column {res['column']} added to {len(res['added'])} tab(s) - save to keep (Ctrl+Z undoes)")
+            win.destroy()
+            reload_sheet()
+            refresh_title()
+        b = ttk.Frame(f)
+        b.grid(row=11, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(b, text="Cancel", command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(b, text="Add column", command=ok, style="Accent.TButton").pack(side=tk.RIGHT, padx=6)
+        ent.focus_set()
+        win.bind("<Return>", lambda e: ok())
+
+    def log_dialog():
+        if not eng.book:
+            return
+        win = tk.Toplevel(root)
+        win.title("Change log - everything changed with the missing data tool")
+        win.geometry("1100x520")
+        top = ttk.Frame(win, padding=6)
+        top.pack(fill=tk.X)
+        q_v, this_v = tk.StringVar(), tk.BooleanVar(value=False)
+        ttk.Label(top, text="Search:").pack(side=tk.LEFT)
+        ttk.Entry(top, textvariable=q_v, width=30).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(top, text="This tab only", variable=this_v, command=lambda: fill()).pack(side=tk.LEFT, padx=8)
+        count = ttk.Label(top, text="", style="Muted.TLabel")
+        count.pack(side=tk.RIGHT)
+        cols = ("source", "action", "sheet", "rowId", "field", "oldValue", "newValue", "note")
+        tv = ttk.Treeview(win, columns=cols)
+        for c, w, t in (("#0", 150, "when"), ("source", 110, "tool"), ("action", 80, "action"), ("sheet", 140, "tab"),
+                        ("rowId", 55, "id"), ("field", 110, "field"), ("oldValue", 120, "old"),
+                        ("newValue", 120, "new"), ("note", 200, "note")):
+            tv.heading(c, text=t)
+            tv.column(c, width=w)
+        sb = ttk.Scrollbar(win, command=tv.yview)
+        tv.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        tv.pack(fill=tk.BOTH, expand=True)
+
+        def fill(*_):
+            res = eng.edit_log(1000, st["sheet"] if this_v.get() else None, None, q_v.get())
+            tv.delete(*tv.get_children())
+            for i, e in enumerate(res["entries"]):
+                tv.insert("", "end", iid=str(i), text=str(e.get("at") or "")[:19].replace("T", " "),
+                          values=tuple("" if e.get(c) is None else e.get(c) for c in cols))
+            tk_ui.stripe(tv)
+            count.config(text=f"{res['total']} change(s)" + (" - showing the newest 1000" if res["total"] > 1000 else ""))
+        q_v.trace_add("write", fill)
+
+        def go(_=None):
+            sel = tv.selection()
+            if not sel:
+                return
+            sheet, rid = tv.set(sel[0], "sheet"), tv.set(sel[0], "rowId")
+            if not stree.exists(sheet):
+                return
+            stree.selection_set(sheet)
+            root.after(300, lambda: [rtree.selection_set(i) or rtree.see(i)
+                                     for i in rtree.get_children() if rtree.item(i, "text") == rid])
+        tv.bind("<Double-1>", go)
+        ttk.Label(win, text="Kept in the workbook's _edit_log tab; the packager exports it to data/_edit_log.json. "
+                            "Double-click to jump to the row.", style="Muted.TLabel").pack(anchor="w", padx=6, pady=4)
+        fill()
 
     def export():
         if not eng.book:
