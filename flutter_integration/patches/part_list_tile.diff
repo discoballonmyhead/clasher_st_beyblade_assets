@@ -1,0 +1,25 @@
+--- a/lib/features/beyblade/presentation/widgets/part_list_tile.dart
++++ b/lib/features/beyblade/presentation/widgets/part_list_tile.dart
+@@ -33,10 +33,20 @@
+       if (part.mass > 0) '${part.mass}g',
+       if (part.hobbyGeneration.trim().isNotEmpty) part.hobbyGeneration,
+       if (part.manufacturer.trim().isNotEmpty) part.manufacturer,
++      // The simple-ratchet rule, visible where parts are picked.
++      if (part case Ratchet(isSimple: true)) 'simple ratchet',
++      if (part
++          case Blade(requiresSimpleRatchet: true) ||
++              AssistBlade(requiresSimpleRatchet: true))
++        'needs simple ratchet',
+     ];
+ 
+-    return Container(
+-      color: selected ? cs.primaryContainer.withValues(alpha: 0.5) : null,
++    // Material, not a coloured Container: ListTile paints its ink on the
++    // nearest Material, and debug builds assert when a colour sits between.
++    return Material(
++      color: selected
++          ? cs.primaryContainer.withValues(alpha: 0.5)
++          : Colors.transparent,
+       child: ListTile(
+         contentPadding: EdgeInsets.symmetric(
+             horizontal: rc.horizontalPadding, vertical: rc.sm / 2),

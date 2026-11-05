@@ -49,6 +49,9 @@ README = {
         "  code            release code the part first came in (BX-01, UX-02, B-150, BB-70 ...).",
         "  edition         which release/version, free text, e.g. 'Starter (S6-60V)'.",
         "  wbolegality     1 = WBO legal, 0 = not, empty = unknown.",
+        "  simpleRatchet   (X Ratchets) 1 = a simple ratchet, 0 = not. Filled by hand (not on the wiki).",
+        "  requiresSimpleRatchet  (X Blades, AssistBlades) 1 = only fits a simple ratchet; the app then offers",
+        "                  only ratchets with simpleRatchet = 1. Filled by hand.",
         "  incompleteData  1 while a row still needs checking; set 0 when verified.",
         "  deleted         leave empty; put 'true' to hide a row without losing its dataID.",
         "  image / minifiedImage  paste a PNG INTO that row's cell (Insert > Pictures > Place in cell / over cell).",
@@ -191,12 +194,30 @@ class Book:
         ws = self.wb[name]
         headers = [c.value for c in ws[1]]
         for col in wanted:
-            if col not in headers:
-                ws.cell(1, len(headers) + 1, col).font = Font(bold=True)
+            if col not in headers:  # a newer schema column on an existing tab: appended, images stay put
+                cell = ws.cell(1, len(headers) + 1, col)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor=HEAD_FILL["data"])
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+                ws.column_dimensions[get_column_letter(len(headers) + 1)].width = 13
+                if col in S.DROPDOWNS and "Lists" in self.wb.sheetnames:
+                    self._validation(ws, len(headers) + 1, S.DROPDOWNS[col])
                 self.dirty = True
                 self.__dict__.get("_hdr_cache", {}).pop(name, None)
+                self._rows_cache.pop(name, None)
                 headers.append(col)
+                self.__dict__.setdefault("added_columns", []).append((name, col))
         return ws
+
+    def ensure_schema_columns(self):
+        """Adds columns a newer schema defines to the part tabs this workbook already has.
+        -> [(tab, column)] added (the workbook is then dirty)."""
+        before = len(self.__dict__.get("added_columns", []))
+        for name in list(self.wb.sheetnames):
+            part = S.parse_part_sheet(name)
+            if part and part[2]:
+                self.part_sheet(part[0], part[1])
+        return self.__dict__.get("added_columns", [])[before:]
 
     def part_sheet(self, gen, key):
         p = S.GENERATIONS[gen]["parts"][key]

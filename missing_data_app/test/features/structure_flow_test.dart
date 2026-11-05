@@ -82,6 +82,12 @@ void main() {
     expect(find.textContaining('Unsaved changes'), findsOneWidget);
   });
 
+  testWidgets('columns the schema added on open are announced', (tester) async {
+    repo.addedOnOpen = ['Parts_X_Ratchets.simpleRatchet', 'Parts_X_Blades.requiresSimpleRatchet'];
+    await openWorkbook(tester);
+    expect(find.textContaining('New columns added to this workbook: Parts_X_Ratchets.simpleRatchet'), findsOneWidget);
+  });
+
   testWidgets('the change log lists what was done and jumps to the row', (tester) async {
     await openWorkbook(tester);
     await tester.tap(find.text('Hells Scythe'));

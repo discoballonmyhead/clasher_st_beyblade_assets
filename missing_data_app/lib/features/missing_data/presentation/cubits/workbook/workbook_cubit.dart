@@ -50,7 +50,11 @@ class WorkbookCubit extends Cubit<WorkbookState> {
       (f) async => emit(state.copyWith(status: WorkbookStatus.failed, error: f.message)),
       (summary) async {
         await _settings.addRecent(path);
-        emit(state.copyWith(status: WorkbookStatus.ready, summary: summary, recent: _settings.recentWorkbooks));
+        emit(state.copyWith(
+          status: WorkbookStatus.ready,
+          summary: summary,
+          recent: _settings.recentWorkbooks,
+        ));
         _changes.notify(DataChange.workbookOpened);
       },
     );

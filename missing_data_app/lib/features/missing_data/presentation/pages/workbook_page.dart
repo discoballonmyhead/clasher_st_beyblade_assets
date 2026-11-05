@@ -40,6 +40,13 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final sheets = context.read<WorkbookCubit>().state.summary?.sheets ?? const [];
     final sheetCubit = context.read<SheetCubit>();
     if (sheetCubit.state.sheet == null && sheets.isNotEmpty) sheetCubit.selectSheet(sheets.first.name);
+    // Columns a newer schema defines (e.g. simpleRatchet) were added on open: say so once the page is up.
+    final added = context.read<WorkbookCubit>().state.summary?.addedColumns ?? const [];
+    if (added.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _snack('New columns added to this workbook: ${added.join(', ')} - save to keep');
+      });
+    }
   }
 
   @override

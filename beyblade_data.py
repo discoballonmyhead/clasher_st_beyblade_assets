@@ -123,6 +123,19 @@ ID_FIELDS = {"dataID", "parentPartId", "productID", "parentProductId", "partData
              "parentCardId", "linkedPartDataID", "productId"}
 
 
+def flags_01(row):
+    """0/1 columns (simpleRatchet, requiresSimpleRatchet, integratedRatchet ...) as 1 / 0; blank stays blank
+    (the app reads blank as 0). Hand-typed TRUE / yes / x become 1."""
+    for k in S.FLAG_COLUMNS & row.keys():
+        v = row[k]
+        if v is None or (isinstance(v, str) and not v.strip()):
+            row[k] = None
+            continue
+        t = str(v).strip().lower()
+        row[k] = 1 if t in ("1", "1.0", "true", "yes", "y", "x") else 0 if t in ("0", "0.0", "false", "no", "n") else v
+    return row
+
+
 def text_ids(row):
     for k in ID_FIELDS & row.keys():
         v = row[k]
@@ -196,6 +209,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         row.pop(img_field, None)
         row.pop(min_field, None)
         text_ids(row)
+        flags_01(row)
 
         if (i, "full") in encoded:
             name, digest = encoded[(i, "full")]
@@ -343,6 +357,7 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
                 rows, _ = drop_deleted(read_sheet_rows(ws))
                 for r in rows:
                     text_ids(r)
+                    flags_01(r)
                 if NO_IMAGE_SHEETS[name] == "productContents":  # the app resolves contents by JSON sheet key
                     for r in rows:
                         r["partType"] = app_part_type(r.get("partType"))

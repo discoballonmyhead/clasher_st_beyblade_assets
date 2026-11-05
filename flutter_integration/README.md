@@ -144,6 +144,55 @@ Checked in the stand-in package (with your original file as the baseline):
   * a failed bey save falls back to the server's pick.
 * The new look was rendered and compared with the old one.
 
+### 6. Simple ratchets
+
+Some blades and assist blades only fit a "simple" ratchet. New catalog fields:
+* `simpleRatchet` on ratchets: 1 = a simple ratchet.
+* `requiresSimpleRatchet` on blades and assist blades: 1 = needs a simple ratchet.
+
+The scraper creates them empty; you fill them in the missing data tool. Blank or missing reads as false, so older
+catalogs keep working.
+
+**What the app does:**
+* **Builder:** the top that decides is the blade in a single-blade build, or the assist blade in a lock chip build.
+  When it needs a simple ratchet:
+  * the Ratchet tile is labelled **Simple Ratchet**;
+  * its picker shows only simple ratchets, with the note "Only simple ratchets are shown: ⟨blade⟩ needs a simple
+    ratchet";
+  * picking such a blade or assist blade drops a non-simple ratchet already in the build;
+  * `selectRatchet` ignores a non-simple ratchet;
+  * the build never resolves with the wrong kind;
+  * "Still needed" says *Simple Ratchet*.
+
+  Switch to a part that doesn't need one and the full list comes back.
+* **Saved builds** that break the rule (made before the data was filled) load in the builder without their ratchet,
+  so a simple one gets picked, the same way it already handles two built-in ratchets.
+* **Randomizer:** builder dice, the randomizer sheet and tournament auto-decks only pair those parts with simple
+  ratchets.
+* **Part lists:** picker rows show "simple ratchet" or "needs simple ratchet". `PartListTile` now uses a `Material`
+  instead of a coloured `Container` for the selected row; debug builds asserted on that when a picker reopened with a
+  part already chosen.
+
+| file | | what |
+|---|---|---|
+| `features/beyblade/domain/entities/entities.dart` | changed | `Ratchet.isSimple`, `Blade.requiresSimpleRatchet` and `AssistBlade.requiresSimpleRatchet` (all default `false`), plus `needsSimpleRatchet()` and `simpleRatchetConflict()` next to `integratedRatchetConflict()` |
+| `features/beyblade/data/models/models.dart` | changed | reads `simpleRatchet` / `requiresSimpleRatchet` with `parseBool` |
+| `features/beyblade/presentation/cubit/bey_builder_cubit/bey_builder_state.dart` | changed | `simpleRatchetRequiredBy`, `requiresSimpleRatchet` |
+| `features/beyblade/presentation/cubit/bey_builder_cubit/bey_builder_cubit.dart` | changed | the rule in `selectBlade`, `selectAssistBlade`, `selectRatchet`, `loadParts`, `missingSlots` and `_buildLoadout` |
+| `features/beyblade/presentation/widgets/beyblade_builder_content.dart` | changed | ratchet picker filter and note, "Simple Ratchet" tile |
+| `features/beyblade/presentation/widgets/part_list_tile.dart` | changed | the labels, and `Material` for the selected row |
+| `features/beyblade/utils/catalog_randomizer.dart` | changed | simple ratchets only for parts that need one |
+
+Checked in the stand-in package, which uses your real builder widget, part picker, randomizer, randomizer sheet and
+stats panel (`test/simple_ratchet_test.dart`, 7 tests):
+* models;
+* the builder rules (single-blade, lock chip, saved build);
+* 300 random builds, every needy part with a simple ratchet;
+* a widget test that taps through the builder: all ratchets offered → pick the needy blade → plain ratchet dropped
+  and the tile renamed → picker shows only the simple one plus the note → back to a normal blade → full list again.
+
+The full stand-in suite (20 tests) passes, including the release contract test on the updated sample catalog.
+
 ## Data compatibility (checked against your parsers)
 
 Checked by running a release through the app's own `downloadCatalogSheets`, `parseMetadataSheets` and `models.dart`

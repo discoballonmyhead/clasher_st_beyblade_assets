@@ -1,0 +1,39 @@
+--- a/lib/features/beyblade/utils/catalog_randomizer.dart
++++ b/lib/features/beyblade/utils/catalog_randomizer.dart
+@@ -349,6 +349,9 @@
+ 
+     String? bladeId, lockId, overId, metalId, mainId, assistId;
+     var integrated = bit.hasIntegratedRatchet;
++    // The blade (single) or assist blade (lock chip build) may only fit a
++    // simple ratchet; then only simple ratchets are rolled.
++    var needsSimple = false;
+ 
+     if (!separated) {
+       // Never two built-in ratchets on one bey (blade + bit).
+@@ -357,12 +360,14 @@
+       if (blade == null) return null;
+       bladeId = blade.dataId;
+       integrated = integrated || blade.hasIntegratedRatchet;
++      needsSimple = blade.requiresSimpleRatchet;
+     } else {
+       final lock = pick(lockChips);
+       final assist = pick(assistBlades);
+       if (lock == null || assist == null) return null;
+       lockId = lock.dataId;
+       assistId = assist.dataId;
++      needsSimple = assist.requiresSimpleRatchet;
+       final mainOk = _mainPossible(gen, f);
+       final overMetalOk = _overMetalPossible(gen, f);
+       final useMain = mainOk && (!overMetalOk || _random.nextBool());
+@@ -381,8 +386,9 @@
+ 
+     String? ratchetId;
+     if (!integrated) {
+-      final ratchet = pick(ratchets);
+-      if (ratchet == null) return null;
++      final ratchet =
++          pick(ratchets, (Ratchet r) => !needsSimple || r.isSimple);
++      if (ratchet == null) return null; // no simple ratchet left: next try
+       ratchetId = ratchet.dataId;
+     }
+ 

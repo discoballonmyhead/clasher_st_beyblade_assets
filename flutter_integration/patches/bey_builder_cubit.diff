@@ -1,0 +1,80 @@
+--- a/lib/features/beyblade/presentation/cubit/bey_builder_cubit/bey_builder_cubit.dart
++++ b/lib/features/beyblade/presentation/cubit/bey_builder_cubit/bey_builder_cubit.dart
+@@ -48,16 +48,23 @@
+ 
+   /// A blade with a built-in ratchet drops a bit that also has one
+   /// (see [integratedRatchetConflict]); the bit picker hides those bits.
++  /// A blade that needs a simple ratchet drops a ratchet that isn't one
++  /// (see [simpleRatchetConflict]); the ratchet picker then offers only
++  /// simple ratchets.
+   void selectBlade(Blade blade) {
+     emit(state.copyWith(
+       selectedBlade: blade,
+-      clearRatchet: blade.hasIntegratedRatchet,
++      clearRatchet: blade.hasIntegratedRatchet ||
++          simpleRatchetConflict(state.selectedRatchet, blade: blade),
+       clearBit: integratedRatchetConflict(blade, state.selectedBit),
+     ));
+     _resolve();
+   }
+ 
++  /// Ignored when the top needs a simple ratchet and [ratchet] isn't one:
++  /// the picker hides those, this only guards other callers.
+   void selectRatchet(Ratchet ratchet) {
++    if (state.requiresSimpleRatchet && !ratchet.isSimple) return;
+     emit(state.copyWith(selectedRatchet: ratchet));
+     _resolve();
+   }
+@@ -97,8 +104,14 @@
+     _resolve();
+   }
+ 
++  /// Like [selectBlade]: an assist blade that needs a simple ratchet drops
++  /// a ratchet that isn't one.
+   void selectAssistBlade(AssistBlade assistBlade) {
+-    emit(state.copyWith(selectedAssistBlade: assistBlade));
++    emit(state.copyWith(
++      selectedAssistBlade: assistBlade,
++      clearRatchet: simpleRatchetConflict(state.selectedRatchet,
++          assistBlade: assistBlade),
++    ));
+     _resolve();
+   }
+ 
+@@ -127,6 +140,13 @@
+     if (unibody && integratedRatchetConflict(blade, bit)) bit = null;
+     final integrated = (unibody && (blade?.hasIntegratedRatchet ?? false)) ||
+         (bit?.hasIntegratedRatchet ?? false);
++    // A saved build from before the simple-ratchet rule (or from data that
++    // changed since) loads without its ratchet, so a simple one gets picked.
++    if (simpleRatchetConflict(ratchet,
++        blade: unibody ? blade : null,
++        assistBlade: unibody ? null : assistBlade)) {
++      ratchet = null;
++    }
+     emit(BeyBuilderState(
+       bladeMode: bladeMode,
+       coreMode: coreMode,
+@@ -169,7 +189,9 @@
+       }
+       if (s.selectedAssistBlade == null) out.add('Assist Blade');
+     }
+-    if (!s.ratchetDisabled && s.selectedRatchet == null) out.add('Ratchet');
++    if (!s.ratchetDisabled && s.selectedRatchet == null) {
++      out.add(s.requiresSimpleRatchet ? 'Simple Ratchet' : 'Ratchet');
++    }
+     if (s.selectedBit == null) out.add('Bit');
+     return out;
+   }
+@@ -198,6 +220,11 @@
+     // ResolveBeybladeUseCase doesn't check this, so before this line a
+     // build with no ratchet resolved as complete and could be registered.
+     if (!state.ratchetDisabled && state.selectedRatchet == null) return null;
++    // Never resolve a top that needs a simple ratchet on another one.
++    if (state.requiresSimpleRatchet &&
++        !(state.selectedRatchet?.isSimple ?? true)) {
++      return null;
++    }
+ 
+     if (state.bladeMode == BladeMode.unibody) {
+       final blade = state.selectedBlade;
