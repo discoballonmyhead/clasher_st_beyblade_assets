@@ -1,5 +1,5 @@
 {
-  "packagedAt": "2026-11-03T01:05:05.154735+00:00",
+  "packagedAt": "2026-11-05T03:20:54.280058+00:00",
   "workbooks": [
     "beyblade_parts.xlsx",
     "beyblade_products.xlsx"
@@ -7,8 +7,8 @@
   "sheets": {
     "blades": {
       "rowCount": 383,
-      "withImage": 283,
-      "withoutImage": 100
+      "withImage": 383,
+      "withoutImage": 0
     },
     "burstLayers": {
       "rowCount": 84,
@@ -17,8 +17,8 @@
     },
     "ratchets": {
       "rowCount": 420,
-      "withImage": 304,
-      "withoutImage": 116
+      "withImage": 305,
+      "withoutImage": 115
     },
     "bits": {
       "rowCount": 440,
@@ -66,8 +66,8 @@
   },
   "imagesByGeneration": {
     "X": {
-      "blades": 283,
-      "ratchets": 304,
+      "blades": 383,
+      "ratchets": 305,
       "bits": 289,
       "lockChips": 61,
       "overBlades": 15,
@@ -83,7 +83,7 @@
   },
   "imagesByHobby": {
     "Beyblade": {
-      "X": 1339,
+      "X": 1440,
       "Burst": 66
     }
   }
