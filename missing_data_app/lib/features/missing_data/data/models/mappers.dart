@@ -37,6 +37,7 @@ WorkbookSummary workbookFromJson(Json j) => WorkbookSummary(
           : null,
       logEntries: _i(j['logEntries']),
       customColumns: _i(j['customColumns']),
+      addedColumns: [for (final c in (j['addedColumns'] as List? ?? const [])) _s(c)],
     );
 
 SheetAnalysis analysisFromJson(Json j) => SheetAnalysis(

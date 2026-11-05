@@ -50,6 +50,9 @@ On first start, open **Settings** (gear icon) and check:
 * **Fill from wiki** runs the scraper's polite client on the ticked rows. Progress shows in the log panel and you
   can stop it.
 * **Recently edited** lists the latest edits across all tabs.
+* **New schema columns:** when a workbook opens without a column the schema now defines (e.g. `simpleRatchet` /
+  `requiresSimpleRatchet`), it's added, empty, and a message says so. Save to keep it. Flag columns accept 1/0,
+  yes/no or true/false.
 * **New row** (rows panel) adds a row with the next free id and asks for its name. In the editor, **Duplicate as
   variant** creates a recolor of the open row (shared fields copied, parent id set), and **Copy row** copies every
   field. The new row opens in the editor.

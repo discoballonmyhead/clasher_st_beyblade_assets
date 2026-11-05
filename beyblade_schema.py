@@ -43,6 +43,13 @@ CURRENCIES = ["JPY", "USD", "EUR", "KRW", "GBP", "CAD", "AUD"]
 BEY_TYPES = ["attack", "defense", "stamina", "balance"]
 SPIN_DIRS = ["right", "left", "both"]
 YES_NO = [0, 1]
+# Simple ratchets: some X blades / assist blades only fit a "simple" ratchet. Not on the wiki - filled by hand
+# (missing_data_tool.py); the app only offers simple ratchets for a part that needs one.
+SIMPLE_RATCHET = "simpleRatchet"                    # ratchets: 1 = this is a simple ratchet
+REQUIRES_SIMPLE_RATCHET = "requiresSimpleRatchet"   # blades / assist blades: 1 = needs a simple ratchet
+# 0/1 columns: the tools accept 1/0, true/false, yes/no and store 1 or 0
+FLAG_COLUMNS = {"incompleteData", "wbolegality", "integratedRatchet", "twoStat", "sequential",
+                SIMPLE_RATCHET, REQUIRES_SIMPLE_RATCHET}
 
 # -----------------------------------------------------------------------------
 # GENERATIONS -> part types (sheet suffix, label, extra columns, wiki words)
@@ -123,10 +130,11 @@ GENERATIONS = OrderedDict([
         "parts": OrderedDict([  # column orders mirror the existing data/*.json exactly
             ("blades",       {"sheet": "Blades", "label": "Blade", "words": ["blade"],
                               "categories": ["Beyblade X Blades", "Blades (Beyblade X)"],
-                              "columns": PART_HEAD + BLADE_LIKE + ["integratedRatchet"] + PART_TAIL}),
+                              "columns": PART_HEAD + BLADE_LIKE + ["integratedRatchet", "requiresSimpleRatchet"]
+                              + PART_TAIL}),
             ("ratchets",     {"sheet": "Ratchets", "label": "Ratchet", "words": ["ratchet"],
                               "categories": ["Ratchets"],
-                              "columns": PART_HEAD + ["protrusions", "heightMm"] + STATS + PART_TAIL}),
+                              "columns": PART_HEAD + ["protrusions", "heightMm", "simpleRatchet"] + STATS + PART_TAIL}),
             ("bits",         {"sheet": "Bits", "label": "Bit", "words": ["bit"], "categories": ["Bits"],
                               "columns": PART_HEAD + ["baseName", "movementStyle"] + STATS +
                               ["dash", "burstRes", "twoStat", "integratedRatchet"] + PART_TAIL}),
@@ -139,7 +147,8 @@ GENERATIONS = OrderedDict([
             ("mainBlades",   {"sheet": "MainBlades", "label": "Main Blade", "words": ["main blade"],
                               "categories": ["Main Blades"], "columns": PART_HEAD + BLADE_LIKE + PART_TAIL}),
             ("assistBlades", {"sheet": "AssistBlades", "label": "Assist Blade", "words": ["assist blade"],
-                              "categories": ["Assist Blades"], "columns": PART_HEAD + BLADE_LIKE + PART_TAIL}),
+                              "categories": ["Assist Blades"],
+                              "columns": PART_HEAD + BLADE_LIKE + ["requiresSimpleRatchet"] + PART_TAIL}),
         ]),
     }),
 ])
@@ -322,4 +331,4 @@ DROPDOWNS = {"manufacturer": "manufacturer", "hobbyName": "hobbyName", "hobbyGen
              "movementStyle": "type", "spinDir": "spinDir", "productType": "productType",
              "accessoryType": "accessoryType", "region": "region", "currency": "currency",
              "rarity": "rarity", "cardType": "cardType", "incompleteData": "yesNo", "wbolegality": "yesNo",
-             "sequential": "yesNo"}
+             "sequential": "yesNo", "simpleRatchet": "yesNo", "requiresSimpleRatchet": "yesNo"}

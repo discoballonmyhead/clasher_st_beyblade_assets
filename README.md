@@ -41,6 +41,18 @@ Same ID model everywhere: `dataID` (stable, never reused) + `parent…Id` / `var
 (recolors, random-booster items `BX-50 06`, foil cards ...). Each workbook has a README and a Lists sheet
 (dropdown values). Open `samples/` to see how filled rows look.
 
+**Simple ratchets (X):** `Parts_X_Ratchets.simpleRatchet` (1 = a simple ratchet) and
+`requiresSimpleRatchet` on `Parts_X_Blades` / `Parts_X_AssistBlades` (1 = only fits a simple ratchet). Both are 0/1
+with the yes/no dropdown. They aren't on the wiki, so the scraper creates the columns but leaves them empty: fill them
+by hand in the missing data tool.
+* Older workbooks get the columns the first time you open them in the tool (logged; save to keep).
+* Typing 1/0, yes/no, true/false or x all work.
+* A recolor copies the value from its base part (auto-fill and "Duplicate as variant").
+* The packager writes 1 / 0, and blank stays blank (the app reads blank as 0).
+* In the app, a blade (single-blade build) or assist blade (lock chip build) with `requiresSimpleRatchet = 1` is only
+  offered simple ratchets: in the builder, its ratchet picker and the randomizer. See
+  `flutter_integration/README.md`.
+
 ## Start a store
 ```bash
 python make_sample_workbooks.py --empty .

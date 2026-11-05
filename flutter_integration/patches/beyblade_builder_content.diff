@@ -1,0 +1,31 @@
+--- a/lib/features/beyblade/presentation/widgets/beyblade_builder_content.dart
++++ b/lib/features/beyblade/presentation/widgets/beyblade_builder_content.dart
+@@ -243,6 +243,16 @@
+         hiddenNote = 'Blades with a built-in ratchet are hidden: '
+             '${bit!.name} already has one.';
+       }
++    } else if (identical(cubit, _ratchetCubit)) {
++      // A blade / assist blade that only fits a simple ratchet: offer only
++      // those. Reset otherwise, so the filter never sticks to a later build.
++      final needer = s.simpleRatchetRequiredBy;
++      cubit.setExclude(
++          needer != null ? (p) => p is Ratchet && !p.isSimple : null);
++      if (needer != null) {
++        hiddenNote = 'Only simple ratchets are shown: ${needer.name} '
++            'needs a simple ratchet.';
++      }
+     }
+     // First open: start on the generation already in the build, so an X
+     // build isn't offered Burst parts first. "All" is one tap away.
+@@ -286,7 +296,10 @@
+   /// Exactly the tiles the current mode needs, in build order.
+   List<_TileSpec> _tileSpecs(BeyBuilderState s) {
+     final c = _builderCubit;
+-    final ratchet = _tile('Ratchet', s.selectedRatchet, _ratchetCubit,
++    final ratchet = _tile(
++        s.requiresSimpleRatchet ? 'Simple Ratchet' : 'Ratchet',
++        s.selectedRatchet,
++        _ratchetCubit,
+         (p) => c.selectRatchet(p as Ratchet));
+     final bit =
+         _tile('Bit', s.selectedBit, _bitCubit, (p) => c.selectBit(p as Bit));

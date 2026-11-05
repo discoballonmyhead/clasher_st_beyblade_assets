@@ -23,6 +23,7 @@ class WorkbookSummary extends Equatable {
     this.lastSaved,
     this.logEntries = 0,
     this.customColumns = 0,
+    this.addedColumns = const [],
   });
 
   final String path;
@@ -42,10 +43,15 @@ class WorkbookSummary extends Equatable {
   /// Columns added with the tool, over all tabs.
   final int customColumns;
 
+  /// "Tab.column" the schema defines but the workbook didn't have yet (e.g. simpleRatchet): added, empty,
+  /// when it was opened. Saved with the next save.
+  final List<String> addedColumns;
+
   String get fileName => path.split(RegExp(r'[\\/]')).last;
 
   @override
-  List<Object?> get props => [path, kind, sheets, dirty, undoSteps, lastSaved, logEntries, customColumns];
+  List<Object?> get props =>
+      [path, kind, sheets, dirty, undoSteps, lastSaved, logEntries, customColumns, addedColumns];
 }
 
 /// A row someone (or the scraper) changed, newest first.

@@ -21,6 +21,9 @@ class FakeRepository implements MissingDataRepository {
 
   /// Columns added through [addColumn] (counted as missing like the others).
   final customColumns = <String>[];
+
+  /// What the engine reports as added from the schema when the workbook opens.
+  List<String> addedOnOpen = const [];
   final editLogEntries = <EditLogEntry>[];
 
   List<String> get _checked => ['type', 'mass', ...customColumns];
@@ -52,6 +55,7 @@ class FakeRepository implements MissingDataRepository {
         undoSteps: undoSteps,
         logEntries: editLogEntries.length,
         customColumns: customColumns.length,
+        addedColumns: addedOnOpen,
       );
 
   @override

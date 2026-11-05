@@ -59,6 +59,7 @@ OPTIONAL = {"parentPartId", "variantLabel", "updated_at", "deleted", "incomplete
             "illustrator", "legality", "description", "subType", "productID", "lastKnownCode"}
 # Fields a variant shares with its parent
 INHERIT = {"name", "type", "spinDir", "attack", "defense", "stamina", "mass", "wbolegality", "system",
+           S.SIMPLE_RATCHET, S.REQUIRES_SIMPLE_RATCHET,
            "layerComponent", "discType", "movementStyle", "baseName", "protrusions", "heightMm", "dash",
            "burstRes", "hobbyName", "hobbyGeneration",
            # products: random-booster items / re-releases share these with the box
@@ -68,6 +69,7 @@ INHERIT = {"name", "type", "spinDir", "attack", "defense", "stamina", "mass", "w
            "battleEdge", "spinStrength", "effectText", "loreText"}
 # Fields that don't change between releases of the same part
 STABLE = {"type", "spinDir", "attack", "defense", "stamina", "wbolegality", "system", "layerComponent",
+          S.SIMPLE_RATCHET, S.REQUIRES_SIMPLE_RATCHET,
           "movementStyle", "baseName", "protrusions", "heightMm", "dash", "burstRes", "discType"}
 PARENT_COL = {"dataID": ("parentPartId", "parentCardId"), "productID": ("parentProductId",),
               "setID": ("parentSetId",)}
@@ -125,6 +127,25 @@ def _short(v, n=200):
         return None
     t = v if isinstance(v, (int, float)) else str(v)
     return t[:n] if isinstance(t, str) else t
+
+
+FLAG_TRUE = {"1", "true", "yes", "y", "x"}
+FLAG_FALSE = {"0", "false", "no", "n"}
+
+
+def cell_value(field, v):
+    """What a typed value is stored as: 0/1 for flag columns (simpleRatchet, requiresSimpleRatchet ...),
+    numbers as numbers, blanks as None."""
+    if isinstance(v, str):
+        v = parse_value(v)
+    if field in S.FLAG_COLUMNS and v is not None:
+        t = str(v).strip().lower()
+        if t in FLAG_TRUE:
+            return 1
+        if t in FLAG_FALSE:
+            return 0
+        raise ValueError(f"{field} takes 1 or 0 (yes/no, true/false), not {v!r}")
+    return v
 
 
 def parse_value(text):
@@ -294,7 +315,7 @@ def set_value(book, sheet, row_id, field, value):
     hdr = book.headers(ws)
     if field not in hdr:
         raise ValueError(f"{sheet} has no column '{field}'")
-    ws.cell(r, hdr[field]).value = parse_value(value) if isinstance(value, str) else value
+    ws.cell(r, hdr[field]).value = cell_value(field, value)
     book.touch(ws, r)
     return r
 
@@ -425,6 +446,15 @@ class Engine:
         self._cache.clear()
         self._undo.clear()
         self.last_saved = os.path.getmtime(path) if os.path.exists(path) else None
+        # Columns a newer schema added (e.g. simpleRatchet) appear on existing tabs right away, empty,
+        # instead of only after the next scrape. Logged; saved with the next save.
+        self.added_on_open = self.book.ensure_schema_columns()
+        if self.added_on_open:
+            self.book.append_rows(S.EDIT_LOG_SHEET, S.EDIT_LOG_COLUMNS, [
+                {"at": now_iso(), "source": self.source, "action": "add_column", "sheet": tab, "field": col,
+                 "note": "new schema column, added when the workbook was opened"} for tab, col in self.added_on_open])
+            self.log("Added new columns from the schema (save to keep): "
+                     + ", ".join(f"{t}.{c}" for t, c in self.added_on_open))
         return self.summary()
 
     # ---- change log -------------------------------------------------------------
@@ -536,7 +566,7 @@ class Engine:
                     vals[pcol] = src.get(pcol) if not blank(src.get(pcol)) else src.get(idc)
                 note = f"variant of #{vals.get(pcol, copy_from)}"
         for k, v in (values or {}).items():
-            vals[k] = parse_value(v) if isinstance(v, str) else v
+            vals[k] = cell_value(k, v)
         if blank(vals.get(idc)):
             vals.pop(idc, None)  # next free id
         r, rid, _ = self.book.write(ws, vals, id_col=idc, id_prefix=prefix)
@@ -561,6 +591,7 @@ class Engine:
         return {"path": self.path, "kind": kind_of_workbook(self.path), "sheets": sheets,
                 "dirty": bool(self.book.dirty), "undo": len(self._undo), "lastSaved": self.last_saved,
                 "logEntries": log_rows,
+                "addedColumns": [f"{t}.{c}" for t, c in getattr(self, "added_on_open", [])],
                 "customColumns": sum(len(v) for v in self.book.custom_columns().values())}
 
     def save(self):
@@ -676,7 +707,7 @@ class Engine:
         for f, v in values.items():
             if f not in hdr:
                 continue
-            new = parse_value(v) if isinstance(v, str) else v
+            new = cell_value(f, v)
             cell = ws.cell(r, hdr[f])
             if str(cell.value if cell.value is not None else "") != str(new if new is not None else ""):
                 changes.append(("cell", sheet, r, hdr[f], cell.value))
