@@ -172,6 +172,9 @@ Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, 
 * **Empty rows don't hide data any more.** The tools and the packager used to stop at the first empty row, so
   clearing a row (Delete key) made every row below it look gone. Now empty rows are skipped. To remove a part, put
   `true` in `deleted`; if you delete rows in Excel, use right-click → Delete.
+* **Pictures can't vanish in Excel any more.** Excel sizes the pictures it saves by the cells they cover, so
+  deleting or resizing rows can squash a picture to nothing: still in the file (the tools and the app show it),
+  invisible in Excel. Every tool save now gives each picture its own size, the way new pictures are written.
 * **Close the workbook in Excel before opening it in a tool, and the other way round.** Whichever saves last wins.
 
 **Something looks wrong?** Don't open the workbook in a tool again. Copy it somewhere safe first, then:
@@ -189,6 +192,17 @@ python missing_data_tool.py restore --workbook beyblade_parts.xlsx --from data -
 ```bash
 python missing_data_tool.py restore --workbook beyblade_parts.xlsx --from data
 ```
+**Pictures on the wrong rows?** Put back the packaged picture of every row, matched by id:
+```bash
+python missing_data_tool.py restore --workbook beyblade_parts.xlsx --from data --replace-pictures --dry-run
+```
+```bash
+python missing_data_tool.py restore --workbook beyblade_parts.xlsx --from data --replace-pictures
+```
+It replaces each picture that differs from the package, removes pictures stacked in the same cell or left on
+empty rows, and **keeps every picture you set with the tool after the package was made** (it reads the change log).
+Rows newer than the package keep theirs; check those by hand. `inspect --from data` lists which rows differ.
+
 `restore` fills blank cells and missing pictures from the package, and never overwrites a filled cell or an
 existing picture. It writes `beyblade_parts-restored.xlsx` and leaves your workbook untouched: check the copy, then
 replace the original with it.

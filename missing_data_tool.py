@@ -36,7 +36,7 @@ CLI:  python missing_data_tool.py report --workbook beyblade_parts.xlsx [--sheet
       python missing_data_tool.py add-row    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades [--variant-of 65 | --copy-of 65] [--set name=Foo]
       python missing_data_tool.py log        --workbook beyblade_parts.xlsx [--sheet ...] [--limit 50]
       python missing_data_tool.py inspect    --workbook beyblade_parts.xlsx [--from data]     (read-only)
-      python missing_data_tool.py restore    --workbook beyblade_parts.xlsx --from data [--dry-run] [--add-missing-rows]
+      python missing_data_tool.py restore    --workbook beyblade_parts.xlsx --from data [--dry-run] [--add-missing-rows] [--replace-pictures]
                                              [--out restored.xlsx]   (default: <name>-restored.xlsx, original untouched)
 """
 import argparse
@@ -335,6 +335,58 @@ def restore_value(field, v):
     return v
 
 
+def same_picture(a, b, tolerance=14):
+    """True when two pictures show the same thing (the packager re-encodes, so bytes differ)."""
+    from PIL import Image
+    try:
+        sig = []
+        for data in (a, b):
+            im = Image.open(io.BytesIO(data)).convert("RGBA")
+            bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+            bg.alpha_composite(im)
+            sig.append(bg.convert("RGB").resize((24, 24)).tobytes())
+    except Exception:
+        return False
+    diff = sum(abs(x - y) for x, y in zip(*sig)) / (24 * 24 * 3)
+    return diff <= tolerance
+
+
+def package_time(data_dir):
+    """When the package in data_dir was made (manifest packagedAt), or None."""
+    try:
+        with open(os.path.join(data_dir, "manifest.json"), encoding="utf-8") as f:
+            return parse_time(json.load(f).get("packagedAt"))
+    except (OSError, ValueError):
+        return None
+
+
+def parse_time(v):
+    if isinstance(v, datetime):
+        t = v
+    elif isinstance(v, str) and v.strip():
+        try:
+            t = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def pictures_fixed_since(book, since):
+    """{(sheet, row id)} whose picture was set with the tool after `since` (all logged ones when None)."""
+    out = set()
+    if S.EDIT_LOG_SHEET not in book.wb.sheetnames:
+        return out
+    for _, x in book.rows(book.wb[S.EDIT_LOG_SHEET]):
+        if x.get("action") != "image" or blank(x.get("rowId")):
+            continue
+        t = parse_time(x.get("at"))
+        if since is None or (t is not None and t > since):
+            out.add((x.get("sheet"), str(x.get("rowId")).strip()))
+    return out
+
+
 def inspect_workbook(book, data_dir=None):
     """Read-only health report: rows, empty gaps, pictures, unkeepable content, and what the package has
     that the workbook doesn't."""
@@ -349,6 +401,16 @@ def inspect_workbook(book, data_dir=None):
         live = [(r, x) for r, x in rows if not is_deleted(x)]
         e = {"sheet": name, "rows": len(live), "deleted": len(rows) - len(live), "gaps": book.gaps(ws)[:50],
              "withPicture": sum(1 for r, _ in live if r in full) if img else None}
+        if img:
+            cells = {}
+            for i in ws._images:
+                if hasattr(i.anchor, "_from"):
+                    k = (i.anchor._from.row + 1, i.anchor._from.col + 1)
+                    cells[k] = cells.get(k, 0) + 1
+            used = {r for r, _ in rows}
+            e["pictureAnchors"] = book.anchor_report(ws)
+            e["stackedCells"] = sum(1 for n in cells.values() if n > 1)
+            e["picturesOnEmptyRows"] = sum(n for (r, _), n in cells.items() if r not in used)
         pkg = load_package(data_dir, name) if data_dir else None
         if pkg is not None:
             have = {str(x.get(idc)).strip(): (r, x) for r, x in live}
@@ -362,6 +424,17 @@ def inspect_workbook(book, data_dir=None):
                                   if f not in PACKAGE_SKIP and f in x and blank(x[f]) and not blank(v))
             e["blankCellsThePackageCanFill"] = blanks
             if img:
+                hdr = book.headers(ws)
+                idx = book.image_index(ws)
+                wrong = []
+                for k, (r, _) in have.items():
+                    f = os.path.join(data_dir, "images", f"{json_name(name)}-{k}.webp")
+                    cur = idx.get((r, hdr.get(img)))
+                    if cur is not None and k in pkg and os.path.exists(f):
+                        with open(f, "rb") as fh:
+                            if not same_picture(cur._data(), fh.read()):
+                                wrong.append(k)
+                e["picturesDifferentFromPackage"] = sorted(wrong, key=lambda k: (len(k), k))
                 e["picturesThePackageCanAdd"] = sum(
                     1 for k in pkg if k in have and have[k][0] not in full
                     and os.path.exists(os.path.join(data_dir, "images", f"{json_name(name)}-{k}.webp")))
@@ -765,12 +838,16 @@ class Engine:
         return {"row": r, "id": rid}
 
     @_journaled
-    def restore(self, data_dir, add_missing_rows=False, dry_run=False, sheets=None):
+    def restore(self, data_dir, add_missing_rows=False, dry_run=False, sheets=None, replace_pictures=False):
         """Fills what's missing from a packaged data folder (data/*.json + data/images): blank cells get the
         packaged value, rows without a picture get the packaged picture, and (add_missing_rows) packaged rows the
         workbook no longer has are added back. Never overwrites a filled cell or an existing picture.
+        replace_pictures: also puts the packaged picture on every row whose picture differs from it (pictures
+        that moved to the wrong row), removes extra pictures stacked in the same cell and pictures on empty rows -
+        except rows whose picture was set with the tool after the package was made (you fixed those).
         One undo step; one change-log line per tab."""
         report, changes, entries = [], [], []
+        fixed = pictures_fixed_since(self.book, package_time(data_dir)) if replace_pictures else set()
         for name in sheets or data_sheets(self.book):
             pkg = load_package(data_dir, name)
             if pkg is None:
@@ -781,6 +858,41 @@ class Engine:
             have = {str(x.get(idc)).strip(): r for r, x in self.book.rows(ws)}
             full, small = image_rows(self.book, name)
             rep = {"sheet": name, "cells": 0, "pictures": 0, "rowsAdded": [], "missingRows": []}
+            if replace_pictures and img:
+                rep.update(picturesReplaced=[], picturesAlreadyRight=0, keptYouFixedThem=[], strayRemoved=0)
+                used = {r for r, _ in self.book.rows(ws)}
+                stray = [i for i in ws._images if hasattr(i.anchor, "_from") and i.anchor._from.row + 1 not in used
+                         and i.anchor._from.col + 1 in (hdr.get(img), hdr.get(mini))]
+                rep["strayRemoved"] = len(stray)
+                if stray and not dry_run:
+                    for i in stray:
+                        changes.append(("image", name, i.anchor._from.row + 1, i.anchor._from.col + 1, i._data()))
+                    self.book.remove_pictures(ws, stray)
+                for rid, prow in pkg.items():
+                    r = have.get(rid)
+                    f = os.path.join(data_dir, "images", f"{json_name(name)}-{rid}.webp")
+                    if r is None or not os.path.exists(f):
+                        continue
+                    if (name, rid) in fixed:
+                        rep["keptYouFixedThem"].append(rid)
+                        continue
+                    cur = self.book.pictures_at(ws, r, hdr[img])
+                    with open(f, "rb") as fh:
+                        packaged = fh.read()
+                    small = self.book.pictures_at(ws, r, hdr[mini]) if mini else []
+                    if len(cur) == 1 and len(small) <= 1 and same_picture(cur[0]._data(), packaged):
+                        rep["picturesAlreadyRight"] += 1
+                        continue
+                    if not cur:
+                        continue  # nothing there: the fill below adds it
+                    rep["picturesReplaced"].append(rid)
+                    if dry_run:
+                        continue
+                    for col, pics in ((hdr[img], cur), (hdr.get(mini), small)):
+                        if col and pics:
+                            changes.append(("image", name, r, col, pics[-1]._data()))
+                            self.book.remove_pictures(ws, pics)
+                full, small = image_rows(self.book, name)
             for rid, prow in pkg.items():
                 r = have.get(rid)
                 if r is None:
@@ -821,10 +933,12 @@ class Engine:
                                     filled_row = True
                 if filled_row and not dry_run:
                     self.book.touch(ws, r)
-            if rep["cells"] or rep["pictures"] or rep["rowsAdded"]:
+            if rep["cells"] or rep["pictures"] or rep["rowsAdded"] or rep.get("strayRemoved"):
                 entries.append({"action": "restore", "sheet": name,
                                 "note": f"from {os.path.basename(os.path.abspath(data_dir))}: {rep['cells']} cells, "
-                                        f"{rep['pictures']} pictures, {len(rep['rowsAdded'])} rows added"})
+                                        f"{rep['pictures']} pictures, {len(rep['rowsAdded'])} rows added"
+                                        + (f", {len(rep['picturesReplaced'])} wrong pictures replaced, "
+                                           f"{rep['strayRemoved']} stray removed" if "picturesReplaced" in rep else "")})
             report.append(rep)
         if not dry_run:
             self._cache.clear()
@@ -1207,6 +1321,10 @@ def run_cli(argv):
             p.add_argument("--dry-run", action="store_true", help="only report what would be filled")
             p.add_argument("--add-missing-rows", action="store_true",
                            help="also add back packaged rows the workbook no longer has")
+            p.add_argument("--replace-pictures", action="store_true",
+                           help="also replace pictures that differ from the package (moved to the wrong row), "
+                                "stacked and stray ones - except rows whose picture you set with the tool after "
+                                "the package was made")
             p.add_argument("--out", help="file to write (default: <workbook>-restored.xlsx; the original is untouched)")
         if name == "report":
             p.add_argument("--csv")
@@ -1246,6 +1364,24 @@ def run_cli(argv):
                          f"cells, {e.get('picturesThePackageCanAdd', 0)} pictures; {len(miss)} packaged rows missing"
                          + (f" ({', '.join(miss[:10])}{' ...' if len(miss) > 10 else ''})" if miss else ""))
             print(line)
+            if e.get("pictureAnchors"):
+                an = e["pictureAnchors"]
+                extra = []
+                if an["twoCell"] or an["absolute"]:
+                    extra.append(f"{an['twoCell'] + an['absolute']} sized by their cells (the next save gives them "
+                                 "their own size)")
+                if an["tiny"]:
+                    extra.append(f"{an['tiny']} squashed to almost nothing (invisible in Excel)")
+                if e["stackedCells"]:
+                    extra.append(f"{e['stackedCells']} cells with several pictures stacked")
+                if e["picturesOnEmptyRows"]:
+                    extra.append(f"{e['picturesOnEmptyRows']} on empty rows")
+                wrong = e.get("picturesDifferentFromPackage") or []
+                if wrong:
+                    extra.append(f"{len(wrong)} differ from the package ({', '.join(wrong[:12])}"
+                                 f"{' ...' if len(wrong) > 12 else ''})")
+                if extra:
+                    print("      pictures: " + "; ".join(extra))
         return
     if a.cmd == "restore":
         eng = Engine(source="restore")
@@ -1253,8 +1389,17 @@ def run_cli(argv):
         eng.open(a.workbook)
         if eng.book.unsupported and not a.dry_run:
             sys.exit("Can't write a restored copy - it would lose: " + "; ".join(eng.book.unsupported))
-        res = eng.restore(a.data_dir, a.add_missing_rows, a.dry_run, [a.sheet] if a.sheet else None)
+        res = eng.restore(a.data_dir, a.add_missing_rows, a.dry_run, [a.sheet] if a.sheet else None,
+                          replace_pictures=a.replace_pictures)
         for r in res["sheets"]:
+            if r.get("picturesReplaced") or r.get("keptYouFixedThem") or r.get("strayRemoved"):
+                rp, kept = r["picturesReplaced"], r["keptYouFixedThem"]
+                print(f"  {r['sheet']:<28} pictures: {len(rp)} wrong -> packaged one"
+                      + (f" ({', '.join(rp[:12])}{' ...' if len(rp) > 12 else ''})" if rp else "")
+                      + f", {r['picturesAlreadyRight']} already right"
+                      + (f", {len(kept)} kept because you fixed them after the package "
+                         f"({', '.join(kept[:12])}{' ...' if len(kept) > 12 else ''})" if kept else "")
+                      + (f", {r['strayRemoved']} stray removed" if r["strayRemoved"] else ""))
             if r["cells"] or r["pictures"] or r["rowsAdded"] or r["missingRows"]:
                 print(f"  {r['sheet']:<28} {r['cells']:>5} cells, {r['pictures']:>4} pictures"
                       + (f", {len(r['rowsAdded'])} rows added" if r["rowsAdded"] else "")
