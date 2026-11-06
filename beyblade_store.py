@@ -533,6 +533,69 @@ class Book:
         self.dirty = True
         self.log_index(target)[title] = (sheet, rid)
 
+    def pictures_at(self, ws, row, col):
+        """Every picture anchored at this cell (more than one when pictures got stacked)."""
+        return [i for i in ws._images if hasattr(i.anchor, "_from")
+                and (i.anchor._from.row + 1, i.anchor._from.col + 1) == (row, col)]
+
+    def remove_pictures(self, ws, pictures):
+        drop = {id(i) for i in pictures}
+        ws._images = [i for i in ws._images if id(i) not in drop]
+        self.__dict__.get("_img_idx", {}).pop(ws.title, None)
+
+    def normalize_pictures(self):
+        """Gives every picture its own size, anchored to its cell, the way set_image() writes them.
+        Pictures Excel saved are sized by the cells they span ("two-cell" anchors), so deleting or resizing
+        rows and columns can shrink them to nothing: still in the file, invisible in Excel. -> pictures fixed"""
+        from PIL import Image as PILImage
+        fixed = 0
+        min_px = pixels_to_EMU(8)
+        for ws in self.wb.worksheets:
+            names = {v: k for k, v in self.headers(ws).items()} if ws.max_row else {}
+            for img in ws._images:
+                a = img.anchor
+                if not hasattr(a, "_from"):
+                    continue
+                if isinstance(a, OneCellAnchor) and a.ext is not None \
+                        and a.ext.width >= min_px and a.ext.height >= min_px:
+                    continue
+                try:
+                    pw, ph = PILImage.open(io.BytesIO(img._data())).size
+                except Exception:
+                    pw, ph = img.width or 1, img.height or 1
+                name = str(names.get(a._from.col + 1) or "")
+                w = IMAGE_DISPLAY["min" if "mini" in name.lower() else "full"]
+                h = max(1, int(ph * w / pw)) if pw else w
+                img.width, img.height = w, h
+                img.anchor = OneCellAnchor(_from=AnchorMarker(col=a._from.col, row=a._from.row),
+                                           ext=XDRPositiveSize2D(pixels_to_EMU(w), pixels_to_EMU(h)))
+                rd = ws.row_dimensions[a._from.row + 1]
+                rd.height = max(rd.height or 15, h * 0.75 + 4)
+                rd.hidden = False
+                fixed += 1
+        return fixed
+
+    def anchor_report(self, ws):
+        """{"oneCell": n, "twoCell": n, "absolute": n, "tiny": n} - how the pictures of a tab are placed."""
+        out = {"oneCell": 0, "twoCell": 0, "absolute": 0, "tiny": 0}
+        min_px = pixels_to_EMU(8)
+        for i in ws._images:
+            a = i.anchor
+            kind = type(a).__name__
+            if kind == "OneCellAnchor":
+                out["oneCell"] += 1
+                if a.ext is None or a.ext.width < min_px or a.ext.height < min_px:
+                    out["tiny"] += 1
+            elif kind == "TwoCellAnchor":
+                out["twoCell"] += 1
+                if a.to is not None and (a.to.row, a.to.rowOff) <= (a._from.row, a._from.rowOff + min_px // 2):
+                    out["tiny"] += 1
+                elif a.to is not None and (a.to.col, a.to.colOff) <= (a._from.col, a._from.colOff + min_px // 2):
+                    out["tiny"] += 1
+            else:
+                out["absolute"] += 1
+        return out
+
     def image_count(self):
         return sum(len(ws._images) for ws in self.wb.worksheets)
 
@@ -547,6 +610,7 @@ class Book:
                                + "\nThe file on disk is unchanged.")
         os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
         tmp = self.path + ".tmp.xlsx"
+        self.normalize_pictures()
         self.wb.save(tmp)
         expected = self.image_count()
         written = picture_count(tmp)
