@@ -135,4 +135,38 @@ void main() {
     await repo.save();
     expect((await repo.open(copy)).valueOrNull!.unsavedEntries, 0, reason: 'saved: nothing left to recover');
   }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
+
+  test('delete, recently deleted, restore, id check and renumber against the real engine', () async {
+    final tmp = await Directory.systemTemp.createTemp('mdt-del');
+    final wb = '${tmp.path}/beyblade_parts.xlsx';
+    await File('$toolsDir/samples/beyblade_parts.xlsx').copy(wb);
+    await File('$toolsDir/samples/beyblade_products.xlsx').copy('${tmp.path}/beyblade_products.xlsx');
+    await repo.open(wb);
+    final ids = [for (final r in (await repo.rows('Parts_X_Blades')).valueOrNull!.rows) r.id];
+    expect(ids, containsAll(['1', '65', '66', '72']));
+
+    final del = (await repo.deleteRows('Parts_X_Blades', ['72'])).valueOrNull!;
+    expect(del.deleted, ['72']);
+    final bin = (await repo.deletedRows()).valueOrNull!;
+    expect(bin.single.rowId, '72');
+    expect(bin.single.hasImage, isTrue, reason: 'its picture is kept with it');
+
+    final back = (await repo.restoreDeleted([bin.single.key])).valueOrNull!;
+    expect(back.single.id, '72');
+    expect((await repo.deletedRows()).valueOrNull, isEmpty);
+    expect((await repo.row('Parts_X_Blades', '72')).valueOrNull!.image, isNotNull, reason: 'picture restored');
+
+    final issues = (await repo.idCheck()).valueOrNull!;
+    final blades = issues.firstWhere((i) => i.sheet == 'Parts_X_Blades');
+    expect(blades.gapCount, greaterThan(0));
+
+    final r = (await repo.renumber('Parts_X_Blades')).valueOrNull!;
+    expect(r.pendingFiles, ['beyblade_products.xlsx']);
+    final now = [for (final x in (await repo.rows('Parts_X_Blades')).valueOrNull!.rows) int.parse(x.id)]..sort();
+    expect(now, List.generate(now.length, (i) => i + 1));
+    expect((await repo.idCheck()).valueOrNull!.where((i) => i.sheet == 'Parts_X_Blades'), isEmpty);
+
+    expect((await repo.undo()).valueOrNull, startsWith('renumber'), reason: 'one undo step, labelled for the app');
+    expect([for (final x in (await repo.rows('Parts_X_Blades')).valueOrNull!.rows) x.id], containsAll(['65', '72']));
+  }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
 }

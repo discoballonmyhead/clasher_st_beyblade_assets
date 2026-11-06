@@ -8,6 +8,7 @@ import '../cubits/row_editor/row_editor_cubit.dart';
 import '../cubits/row_editor/row_editor_state.dart';
 import '../../domain/entities/structure.dart';
 import '../cubits/sheet/sheet_cubit.dart';
+import 'delete_rows.dart';
 import 'new_row_dialog.dart';
 import 'formatting.dart';
 
@@ -104,6 +105,12 @@ class RowEditorPanel extends StatelessWidget {
                 onPressed: () => _newFrom(context, s.sheet!, d.id, NewRowMode.copy),
                 icon: const Icon(Icons.content_copy, size: 18),
                 label: const Text('Copy row'),
+              ),
+              TextButton.icon(
+                style: TextButton.styleFrom(foregroundColor: cs.error),
+                onPressed: () => deleteRowsWithConfirm(context, s.sheet!, [d.id]),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Delete row'),
               ),
             ]),
           ),

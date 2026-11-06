@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
@@ -5,8 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../core/di/service_locator.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/services/data_change_notifier.dart';
 import '../../domain/entities/workbook.dart';
+import '../cubits/id_check/id_check_cubit.dart';
 import '../cubits/row_editor/row_editor_cubit.dart';
 import '../cubits/row_editor/row_editor_state.dart';
 import '../cubits/sheet/sheet_cubit.dart';
@@ -19,8 +23,10 @@ import '../widgets/add_column_dialog.dart';
 import '../widgets/autofill_dialog.dart';
 import '../widgets/edit_log_dialog.dart';
 import '../widgets/formatting.dart';
+import '../widgets/id_check_prompt.dart';
 import '../widgets/log_panel.dart';
 import '../widgets/recent_edits_dialog.dart';
+import '../widgets/recycle_bin_dialog.dart';
 import '../widgets/row_editor_panel.dart';
 import '../widgets/rows_panel.dart';
 import '../widgets/sheet_sidebar.dart';
@@ -39,6 +45,43 @@ class _WorkbookPageState extends State<WorkbookPage> {
   /// Asks before the WINDOW closes (title-bar ×, Alt+F4, Cmd+Q) when there are unsaved changes - not only
   /// when the in-app Close button is used.
   late final AppLifecycleListener _exitGuard = AppLifecycleListener(onExitRequested: _onExitRequested);
+  StreamSubscription<DataChange>? _changesSub;
+  bool _askingIds = false;
+  bool _checkAgain = false;
+
+  /// Asks about every tab whose ids don't run 1..N (one at a time; "not now" lasts until its ids change).
+  Future<void> _checkIds() async {
+    if (_askingIds) {
+      _checkAgain = true;
+      return;
+    }
+    _askingIds = true;
+    try {
+      final ids = sl<IdCheckCubit>();
+      await ids.check();
+      for (final issue in [...ids.state.pending]) {
+        if (!mounted) return;
+        if (!issue.canRenumber) {
+          _snack('${issue.sheet}: ${issue.nonNumeric} id(s) aren\'t numbers - fix them to renumber this tab');
+          ids.snooze(issue);
+          continue;
+        }
+        if (await askAboutIds(context, issue) == IdChoice.renumber) {
+          await ids.renumber(issue);
+          final s = ids.state;
+          if (s.error != null || s.message != null) _snack(s.error ?? s.message!);
+        } else {
+          ids.snooze(issue);
+        }
+      }
+    } finally {
+      _askingIds = false;
+    }
+    if (_checkAgain && mounted) {
+      _checkAgain = false;
+      await _checkIds();
+    }
+  }
 
   @override
   void initState() {
@@ -49,9 +92,15 @@ class _WorkbookPageState extends State<WorkbookPage> {
     // Columns a newer schema defines (e.g. simpleRatchet) were added on open: say so once the page is up.
     _exitGuard; // start listening
     final summary = context.read<WorkbookCubit>().state.summary;
-    if ((summary?.unsavedEntries ?? 0) > 0) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _offerRecovery(summary!));
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if ((summary?.unsavedEntries ?? 0) > 0) await _offerRecovery(summary!);
+      await _checkIds(); // after the recovery, so it sees the recovered rows
+    });
+    // Rows added, deleted, restored or renumbered: check again that ids run 1..N.
+    _changesSub = sl<DataChangeNotifier>()
+        .stream
+        .where((c) => c == DataChange.structureChanged || c == DataChange.idsChanged)
+        .listen((_) => _checkIds());
     final added = summary?.addedColumns ?? const [];
     if (added.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -108,6 +157,7 @@ class _WorkbookPageState extends State<WorkbookPage> {
 
   @override
   void dispose() {
+    _changesSub?.cancel();
     _exitGuard.dispose();
     _searchFocus.dispose();
     super.dispose();
@@ -270,6 +320,10 @@ class _WorkbookPageState extends State<WorkbookPage> {
                     onPressed: _addColumn, icon: const Icon(Icons.view_column_outlined), label: const Text('Add column')),
                 TextButton.icon(onPressed: _changeLog, icon: const Icon(Icons.receipt_long), label: const Text('Change log')),
                 IconButton(tooltip: 'Recently edited', onPressed: _recent, icon: const Icon(Icons.history)),
+                IconButton(
+                    tooltip: 'Recently deleted',
+                    onPressed: () => showRecycleBin(context),
+                    icon: const Icon(Icons.delete_sweep_outlined)),
                 IconButton(
                     tooltip: 'Settings', onPressed: () => context.push(Routes.settings), icon: const Icon(Icons.settings_outlined)),
                 const SizedBox(width: 8),

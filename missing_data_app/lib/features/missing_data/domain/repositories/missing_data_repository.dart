@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import '../../../../core/error/failure.dart';
 import '../entities/fill_proposal.dart';
 import '../entities/row.dart';
+import '../entities/row_lifecycle.dart';
 import '../entities/sheet_analysis.dart';
 import '../entities/structure.dart';
 import '../entities/workbook.dart';
@@ -49,6 +50,25 @@ abstract class MissingDataRepository {
   /// A new row with the next id -> its id.
   Future<Result<String>> addRow(String sheet, {Map<String, String>? values, String? copyFrom, NewRowMode mode});
   Future<Result<List<ColumnInfo>>> columns(String sheet);
+
+  // ── deleting rows, recently deleted, ids ──
+  /// Removes rows (the rows below move up with their pictures); they go to recently deleted.
+  Future<Result<DeleteResult>> deleteRows(String sheet, List<String> ids);
+
+  /// Recently deleted, newest first.
+  Future<Result<List<DeletedRow>>> deletedRows();
+
+  /// Puts them back at the end of their tab (old id when it's free).
+  Future<Result<List<RestoredRow>>> restoreDeleted(List<String> keys);
+
+  /// Removes them for good ([keys] null = all) -> how many.
+  Future<Result<int>> purgeDeleted({List<String>? keys});
+
+  /// Tabs whose ids don't run 1..N.
+  Future<Result<List<IdIssue>>> idCheck();
+
+  /// Shifts a tab's ids to 1..N and updates what points at them.
+  Future<Result<RenumberResult>> renumber(String sheet);
 
   /// Changes made with the tool, newest first.
   Future<Result<EditLogPage>> editLog({int limit = 500, String? sheet, String query = ''});

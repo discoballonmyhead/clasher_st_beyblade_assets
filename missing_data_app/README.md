@@ -61,7 +61,14 @@ On first start, open **Settings** (gear icon) and check:
 * **Change log** lists everything changed with the tool (this app, the Python GUI or the CLI): when, which tool, tab,
   row, field, and old → new. Search it, limit it to the open tab, and tap an entry to jump to its row. It's kept in the
   workbook's `_edit_log` tab, and the packager exports it.
-* **Undo** (Ctrl+Z) undoes edits, auto-fills, images, new rows and new columns (and their change-log entries). **Save** (Ctrl+S) writes the workbook and keeps
+* **Delete row** (editor) or **Delete ticked** (rows panel) removes rows; the rows below move up with their pictures.
+  Deleted rows go to **Recently deleted** (bin icon in the top bar): restore them (old id when it's free) or remove
+  them for good.
+* **Ids aren't serial:** after opening and after rows are added, deleted or restored, the app checks that each tab's
+  ids run 1..N. If not, it asks: **Shift ids** (order kept; parent ids, ProductContents and TCG links follow, links
+  to deleted rows are cleared) or **Not now** (asked again once the ids change). It warns when changed ids are
+  already in the last package, because the clasher_st app's saved builds store them.
+* **Undo** (Ctrl+Z) undoes edits, auto-fills, images, new rows and new columns, deletes, restores and id shifts (and their change-log entries). **Save** (Ctrl+S) writes the workbook and keeps
   a `.bak` copy. Closing the window (or the workbook) with unsaved changes asks Save / Don't save / Cancel.
 * **Recovery:** every edit is also written at once to `<workbook>.unsaved.jsonl`, so nothing is lost if the app is
   closed without saving, crashes or the engine stops. On the next open of that workbook the app offers **Recover**,

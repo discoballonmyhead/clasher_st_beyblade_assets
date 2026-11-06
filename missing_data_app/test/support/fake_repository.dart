@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:missing_data_app/core/error/failure.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/fill_proposal.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/row.dart';
+import 'package:missing_data_app/features/missing_data/domain/entities/row_lifecycle.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/sheet_analysis.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/structure.dart';
 import 'package:missing_data_app/features/missing_data/domain/entities/workbook.dart';
@@ -29,6 +30,13 @@ class FakeRepository implements MissingDataRepository {
   int unsavedEntries = 0;
   bool recovered = false;
   final editLogEntries = <EditLogEntry>[];
+
+  /// Rows deleted with [deleteRows] (key -> (old id, values)).
+  final deleted = <String, (String, Map<String, Object?>)>{};
+  int _keys = 0;
+
+  /// The id checker is off unless a test turns it on (the sample ids 65 / 203 aren't serial).
+  bool checkIds = false;
 
   List<String> get _checked => ['type', 'mass', ...customColumns];
 
@@ -238,4 +246,99 @@ class FakeRepository implements MissingDataRepository {
 
   @override
   Stream<String> get logLines => _log.stream;
+
+  @override
+  Future<Result<DeleteResult>> deleteRows(String sheet, List<String> ids) async {
+    for (final id in ids) {
+      if (!rowsData.containsKey(id)) return Err(Failure('No row $id in $sheet'));
+    }
+    for (final id in ids) {
+      deleted['k${_keys++}'] = (id, rowsData.remove(id)!);
+      _logEntry('delete_row', rowId: id);
+    }
+    dirty = true;
+    undoSteps++;
+    final orphans = [
+      for (final e in rowsData.entries)
+        if (ids.contains('${e.value['parentPartId']}')) e.key,
+    ];
+    return Ok(DeleteResult(deleted: ids, orphans: orphans));
+  }
+
+  @override
+  Future<Result<List<DeletedRow>>> deletedRows() async => Ok([
+        for (final e in deleted.entries.toList().reversed)
+          DeletedRow(key: e.key, sheet: 'Parts_X_Blades', rowId: e.value.$1, name: '${e.value.$2['name']}'),
+      ]);
+
+  @override
+  Future<Result<List<RestoredRow>>> restoreDeleted(List<String> keys) async {
+    final out = <RestoredRow>[];
+    for (final k in keys) {
+      final (old, values) = deleted.remove(k)!;
+      final id = rowsData.containsKey(old)
+          ? '${rowsData.keys.map(int.parse).fold(0, (a, b) => a > b ? a : b) + 1}'
+          : old;
+      rowsData[id] = values;
+      out.add(RestoredRow(sheet: 'Parts_X_Blades', id: id, oldId: old));
+      _logEntry('undelete', rowId: id, oldValue: old);
+    }
+    dirty = true;
+    undoSteps++;
+    return Ok(out);
+  }
+
+  @override
+  Future<Result<int>> purgeDeleted({List<String>? keys}) async {
+    final gone = keys ?? deleted.keys.toList();
+    for (final k in gone) {
+      deleted.remove(k);
+    }
+    dirty = true;
+    return Ok(gone.length);
+  }
+
+  @override
+  Future<Result<List<IdIssue>>> idCheck() async {
+    if (!checkIds) return const Ok([]);
+    final ids = rowsData.keys.map(int.parse).toList()..sort();
+    final top = ids.isEmpty ? 0 : ids.last;
+    final gaps = [for (var i = 1; i <= top; i++) if (!ids.contains(i)) i];
+    if (gaps.isEmpty) return const Ok([]);
+    return Ok([
+      IdIssue(
+        sheet: 'Parts_X_Blades',
+        rows: ids.length,
+        max: top,
+        gaps: ['${gaps.first}-${gaps.last}'],
+        gapCount: gaps.length,
+        fingerprint: ids.join(','),
+      ),
+    ]);
+  }
+
+  @override
+  Future<Result<RenumberResult>> renumber(String sheet) async {
+    final old = rowsData.keys.map(int.parse).toList()..sort();
+    final map = {for (var i = 0; i < old.length; i++) '${old[i]}': '${i + 1}'};
+    final copy = {...rowsData};
+    rowsData.clear();
+    var refs = 0;
+    for (final o in old) {
+      final v = {...copy['$o']!};
+      final p = v['parentPartId'];
+      if (p != null && map.containsKey('$p')) {
+        v['parentPartId'] = int.parse(map['$p']!);
+        refs++;
+      }
+      rowsData[map['$o']!] = v;
+    }
+    dirty = true;
+    undoSteps++;
+    return Ok(RenumberResult(
+      sheet: sheet,
+      changed: map.entries.where((e) => e.key != e.value).length,
+      references: refs > 0 ? {'$sheet.parentPartId': refs} : const {},
+    ));
+  }
 }

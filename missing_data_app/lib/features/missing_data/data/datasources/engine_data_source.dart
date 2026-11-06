@@ -70,6 +70,16 @@ class EngineDataSource {
   Future<Json> columns(String sheet) => _map('columns', {'sheet': sheet});
   Future<Json> recover() => _map('recover', const {}, const Duration(minutes: 5));
   Future<Json> discardUnsaved() => _map('discardUnsaved');
+  Future<Json> deleteRows(String sheet, List<String> ids) => _map('deleteRows', {'sheet': sheet, 'ids': ids});
+  Future<List<Json>> deleted() async =>
+      [for (final e in (await _call('deleted') as List)) Map<String, dynamic>.from(e as Map)];
+  Future<List<Json>> undelete(List<String> keys) async => [
+        for (final e in (await _call('undelete', {'keys': keys}) as List)) Map<String, dynamic>.from(e as Map),
+      ];
+  Future<Json> purgeDeleted(List<String>? keys) => _map('purgeDeleted', {'keys': keys});
+  Future<List<Json>> idCheck() async =>
+      [for (final e in (await _call('idCheck') as List)) Map<String, dynamic>.from(e as Map)];
+  Future<Json> renumber(String sheet) => _map('renumber', {'sheet': sheet});
   Future<Json> editLog(int limit, String? sheet, String query) =>
       _map('log', {'limit': limit, 'sheet': sheet, 'query': query});
 

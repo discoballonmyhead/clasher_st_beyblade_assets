@@ -36,6 +36,12 @@ CLI:  python missing_data_tool.py report --workbook beyblade_parts.xlsx [--sheet
       python missing_data_tool.py add-row    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades [--variant-of 65 | --copy-of 65] [--set name=Foo]
       python missing_data_tool.py log        --workbook beyblade_parts.xlsx [--sheet ...] [--limit 50]
       python missing_data_tool.py inspect    --workbook beyblade_parts.xlsx [--from data]     (read-only)
+      python missing_data_tool.py delete-row --workbook beyblade_parts.xlsx --sheet Parts_X_Blades --id 66 [72 ...]
+      python missing_data_tool.py deleted    --workbook beyblade_parts.xlsx        (recently deleted)
+      python missing_data_tool.py undelete   --workbook beyblade_parts.xlsx --key KEY [KEY ...]
+      python missing_data_tool.py purge-deleted --workbook beyblade_parts.xlsx [--key KEY ...]
+      python missing_data_tool.py ids        --workbook beyblade_parts.xlsx        (tabs whose ids aren't 1..N)
+      python missing_data_tool.py renumber   --workbook beyblade_parts.xlsx --sheet Parts_X_Blades [--yes]
       python missing_data_tool.py restore    --workbook beyblade_parts.xlsx --from data [--dry-run] [--add-missing-rows] [--replace-pictures]
                                              [--out restored.xlsx]   (default: <name>-restored.xlsx, original untouched)
 """
@@ -46,6 +52,7 @@ import io
 import json
 import os
 import re
+import secrets
 import sys
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -335,6 +342,107 @@ def restore_value(field, v):
     return v
 
 
+def numeric_id(v):
+    """65, 65.0, "65" -> 65; anything else -> None."""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    t = str(v).strip()
+    return int(t) if re.fullmatch(r"\d+", t) else None
+
+
+def id_ranges(nums, limit=30):
+    """[3, 4, 5, 9] -> ["3-5", "9"]"""
+    out, nums = [], sorted(nums)
+    i = 0
+    while i < len(nums) and len(out) < limit:
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        out.append(str(nums[i]) if i == j else f"{nums[i]}-{nums[j]}")
+        i = j + 1
+    return out
+
+
+def renumberable(sheet):
+    """Tabs whose ids are plain numbers (parts, accessories, cards). Products (P1 ...) and sets (S1 ...) aren't."""
+    info = sheet_info(sheet)
+    if not info:
+        return False
+    return bool(S.parse_part_sheet(sheet)) or not (S.SHEETS.get(sheet, {}).get("id_prefix") or "")
+
+
+def reference_targets(sheet):
+    """Other tabs that point at this tab's ids: [(workbook kind, tab, type column, id column)]."""
+    if S.parse_part_sheet(sheet) or sheet == "Accessories":
+        return [("products", "ProductContents", "partType", "partDataID"),
+                ("tcg", "TCG_Cards", "linkedPartType", "linkedPartDataID")]
+    return []
+
+
+def reference_types(sheet):
+    """How ProductContents / TCG cards name this tab (the sheet name, or the app key the packager writes)."""
+    return {sheet, json_name(sheet)} - {None}
+
+
+def sibling_workbook(path, kind):
+    p = os.path.join(os.path.dirname(os.path.abspath(path)), S.BOOK_FILES[kind])
+    return p if os.path.exists(p) else None
+
+
+def track_ids(book, since):
+    """Follows the change log after `since` (a package time): which current id each packaged id became
+    (None = deleted with the tool) and which rows got a picture set with the tool.
+    -> ({sheet: {packaged id: current id or None}}, {(sheet, current id)})"""
+    fwd, fixed = {}, set()
+    if S.EDIT_LOG_SHEET not in book.wb.sheetnames:
+        return fwd, fixed
+    entries = []
+    for _, x in book.rows(book.wb[S.EDIT_LOG_SHEET]):
+        t = parse_time(x.get("at"))
+        if since is None or (t is not None and t > since):
+            entries.append(x)
+    i = 0
+    while i < len(entries):
+        x = entries[i]
+        act, sh = x.get("action"), x.get("sheet")
+        f = fwd.setdefault(sh, {})
+        if act == "renumber":
+            group = [x]
+            while i + 1 < len(entries) and entries[i + 1].get("action") == "renumber" \
+                    and entries[i + 1].get("at") == x.get("at") and entries[i + 1].get("sheet") == sh:
+                i += 1
+                group.append(entries[i])
+            m = {str(g.get("oldValue")).strip(): str(g.get("newValue")).strip() for g in group}
+            held = {v for v in f.values() if v is not None}
+            for p in list(f):
+                if f[p] is not None and f[p] in m:
+                    f[p] = m[f[p]]
+            for old, new in m.items():
+                if old not in f and old not in held:
+                    f[old] = new
+            fixed = {(s, m.get(r, r)) if s == sh else (s, r) for s, r in fixed}
+        elif act == "delete_row" and not blank(x.get("rowId")):
+            rid = str(x.get("rowId")).strip()
+            hit = next((p for p, v in f.items() if v == rid), None)
+            if hit is not None:
+                f[hit] = None
+            elif rid not in f:
+                f[rid] = None
+            fixed.discard((sh, rid))
+        elif act == "undelete" and not blank(x.get("oldValue")):
+            orig, new = str(x.get("oldValue")).strip(), str(x.get("rowId")).strip()
+            if orig in f and f[orig] is None:
+                f[orig] = new
+        elif act == "image" and not blank(x.get("rowId")):
+            fixed.add((sh, str(x.get("rowId")).strip()))
+        i += 1
+    return fwd, fixed
+
+
 def same_picture(a, b, tolerance=14):
     """True when two pictures show the same thing (the packager re-encodes, so bytes differ)."""
     from PIL import Image
@@ -373,20 +481,6 @@ def parse_time(v):
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
-def pictures_fixed_since(book, since):
-    """{(sheet, row id)} whose picture was set with the tool after `since` (all logged ones when None)."""
-    out = set()
-    if S.EDIT_LOG_SHEET not in book.wb.sheetnames:
-        return out
-    for _, x in book.rows(book.wb[S.EDIT_LOG_SHEET]):
-        if x.get("action") != "image" or blank(x.get("rowId")):
-            continue
-        t = parse_time(x.get("at"))
-        if since is None or (t is not None and t > since):
-            out.add((x.get("sheet"), str(x.get("rowId")).strip()))
-    return out
-
-
 def inspect_workbook(book, data_dir=None):
     """Read-only health report: rows, empty gaps, pictures, unkeepable content, and what the package has
     that the workbook doesn't."""
@@ -413,7 +507,10 @@ def inspect_workbook(book, data_dir=None):
             e["picturesOnEmptyRows"] = sum(n for (r, _), n in cells.items() if r not in used)
         pkg = load_package(data_dir, name) if data_dir else None
         if pkg is not None:
-            have = {str(x.get(idc)).strip(): (r, x) for r, x in live}
+            ids_now = track_ids(book, package_time(data_dir))[0].get(name, {})
+            cur = {str(x.get(idc)).strip(): (r, x) for r, x in live}
+            pkg = {k: v for k, v in pkg.items() if ids_now.get(k, k) is not None}
+            have = {k: cur[ids_now.get(k, k)] for k in pkg if ids_now.get(k, k) in cur}
             e["packageRows"] = len(pkg)
             e["inPackageNotInWorkbook"] = sorted((k for k in pkg if k not in have), key=lambda k: (len(k), k))
             blanks = 0
@@ -565,7 +662,8 @@ def wiki_fill(book_path, sheet, ids, limit=None, log=print, stop_event=None, cfg
 
 # ── recovery journal: unsaved edits survive a closed window, a crash or a power cut ──
 
-JOURNALED = ("set_values", "apply", "set_image", "add_column", "add_row", "undo", "restore")
+JOURNALED = ("set_values", "apply", "set_image", "add_column", "add_row", "undo", "restore", "delete_rows",
+             "restore_deleted", "purge_deleted", "renumber")
 
 
 def _jsonable(v):
@@ -625,6 +723,7 @@ class Engine:
         self._cache = {}           # sheet -> {"rows": {r: row}, "missing": {r: [..]}, "opt": bool}
         self._undo = []            # [(label, [(kind, sheet, r, col, old)])]
         self.last_saved = None
+        self.pending_refs = []     # reference updates for the other workbooks, written when this one is saved
         self.journaling = True     # every edit is also appended to <workbook>.unsaved.jsonl until saved
 
     # ---- workbook ---------------------------------------------------------------
@@ -837,6 +936,316 @@ class Engine:
                      [{"action": "add_row", "sheet": sheet, "rowId": rid, "note": note}])
         return {"row": r, "id": rid}
 
+    # ---- delete rows, recently deleted ----------------------------------------
+    def _deleted_ws(self):
+        return self.book.sheet(S.DELETED_SHEET, S.DELETED_COLUMNS, S.DELETED_IMAGE_COLS)
+
+    @_journaled
+    def delete_rows(self, sheet, ids):
+        """Removes rows from a tab; the rows below move up with their pictures (unlike deleting in Excel, nothing
+        gets out of line). Each row goes to Recently deleted (_deleted tab, values + pictures) until restored or
+        emptied. One undo step. -> {"deleted": [ids], "orphans": [variants whose parent was deleted]}"""
+        info = sheet_info(sheet)
+        if not info:
+            raise ValueError(f"{sheet} is not a data tab")
+        idc, img, mini = info
+        ws = self.book.wb[sheet]
+        hdr = self.book.headers(ws)
+        names = {v: k for k, v in hdr.items()}
+        values_of = dict(self.book.rows(ws))
+        targets = []
+        for rid in dict.fromkeys(str(i).strip() for i in ids):
+            r = find_row(self.book, sheet, rid)
+            if r is None:
+                raise ValueError(f"No row {rid} in {sheet}")
+            targets.append((r, rid))
+        cache = self._deleted_ws()
+        chdr = self.book.headers(cache)
+        stamp = now_iso()
+        changes, entries, done = [], [], []
+        for r, rid in sorted(targets, reverse=True):
+            row = values_of[r]
+            snap = self.book.delete_row(ws, r)
+            changes.append(("delrow", sheet, r, None, snap))
+            label = row.get("name") or row.get("productName") or row.get("setName") or ""
+            crow = self.book.append_rows(S.DELETED_SHEET, S.DELETED_COLUMNS, [{
+                "key": secrets.token_hex(5), "deletedAt": stamp, "source": self.source, "sheet": sheet,
+                "rowId": rid, "name": label,
+                "values": json.dumps({k: v for k, v in row.items() if not blank(v)}, default=str)}])[0]
+            for col, data in snap["pictures"].items():
+                n = names.get(col)
+                target = chdr[S.DELETED_IMAGE_COLS[1]] if n == mini else chdr[S.DELETED_IMAGE_COLS[0]] \
+                    if n == img else None
+                if target:
+                    self.book.put_picture(cache, crow, target, data, "min" if n == mini else "full")
+            changes.append(("cacherow", S.DELETED_SHEET, crow, None, None))
+            entries.append({"action": "delete_row", "sheet": sheet, "rowId": rid, "note": str(label)[:80]})
+            done.append(rid)
+        pcol = next((c for c in PARENT_COL.get(idc, ()) if c in hdr), None)
+        orphans = [str(x.get(idc)) for _, x in self.book.rows(ws)
+                   if pcol and str(x.get(pcol)).strip() in done] if pcol else []
+        self._cache.pop(sheet, None)
+        self._logged(f"delete {len(done)} row(s) from {sheet}", changes, entries)
+        return {"deleted": list(reversed(done)), "orphans": orphans}
+
+    def deleted_rows(self, limit=500):
+        """Recently deleted, newest first."""
+        if S.DELETED_SHEET not in self.book.wb.sheetnames:
+            return []
+        ws = self.book.wb[S.DELETED_SHEET]
+        hdr = self.book.headers(ws)
+        idx = self.book.image_index(ws)
+        out = []
+        for r, x in self.book.rows(ws):
+            if blank(x.get("key")):
+                continue
+            out.append({"key": x["key"], "deletedAt": str(x.get("deletedAt") or ""), "source": x.get("source") or "",
+                        "sheet": x.get("sheet"), "rowId": str(x.get("rowId") or ""), "name": x.get("name") or "",
+                        "hasImage": (r, hdr.get(S.DELETED_IMAGE_COLS[0])) in idx})
+        return list(reversed(out))[:limit]
+
+    def _cache_rows(self, keys):
+        ws = self.book.wb[S.DELETED_SHEET] if S.DELETED_SHEET in self.book.wb.sheetnames else None
+        if ws is None:
+            return None, []
+        want = None if keys is None else {str(k) for k in keys}
+        rows = [(r, x) for r, x in self.book.rows(ws) if not blank(x.get("key"))
+                and (want is None or str(x["key"]) in want)]
+        return ws, sorted(rows, key=lambda t: -t[0])
+
+    @_journaled
+    def restore_deleted(self, keys):
+        """Puts rows from Recently deleted back (at the end of their tab, with their pictures). A row keeps its
+        old id when it's still free, else it gets the next id. -> [{"sheet", "id", "oldId"}]"""
+        cache, rows = self._cache_rows(keys)
+        if not rows:
+            return []
+        chdr = self.book.headers(cache)
+        cidx = self.book.image_index(cache)
+        changes, entries, out = [], [], []
+        for cr, x in rows:
+            sheet = x.get("sheet")
+            if sheet not in self.book.wb.sheetnames or not sheet_info(sheet):
+                raise ValueError(f"Tab {sheet} isn't in this workbook any more")
+            idc, img, mini = sheet_info(sheet)
+            ws = self.book.wb[sheet]
+            vals = {k: v for k, v in json.loads(x.get("values") or "{}").items() if k != "updated_at"}
+            old_id = str(x.get("rowId") or "").strip()
+            taken = find_row(self.book, sheet, old_id) is not None if old_id else True
+            if taken:
+                vals.pop(idc, None)
+            else:
+                vals[idc] = numeric_id(old_id) if numeric_id(old_id) is not None else old_id
+            r, rid, _ = self.book.write(ws, vals, id_col=idc)
+            pics = {}
+            for ccol, col, size in ((S.DELETED_IMAGE_COLS[0], img, "full"), (S.DELETED_IMAGE_COLS[1], mini, "min")):
+                p = cidx.get((cr, chdr.get(ccol)))
+                if p is not None and col:
+                    pics[col] = (p._data(), size)
+            for col, (data, size) in pics.items():
+                self.book.set_image(ws, r, col, data, size, replace=True)
+            self.book.touch(ws, r)
+            changes.append(("row", sheet, r, None, None))
+            snap = self.book.delete_row(cache, cr)
+            cidx = self.book.image_index(cache)
+            changes.append(("cacherow_removed", S.DELETED_SHEET, cr, None, snap))
+            entries.append({"action": "undelete", "sheet": sheet, "rowId": rid, "oldValue": old_id,
+                            "note": f"restored as #{rid} (#{old_id} was taken)" if taken else "restored"})
+            out.append({"sheet": sheet, "id": str(rid), "oldId": old_id})
+            self._cache.pop(sheet, None)
+        self._logged(f"restore {len(out)} deleted row(s)", changes, entries)
+        return out
+
+    @_journaled
+    def purge_deleted(self, keys=None):
+        """Removes entries from Recently deleted for good (all when keys is None). Undo still brings them back."""
+        cache, rows = self._cache_rows(keys)
+        if not rows:
+            return {"purged": 0}
+        changes = []
+        for cr, _ in rows:
+            changes.append(("cacherow_removed", S.DELETED_SHEET, cr, None, self.book.delete_row(cache, cr)))
+        self._logged(f"empty {len(rows)} from recently deleted", changes,
+                     [{"action": "purge_deleted", "note": f"{len(rows)} deleted row(s) removed for good"}])
+        return {"purged": len(rows)}
+
+    # ---- ids: serial check and renumber -----------------------------------------
+    def _renumber_plan(self, sheet):
+        """-> (rows [(row, old id)] in new order, {old: new} for references, non-numeric ids)"""
+        idc = sheet_info(sheet)[0]
+        ws = self.book.wb[sheet]
+        rows, bad = [], []
+        for r, x in self.book.rows(ws):
+            n = numeric_id(x.get(idc))
+            (rows.append((n, r)) if n is not None else bad.append(x.get(idc)))
+        rows.sort()
+        mapping = {}
+        for new, (old, _) in enumerate(rows, 1):
+            mapping.setdefault(old, new)  # a duplicated id: references keep pointing at the first one
+        return [(r, old) for old, r in rows], mapping, bad
+
+    def id_check(self, data_dir=None):
+        """Tabs whose ids don't run 1..N (gaps, duplicates). -> [{"sheet", "rows", "max", "gaps", "gapCount",
+        "duplicates", "nonNumeric", "released", "fingerprint"}]"""
+        if data_dir is None and self.path:
+            d = os.path.join(os.path.dirname(os.path.abspath(self.path)), "data")
+            data_dir = d if os.path.isdir(d) else None
+        out = []
+        for name in data_sheets(self.book):
+            if not renumberable(name):
+                continue
+            idc = sheet_info(name)[0]
+            ids = [x.get(idc) for _, x in self.book.rows(self.book.wb[name])]
+            nums = [n for n in (numeric_id(v) for v in ids) if n is not None]
+            if not ids:
+                continue
+            counts = {}
+            for n in nums:
+                counts[n] = counts.get(n, 0) + 1
+            top = max(nums) if nums else 0
+            gaps = sorted(set(range(1, top + 1)) - set(nums))
+            dups = sorted(n for n, c in counts.items() if c > 1)
+            bad = len(ids) - len(nums)
+            if not (gaps or dups or bad):
+                continue
+            released = 0
+            if data_dir and not bad:
+                pkg = load_package(data_dir, name) or {}
+                _, mapping, _ = self._renumber_plan(name)
+                released = sum(1 for o, n in mapping.items() if o != n and str(o) in pkg)
+            fp = f"{len(ids)}:{top}:{sum(nums)}:{len(dups)}:{bad}"
+            out.append({"sheet": name, "rows": len(ids), "max": top, "gaps": id_ranges(gaps),
+                        "gapCount": len(gaps), "duplicates": dups[:30], "nonNumeric": bad,
+                        "released": released, "fingerprint": fp})
+        return out
+
+    @_journaled
+    def renumber(self, sheet):
+        """Shifts a tab's ids to 1..N, keeping their order, and updates everything that points at them: parent ids
+        in the tab, ProductContents and TCG card links (in this workbook now; in the other workbooks next to it when
+        this one is saved). One undo step; every changed id is in the change log."""
+        if not renumberable(sheet):
+            raise ValueError(f"{sheet} ids aren't plain numbers")
+        order, mapping, bad = self._renumber_plan(sheet)
+        if bad:
+            raise ValueError(f"{len(bad)} row(s) in {sheet} have an id that isn't a number "
+                             f"({', '.join(map(str, bad[:5]))}) - fix those first")
+        idc = sheet_info(sheet)[0]
+        ws = self.book.wb[sheet]
+        hdr = self.book.headers(ws)
+        upd = hdr.get("updated_at")
+        changes, entries = [], []
+        new_of_row = {r: n for n, (r, _) in enumerate(order, 1)}
+        moved = {}
+        for r, old in order:
+            new = new_of_row[r]
+            if new == old and not isinstance(ws.cell(r, hdr[idc]).value, str):
+                continue
+            changes.append(("cell", sheet, r, hdr[idc], ws.cell(r, hdr[idc]).value))
+            if upd:
+                changes.append(("cell", sheet, r, upd, ws.cell(r, upd).value))
+            ws.cell(r, hdr[idc]).value = new
+            self.book.touch(ws, r)
+            moved[r] = (old, new)
+            entries.append({"action": "renumber", "sheet": sheet, "rowId": new, "field": idc,
+                            "oldValue": old, "newValue": new})
+        refs, dangling = {}, {}
+        pcol = next((c for c in PARENT_COL.get(idc, ()) if c in hdr), None)
+        if pcol:
+            for r, x in self.book.rows(ws):
+                raw = x.get(pcol)
+                o = numeric_id(raw)
+                if blank(raw):
+                    continue
+                if o is None or o not in mapping:
+                    # its parent was deleted: after renumbering that number belongs to another row
+                    changes.append(("cell", sheet, r, hdr[pcol], raw))
+                    ws.cell(r, hdr[pcol]).value = None
+                    self.book._refresh_cached_row(ws, r, False)
+                    dangling.setdefault(f"{sheet}.{pcol}", []).append(str(new_of_row.get(r, x.get(idc))))
+                elif mapping[o] != o:
+                    changes.append(("cell", sheet, r, hdr[pcol], raw))
+                    ws.cell(r, hdr[pcol]).value = mapping[o]
+                    self.book._refresh_cached_row(ws, r, False)
+                    refs[f"{sheet}.{pcol}"] = refs.get(f"{sheet}.{pcol}", 0) + 1
+        pending = []
+        for kind, tab, tcol, icol in reference_targets(sheet):
+            if kind == self.book.kind:
+                if tab in self.book.wb.sheetnames:
+                    n, gone = self._remap_refs(self.book, tab, tcol, icol, reference_types(sheet), mapping, changes)
+                    if n:
+                        refs[f"{tab}.{icol}"] = n
+                    if gone:
+                        dangling[f"{tab}.{icol}"] = gone
+            elif self.path and sibling_workbook(self.path, kind):
+                token = secrets.token_hex(4)
+                self.pending_refs.append({"token": token, "kind": kind, "path": sibling_workbook(self.path, kind),
+                                          "tab": tab, "typeCol": tcol, "idCol": icol, "sheet": sheet,
+                                          "types": sorted(reference_types(sheet)),
+                                          "map": {str(o): n for o, n in mapping.items()}})
+                changes.append(("pendingrefs", sheet, None, None, token))
+                pending.append(os.path.basename(self.pending_refs[-1]["path"]))
+        if refs:
+            entries.append({"action": "renumber_refs", "sheet": sheet,
+                            "note": ", ".join(f"{k}: {v}" for k, v in refs.items())})
+        for k, rows in dangling.items():
+            entries.append({"action": "renumber_refs", "sheet": k.split(".")[0], "field": k.split(".")[1],
+                            "note": f"cleared {len(rows)} link(s) to deleted rows of {sheet} "
+                                    f"(rows {', '.join(rows[:20])})"})
+        self._cache.clear()
+        self._logged(f"renumber {sheet}", changes, entries)
+        return {"sheet": sheet, "changed": len(moved), "references": refs,
+                "cleared": {k: v for k, v in dangling.items()}, "pendingFiles": sorted(set(pending))}
+
+    @staticmethod
+    def _remap_refs(book, tab, tcol, icol, types, mapping, changes=None):
+        ws = book.wb[tab]
+        hdr = book.headers(ws)
+        if tcol not in hdr or icol not in hdr:
+            return 0
+        n, gone = 0, []
+        for r, x in book.rows(ws):
+            if str(x.get(tcol) or "").strip() not in types or blank(x.get(icol)):
+                continue
+            o = numeric_id(x.get(icol))
+            new = mapping.get(o) if o is not None else None
+            if new is None:
+                # points at a row that no longer exists: after renumbering it would hit another one
+                if changes is not None:
+                    changes.append(("cell", tab, r, hdr[icol], ws.cell(r, hdr[icol]).value))
+                ws.cell(r, hdr[icol]).value = None
+                gone.append(str(r))
+            elif new != o:
+                if changes is not None:
+                    changes.append(("cell", tab, r, hdr[icol], ws.cell(r, hdr[icol]).value))
+                ws.cell(r, hdr[icol]).value = new
+                n += 1
+        if n or gone:
+            book._forget(ws)
+        return n, gone
+
+    def _write_pending_refs(self):
+        """Applies queued reference updates to the other workbooks (before this one is saved)."""
+        done = []
+        for p in self.pending_refs:
+            other = Book(p["path"], p["kind"])
+            if p["tab"] not in other.wb.sheetnames:
+                continue
+            mapping = {int(k): v for k, v in p["map"].items()}
+            n, gone = self._remap_refs(other, p["tab"], p["typeCol"], p["idCol"], set(p["types"]), mapping)
+            if n or gone:
+                other.append_rows(S.EDIT_LOG_SHEET, S.EDIT_LOG_COLUMNS, [{
+                    "at": now_iso(), "source": self.source, "action": "renumber_refs", "sheet": p["tab"],
+                    "field": p["idCol"],
+                    "note": f"{n} updated, {len(gone)} cleared (pointed at deleted rows, sheet rows "
+                            f"{', '.join(gone[:20])}): {p['sheet']} was renumbered in {os.path.basename(self.path)}"}])
+                other.save()
+                self.log(f"Updated {n} {p['tab']}.{p['idCol']} in {os.path.basename(p['path'])}"
+                         + (f"; cleared {len(gone)} that pointed at deleted rows (sheet rows {', '.join(gone[:10])})"
+                            if gone else ""))
+            done.append(p)
+        self.pending_refs = [p for p in self.pending_refs if p not in done]
+
     @_journaled
     def restore(self, data_dir, add_missing_rows=False, dry_run=False, sheets=None, replace_pictures=False):
         """Fills what's missing from a packaged data folder (data/*.json + data/images): blank cells get the
@@ -847,7 +1256,7 @@ class Engine:
         except rows whose picture was set with the tool after the package was made (you fixed those).
         One undo step; one change-log line per tab."""
         report, changes, entries = [], [], []
-        fixed = pictures_fixed_since(self.book, package_time(data_dir)) if replace_pictures else set()
+        moved, fixed = track_ids(self.book, package_time(data_dir))
         for name in sheets or data_sheets(self.book):
             pkg = load_package(data_dir, name)
             if pkg is None:
@@ -855,7 +1264,17 @@ class Engine:
             idc, img, mini = sheet_info(name)
             ws = self.book.wb[name]
             hdr = self.book.headers(ws)
-            have = {str(x.get(idc)).strip(): r for r, x in self.book.rows(ws)}
+            now = {str(x.get(idc)).strip(): r for r, x in self.book.rows(ws)}
+            ids_now = moved.get(name, {})
+            # packaged id -> row, following ids the tool renumbered or deleted since the package
+            have = {}
+            for rid in pkg:
+                cur = ids_now.get(rid, rid)
+                if cur is None:
+                    continue  # deleted with the tool after the package: not missing
+                if cur in now:
+                    have[rid] = now[cur]
+            pkg = {k: v for k, v in pkg.items() if ids_now.get(k, k) is not None}
             full, small = image_rows(self.book, name)
             rep = {"sheet": name, "cells": 0, "pictures": 0, "rowsAdded": [], "missingRows": []}
             if replace_pictures and img:
@@ -873,7 +1292,7 @@ class Engine:
                     f = os.path.join(data_dir, "images", f"{json_name(name)}-{rid}.webp")
                     if r is None or not os.path.exists(f):
                         continue
-                    if (name, rid) in fixed:
+                    if (name, ids_now.get(rid, rid)) in fixed:
                         rep["keptYouFixedThem"].append(rid)
                         continue
                     cur = self.book.pictures_at(ws, r, hdr[img])
@@ -904,6 +1323,8 @@ class Engine:
                         continue
                     vals = {k: restore_value(k, v) for k, v in prow.items()
                             if k in hdr and k not in PACKAGE_SKIP and not blank(v)}
+                    if str(vals.get(idc)).strip() in now:
+                        vals.pop(idc, None)  # that id belongs to another row now: next free id
                     r, _, _ = self.book.write(ws, vals, id_col=idc)
                     changes.append(("row", name, r, None, None))
                     rep["rowsAdded"].append(rid)
@@ -968,6 +1389,14 @@ class Engine:
         if self.book.dirty:
             self.book.save()
             self.last_saved = os.path.getmtime(self.path)
+        if self.pending_refs:
+            try:
+                self._write_pending_refs()
+            except Exception as e:  # kept queued: the next save tries again
+                raise RuntimeError(f"{os.path.basename(self.path)} is saved, but the ids it points at in "
+                                   f"{', '.join(sorted({os.path.basename(p['path']) for p in self.pending_refs}))} "
+                                   f"aren't updated yet ({e}). Close that workbook in Excel / other tools and "
+                                   "save again.") from e
         if os.path.exists(journal_path(self.path)):
             os.remove(journal_path(self.path))  # everything in it is in the workbook now
         return {"saved": True, "lastSaved": self.last_saved}
@@ -1159,7 +1588,20 @@ class Engine:
             if kind in ("logrows", "registry"):
                 self.book.remove_appended(sheet, r)
                 continue
+            if kind == "pendingrefs":
+                self.pending_refs = [p for p in self.pending_refs if p["token"] != old]
+                continue
             ws = self.book.wb[sheet]
+            if kind == "delrow":
+                self.book.insert_row(ws, r, old)
+                self._cache.pop(sheet, None)
+                continue
+            if kind == "cacherow":
+                self.book.delete_row(ws, r)
+                continue
+            if kind == "cacherow_removed":
+                self.book.insert_row(ws, r, old)
+                continue
             if kind == "column":
                 self.book.remove_column(ws, col)
                 self._cache.pop(sheet, None)
@@ -1249,6 +1691,12 @@ def serve(stdin=None, stdout=None):
         "recent": lambda a: eng.recent_edits(a.get("limit", 30)),
         "recover": lambda a: eng.recover(),
         "discardUnsaved": lambda a: eng.discard_journal(),
+        "deleteRows": lambda a: eng.delete_rows(a["sheet"], a["ids"]),
+        "deleted": lambda a: eng.deleted_rows(a.get("limit", 500)),
+        "undelete": lambda a: eng.restore_deleted(a["keys"]),
+        "purgeDeleted": lambda a: eng.purge_deleted(a.get("keys")),
+        "idCheck": lambda a: eng.id_check(),
+        "renumber": lambda a: eng.renumber(a["sheet"]),
         "log": lambda a: eng.edit_log(a.get("limit", 200), a.get("sheet"), a.get("action"), a.get("query", "")),
         "columns": lambda a: eng.columns(a["sheet"]),
         "addColumn": lambda a: eng.add_column(a.get("sheets") or [a["sheet"]], a["name"], a.get("optional", False),
@@ -1294,10 +1742,11 @@ def run_cli(argv):
         return serve()
     ap = argparse.ArgumentParser(description="Find and fill missing data in the workbooks")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("report", "fill", "set", "image", "wiki", "add-column", "add-row", "log", "inspect", "restore"):
+    for name in ("report", "fill", "set", "image", "wiki", "add-column", "add-row", "log", "inspect", "restore",
+                 "delete-row", "deleted", "undelete", "purge-deleted", "ids", "renumber"):
         p = sub.add_parser(name)
         p.add_argument("--workbook", required=True)
-        p.add_argument("--sheet", required=name in ("set", "image", "add-row"),
+        p.add_argument("--sheet", required=name in ("set", "image", "add-row", "delete-row", "renumber"),
                        action="append" if name == "add-column" else "store",
                        help="add-column: repeat for several tabs, or --all-tabs")
         if name == "add-column":
@@ -1314,6 +1763,13 @@ def run_cli(argv):
             p.add_argument("--set", nargs="*", default=[], metavar="FIELD=VALUE")
         if name == "log":
             p.add_argument("--limit", type=int, default=50)
+        if name == "delete-row":
+            p.add_argument("--id", nargs="+", required=True, help="one or more row ids")
+        if name in ("undelete", "purge-deleted"):
+            p.add_argument("--key", nargs="+", required=name == "undelete",
+                           help="keys from `deleted` (purge-deleted without --key empties everything)")
+        if name == "renumber":
+            p.add_argument("--yes", action="store_true", help="don't ask")
         if name in ("inspect", "restore"):
             p.add_argument("--from", dest="data_dir", required=name == "restore",
                            help="a packaged data folder (data/ of this repo, or one checked out from git history)")
@@ -1414,11 +1870,61 @@ def run_cli(argv):
         eng.save()
         print(f"Written to {out} - check it, then replace your workbook with it. {a.workbook} is unchanged.")
         return
-    if a.cmd in ("add-column", "add-row", "log"):  # through the engine: logged in _edit_log, saved
+    if a.cmd in ("deleted", "ids"):  # read-only
+        eng = Engine(source="cli")
+        eng.journaling = False
+        eng.open(a.workbook)
+        if a.cmd == "deleted":
+            rows = eng.deleted_rows()
+            for d in rows:
+                print(f"{d['key']}  {d['deletedAt'][:16].replace('T', ' ')}  {d['sheet']} #{d['rowId']} {d['name']}"
+                      f"{'  [picture]' if d['hasImage'] else ''}  ({d['source']})")
+            print(f"{len(rows)} in recently deleted" + (" - restore with: undelete --key KEY" if rows else ""))
+        else:
+            issues = eng.id_check()
+            for i in issues:
+                print(f"  {i['sheet']:<28} {i['rows']} rows, ids up to {i['max']}"
+                      + (f"; gaps: {', '.join(i['gaps'][:10])}{' ...' if len(i['gaps']) > 10 else ''}"
+                         if i["gapCount"] else "")
+                      + (f"; duplicates: {', '.join(map(str, i['duplicates']))}" if i["duplicates"] else "")
+                      + (f"; {i['nonNumeric']} not a number" if i["nonNumeric"] else "")
+                      + (f"; {i['released']} already in data/ (released)" if i["released"] else ""))
+            print("ids run 1..N in every tab" if not issues else
+                  "Shift them with: renumber --sheet TAB (updates parent ids, ProductContents, TCG links)")
+        return
+    if a.cmd in ("add-column", "add-row", "log", "delete-row", "undelete", "purge-deleted", "renumber"):
         eng = Engine(source="cli")
         eng.open(a.workbook)
         try:
-            if a.cmd == "add-column":
+            if a.cmd == "delete-row":
+                res = eng.delete_rows(a.sheet, a.id)
+                print(f"{a.sheet}: deleted {', '.join(res['deleted'])} (kept in recently deleted)"
+                      + (f"; these variants now point at a deleted parent: {', '.join(res['orphans'])}"
+                         if res["orphans"] else ""))
+            elif a.cmd == "undelete":
+                for x in eng.restore_deleted(a.key):
+                    print(f"{x['sheet']}: restored #{x['id']}" + ("" if x["id"] == x["oldId"] else
+                                                                    f" (#{x['oldId']} was taken)"))
+            elif a.cmd == "purge-deleted":
+                print(f"{eng.purge_deleted(a.key)['purged']} removed from recently deleted for good")
+            elif a.cmd == "renumber":
+                issue = next((i for i in eng.id_check() if i["sheet"] == a.sheet), None)
+                if issue is None:
+                    print(f"{a.sheet}: ids already run 1..N")
+                    return
+                if issue["released"] and not a.yes:
+                    ans = input(f"{issue['released']} of the ids that change are in data/ (released to the app); "
+                                "saved builds there would point at other parts. Continue? [y/N] ")
+                    if ans.strip().lower() not in ("y", "yes"):
+                        return
+                res = eng.renumber(a.sheet)
+                print(f"{a.sheet}: {res['changed']} id(s) changed"
+                      + (f"; references: {', '.join(f'{k} {v}' for k, v in res['references'].items())}"
+                         if res["references"] else "")
+                      + (f"; updating {', '.join(res['pendingFiles'])} on save" if res["pendingFiles"] else ""))
+                for k, rows in res["cleared"].items():
+                    print(f"  {k}: cleared {len(rows)} link(s) to deleted rows ({', '.join(rows[:12])})")
+            elif a.cmd == "add-column":
                 tabs = data_sheets(eng.book) if a.all_tabs else (a.sheet or [])
                 if not tabs:
                     sys.exit("Give --sheet (repeatable) or --all-tabs.")
@@ -1432,8 +1938,8 @@ def run_cli(argv):
             else:
                 for e in eng.edit_log(a.limit, a.sheet)["entries"]:
                     what = (f"{e['field']}: {e.get('oldValue')!r} -> {e.get('newValue')!r}"
-                            if e.get("action") in ("set", "auto-fill", "image") else e.get("field") or "")
-                    print(f"{e.get('at')}  {e.get('source'):<17} {e.get('action'):<10} {e.get('sheet')} "
+                            if e.get("action") in ("set", "auto-fill", "image", "renumber") else e.get("field") or "")
+                    print(f"{e.get('at')}  {e.get('source'):<17} {e.get('action'):<10} {e.get('sheet') or ''} "
                           f"#{e.get('rowId') or ''} {what} {e.get('note') or ''}".rstrip())
                 return
         except ValueError as e:
@@ -1532,6 +2038,7 @@ def run_gui(workbook=""):
     ttk.Button(tb2, text="Add column...", command=lambda: add_column_dialog()).pack(side=tk.LEFT)
     ttk.Button(tb2, text="Change log", command=lambda: log_dialog()).pack(side=tk.LEFT, padx=4)
     ttk.Button(tb2, text="Recently edited", command=lambda: recent_dialog()).pack(side=tk.LEFT)
+    ttk.Button(tb2, text="Recently deleted", command=lambda: deleted_dialog()).pack(side=tk.LEFT, padx=(4, 0))
     ttk.Button(tb2, text="Export CSV...", command=lambda: export()).pack(side=tk.LEFT, padx=4)
     # Off by default (new pref key, so an old "on" doesn't carry over). Even when on, it only saves after edits
     # you made - never just because the workbook was opened.
@@ -1574,6 +2081,7 @@ def run_gui(workbook=""):
     ttk.Button(rowbar, text="New row", command=lambda: new_row("empty")).pack(side=tk.LEFT)
     ttk.Button(rowbar, text="Duplicate as variant", command=lambda: new_row("variant")).pack(side=tk.LEFT, padx=4)
     ttk.Button(rowbar, text="Copy row", command=lambda: new_row("copy")).pack(side=tk.LEFT)
+    ttk.Button(rowbar, text="Delete row(s)", command=lambda: delete_selected()).pack(side=tk.LEFT, padx=4)
     ttk.Label(rowbar, text="variant = shared fields + parent id; copy = every field", style="Muted.TLabel").pack(
         side=tk.LEFT, padx=8)
     rtree = ttk.Treeview(mid, columns=("name", "code", "edition", "n", "updated", "missing"), selectmode="extended")
@@ -1699,20 +2207,21 @@ def run_gui(workbook=""):
                 stree.selection_set(pick)
             add_log(f"Opened {pth}")
             refresh_title()
-            offer_recovery(summary.get("unsavedFromLastTime") or {})
+            if not offer_recovery(summary.get("unsavedFromLastTime") or {}):
+                root.after(500, check_ids)  # after a recovery, check_ids runs once it's done
         runner.run(lambda: eng.open(pth), done, err, f"Opening {os.path.basename(pth)} ...")
 
     def offer_recovery(info):
         n = info.get("entries") or 0
         if not n:
-            return
+            return False
         last = f" (last one {info['last'][:16].replace('T', ' ')})" if info.get("last") else ""
         ans = messagebox.askyesnocancel(
             "Recover unsaved changes?",
             f"{n} change(s) made in this workbook were never saved{last}. They are kept in a recovery file next "
             "to the workbook.\n\nYes: recover them\nNo: discard them (moved to backups/)\nCancel: ask me next time")
         if ans is None:
-            return
+            return False
         if ans:
             def recovered(r):
                 add_log(f"Recovered {r.get('recovered', 0)} unsaved change(s) - save to keep them")
@@ -1720,10 +2229,12 @@ def run_gui(workbook=""):
                     add_log(f"  could not replay: {f}")
                 reload_sheet()
                 refresh_title()
+                root.after(300, check_ids)
             runner.run(eng.recover, recovered, err, "Recovering unsaved changes ...")
-        else:
-            eng.discard_journal()
-            add_log("Discarded the unsaved changes (copy in backups/)")
+            return True
+        eng.discard_journal()
+        add_log("Discarded the unsaved changes (copy in backups/)")
+        return False
 
     def on_sheet(_=None):
         sel = stree.selection()
@@ -1822,6 +2333,17 @@ def run_gui(workbook=""):
         thumb(cur_img, base64.b64decode(info["image"]) if info["image"] else None)
         img_btn.config(state="normal" if st["new_img"] else "disabled")
 
+    def clear_editor():
+        """The open row is gone or got another id (delete, renumber, undo): never edit it under a stale id."""
+        st["row"] = None
+        st["editors"] = {}
+        rtree.selection_remove(rtree.selection())
+        sel_lbl.config(text="")
+        meta_lbl.config(text="")
+        for w in form.winfo_children():
+            w.destroy()
+        thumb(cur_img, None)
+
     def apply_fields():
         info = st["row"]
         if not info:
@@ -1916,8 +2438,138 @@ def run_gui(workbook=""):
         res = eng.undo()
         if res["undone"]:
             add_log(f"Undid: {res['undone']}")
+            clear_editor()
+            refresh_tabs()
             reload_sheet()
         refresh_title()
+
+    # ── delete rows, recently deleted, id check ──
+    def delete_selected():
+        sh = st["sheet"]
+        ids = [rtree.item(i, "text") for i in rtree.selection()]
+        if not (sh and ids):
+            add_log("Select the row(s) to delete first.")
+            return
+        names = ", ".join(f"#{i}" for i in ids[:8]) + (" ..." if len(ids) > 8 else "")
+        if not messagebox.askyesno("Delete rows", f"Delete {len(ids)} row(s) from {sh} ({names})?\n\n"
+                                   "The rows below move up together with their pictures. Deleted rows stay in "
+                                   "Recently deleted until you empty it, and Undo brings them back."):
+            return
+        try:
+            res = eng.delete_rows(sh, ids)
+        except ValueError as e:
+            err(e)
+            return
+        add_log(f"{sh}: deleted {', '.join('#' + i for i in res['deleted'])} (in Recently deleted) - save to keep")
+        if res["orphans"]:
+            add_log(f"  these variants now point at a deleted parent: {', '.join(res['orphans'])}")
+        clear_editor()
+        refresh_tabs()
+        reload_sheet()
+        check_ids()
+
+    def deleted_dialog():
+        if not eng.book:
+            return
+        win = tk.Toplevel(root)
+        win.title("Recently deleted")
+        win.geometry("760x420")
+        tv = ttk.Treeview(win, columns=("sheet", "name", "when", "pic"), selectmode="extended")
+        for c, w, t in (("#0", 70, "id"), ("sheet", 180, "tab"), ("name", 200, "name"), ("when", 150, "deleted"),
+                        ("pic", 60, "picture")):
+            tv.heading(c, text=t)
+            tv.column(c, width=w)
+        tv.pack(fill=tk.BOTH, expand=True)
+
+        def fill():
+            tv.delete(*tv.get_children())
+            for d in eng.deleted_rows():
+                tv.insert("", "end", iid=d["key"], text=d["rowId"],
+                          values=(d["sheet"], d["name"], d["deletedAt"][:16].replace("T", " "),
+                                  "yes" if d["hasImage"] else ""))
+            tk_ui.stripe(tv)
+
+        def after():
+            fill()
+            clear_editor()
+            refresh_tabs()
+            reload_sheet()
+            refresh_title()
+
+        def restore():
+            keys = list(tv.selection())
+            if not keys:
+                return
+            try:
+                for x in eng.restore_deleted(keys):
+                    add_log(f"{x['sheet']}: restored #{x['id']}" + ("" if x["id"] == x["oldId"]
+                                                                    else f" (#{x['oldId']} was taken)"))
+            except ValueError as e:
+                err(e)
+            after()
+            check_ids()
+
+        def purge(all_rows=False):
+            keys = None if all_rows else list(tv.selection())
+            if not all_rows and not keys:
+                return
+            n = len(tv.get_children()) if all_rows else len(keys)
+            if messagebox.askyesno("Recently deleted", f"Remove {n} row(s) for good (with their pictures)?",
+                                   parent=win):
+                add_log(f"{eng.purge_deleted(keys)['purged']} removed from Recently deleted - save to keep")
+                after()
+
+        b = ttk.Frame(win)
+        b.pack(fill=tk.X, padx=6, pady=6)
+        ttk.Button(b, text="Restore selected", command=restore, style="Accent.TButton").pack(side=tk.LEFT)
+        ttk.Button(b, text="Delete selected for good", command=lambda: purge(False)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(b, text="Empty", command=lambda: purge(True)).pack(side=tk.LEFT)
+        ttk.Label(b, text="Restored rows go to the end of their tab, with their old id when it's free.",
+                  style="Muted.TLabel").pack(side=tk.RIGHT)
+        fill()
+
+    def check_ids():
+        """Asks once per tab (until its ids change again) when ids don't run 1..N."""
+        if not eng.book:
+            return
+        snoozed = st.setdefault("id_snooze", set())
+        for i in eng.id_check():
+            if (i["sheet"], i["fingerprint"]) in snoozed:
+                continue
+            if i["nonNumeric"]:
+                add_log(f"{i['sheet']}: {i['nonNumeric']} id(s) aren't numbers - fix them to renumber this tab")
+                snoozed.add((i["sheet"], i["fingerprint"]))
+                continue
+            what = []
+            if i["gapCount"]:
+                what.append(f"missing {i['gapCount']} id(s): {', '.join(i['gaps'][:8])}"
+                            f"{' ...' if len(i['gaps']) > 8 else ''}")
+            if i["duplicates"]:
+                what.append(f"duplicated: {', '.join(map(str, i['duplicates'][:8]))}")
+            warn = (f"\n\n{i['released']} of the ids that would change are already in data/ (released to the "
+                    "app): saved builds there would point at other parts." if i["released"] else "")
+            if messagebox.askyesno(
+                    "Ids aren't serial",
+                    f"{i['sheet']}: {i['rows']} rows, ids up to {i['max']} ({'; '.join(what)}).\n\n"
+                    f"Shift them to 1..{i['rows']}? Their order stays the same; parent ids, ProductContents and "
+                    f"TCG card links are updated too (other workbooks when you save).{warn}"):
+                try:
+                    res = eng.renumber(i["sheet"])
+                except ValueError as e:
+                    err(e)
+                    continue
+                add_log(f"{i['sheet']}: {res['changed']} id(s) shifted"
+                        + (f"; {', '.join(f'{k} {v}' for k, v in res['references'].items())}"
+                           if res["references"] else "")
+                        + (f"; {', '.join(res['pendingFiles'])} updated on save" if res["pendingFiles"] else "")
+                        + " - save to keep")
+                for k, rows in res["cleared"].items():
+                    add_log(f"  {k}: cleared {len(rows)} link(s) to deleted rows ({', '.join(rows[:12])})")
+                clear_editor()
+                reload_sheet()
+                refresh_title()
+            else:
+                snoozed.add((i["sheet"], i["fingerprint"]))
 
     def autofill():
         sh = st["sheet"]
@@ -2044,6 +2696,7 @@ def run_gui(workbook=""):
             err(e)
             return
         add_log(f"{sh}: new row #{res['id']} ({mode}{f' of #{src}' if src is not None else ''}) - save to keep")
+        root.after(600, check_ids)
         refresh_tabs()
         reload_sheet()
         root.after(400, lambda: [rtree.selection_set(i) or rtree.see(i)

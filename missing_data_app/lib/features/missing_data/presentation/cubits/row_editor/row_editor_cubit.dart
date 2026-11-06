@@ -24,8 +24,8 @@ class RowEditorCubit extends Cubit<RowEditorState> {
         _changes = changes,
         super(const RowEditorState()) {
     _sub = changes.stream.listen((c) {
-      if (c == DataChange.workbookOpened) {
-        emit(const RowEditorState());
+      if (c == DataChange.workbookOpened || c == DataChange.idsChanged) {
+        emit(const RowEditorState()); // never keep editing a row under an id that may be another row's now
       } else if ((c == DataChange.undone ||
               c == DataChange.wikiFinished ||
               c == DataChange.filled ||

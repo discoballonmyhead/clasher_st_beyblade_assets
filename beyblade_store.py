@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import zipfile
+from copy import copy
 from datetime import datetime, timezone
 
 import openpyxl
@@ -451,6 +452,82 @@ class Book:
         for k in gone:
             img = idx.pop(k)
             ws._images = [i for i in ws._images if i is not img]
+        self._forget(ws)
+
+    def delete_row(self, ws, row):
+        """Removes a row the way Excel's right-click -> Delete does, but keeps everything aligned: rows below move
+        up together with their pictures and heights. -> snapshot for insert_row() (values, styles, height,
+        pictures as {column: bytes})"""
+        hdr_n = ws.max_column
+        snap = {"values": [ws.cell(row, c).value for c in range(1, hdr_n + 1)],
+                "styles": [copy(ws.cell(row, c)._style) for c in range(1, hdr_n + 1)],
+                "height": ws.row_dimensions[row].height, "pictures": {}}
+        here = []
+        for i in ws._images:
+            if hasattr(i.anchor, "_from") and i.anchor._from.row == row - 1:
+                snap["pictures"][i.anchor._from.col + 1] = i._data()
+                here.append(i)
+        self.remove_pictures(ws, here)
+        heights = {r: (d.height, d.hidden) for r, d in list(ws.row_dimensions.items()) if r > row}
+        ws.delete_rows(row, 1)
+        for i in ws._images:
+            a = i.anchor
+            if hasattr(a, "_from") and a._from.row >= row:
+                a._from.row -= 1
+                if getattr(a, "to", None) is not None:
+                    a.to.row -= 1
+        for r in sorted(heights):
+            h, hidden = heights[r]
+            ws.row_dimensions[r - 1].height, ws.row_dimensions[r - 1].hidden = h, hidden
+        if heights:
+            last = max(heights)
+            ws.row_dimensions[last].height, ws.row_dimensions[last].hidden = None, False
+        self._after_shift(ws)
+        return snap
+
+    def insert_row(self, ws, row, snap):
+        """Puts a row deleted with delete_row() back where it was (undo)."""
+        heights = {r: (d.height, d.hidden) for r, d in list(ws.row_dimensions.items()) if r >= row}
+        ws.insert_rows(row, 1)
+        for i in ws._images:
+            a = i.anchor
+            if hasattr(a, "_from") and a._from.row >= row - 1:
+                a._from.row += 1
+                if getattr(a, "to", None) is not None:
+                    a.to.row += 1
+        for r in sorted(heights, reverse=True):
+            h, hidden = heights[r]
+            ws.row_dimensions[r + 1].height, ws.row_dimensions[r + 1].hidden = h, hidden
+        self._after_shift(ws)
+        names = {v: k for k, v in self.headers(ws).items()}
+        for col, data in snap["pictures"].items():
+            name = str(names.get(col) or "")
+            self.put_picture(ws, row, col, data, "min" if "mini" in name.lower() else "full")
+        for c, (v, st) in enumerate(zip(snap["values"], snap["styles"]), 1):
+            cell = ws.cell(row, c)
+            cell.value = v
+            cell._style = copy(st)
+        ws.row_dimensions[row].height = snap["height"]
+        self._after_shift(ws)
+
+    def put_picture(self, ws, row, col, data, size="full"):
+        """A picture anchored at (row, col) with its own size (no updated_at stamp)."""
+        img = XLImage(io.BytesIO(data))
+        w = IMAGE_DISPLAY[size]
+        img.height = max(1, int(img.height * w / img.width)) if img.width else w
+        img.width = w
+        img.anchor = OneCellAnchor(_from=AnchorMarker(col=col - 1, row=row - 1),
+                                   ext=XDRPositiveSize2D(pixels_to_EMU(img.width), pixels_to_EMU(img.height)))
+        self._pin(img, data)
+        ws.add_image(img)
+        self.__dict__.get("_img_idx", {}).pop(ws.title, None)
+        rd = ws.row_dimensions[row]
+        rd.height = max(rd.height or 15, img.height * 0.75 + 4)
+        return img
+
+    def _after_shift(self, ws):
+        self.__dict__.get("_img_idx", {}).pop(ws.title, None)
+        self.__dict__.get("_next_row", {}).pop(ws.title, None)
         self._forget(ws)
 
     def _forget(self, ws):

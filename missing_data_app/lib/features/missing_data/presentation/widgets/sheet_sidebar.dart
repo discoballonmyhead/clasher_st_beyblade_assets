@@ -72,7 +72,7 @@ class SheetSidebar extends StatelessWidget {
                   child: Row(children: [
                     Icon(Icons.check_circle, color: cs.primary, size: 18),
                     const SizedBox(width: 6),
-                    const Text('Nothing missing in this tab'),
+                    const Expanded(child: Text('Nothing missing in this tab')),
                   ]),
                 ),
               for (final f in gaps)

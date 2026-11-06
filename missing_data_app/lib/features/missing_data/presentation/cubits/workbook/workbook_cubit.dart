@@ -113,12 +113,15 @@ class WorkbookCubit extends Cubit<WorkbookState> {
     });
   }
 
+  /// Undo labels of steps that delete, restore or renumber rows (see the engine's undo labels).
+  static final _movesIds = RegExp(r'^(delete \d+ row|restore \d+ deleted|empty \d+ from|renumber )');
+
   Future<void> undo() async {
     if (state.summary == null) return;
     final res = await _undo();
     res.fold((f) => emit(state.copyWith(error: f.message)), (label) {
       emit(state.copyWith(message: label == null ? 'Nothing to undo' : 'Undid: $label'));
-      if (label != null) _changes.notify(DataChange.undone);
+      if (label != null) _changes.notify(_movesIds.hasMatch(label) ? DataChange.idsChanged : DataChange.undone);
     });
   }
 
