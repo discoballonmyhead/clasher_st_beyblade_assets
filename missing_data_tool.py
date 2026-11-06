@@ -35,11 +35,15 @@ CLI:  python missing_data_tool.py report --workbook beyblade_parts.xlsx [--sheet
       python missing_data_tool.py add-column --workbook beyblade_parts.xlsx --sheet Parts_X_Bits --name tipShape [--optional] [--inherit] [--default x]
       python missing_data_tool.py add-row    --workbook beyblade_parts.xlsx --sheet Parts_X_Blades [--variant-of 65 | --copy-of 65] [--set name=Foo]
       python missing_data_tool.py log        --workbook beyblade_parts.xlsx [--sheet ...] [--limit 50]
+      python missing_data_tool.py inspect    --workbook beyblade_parts.xlsx [--from data]     (read-only)
+      python missing_data_tool.py restore    --workbook beyblade_parts.xlsx --from data [--dry-run] [--add-missing-rows]
+                                             [--out restored.xlsx]   (default: <name>-restored.xlsx, original untouched)
 """
 import argparse
 import base64
 import csv
 import io
+import json
 import os
 import re
 import sys
@@ -299,6 +303,70 @@ def apply_fills(book, sheet, fills):
     for r in touched:
         book.touch(ws, r)  # last edited
     return n
+
+
+# ── inspect / restore from a packaged data folder ─────────────────────────────
+
+PACKAGE_SKIP = {"imageUrl", "imageHash", "minifiedImageUrl", "minifiedImageHash", "updated_at"}
+ID_LIKE = {"dataID", "parentPartId", "productID", "parentProductId", "partDataID", "setID", "parentSetId",
+           "parentCardId", "linkedPartDataID"}
+
+
+def json_name(sheet):
+    part = S.parse_part_sheet(sheet)
+    return S.part_json_prefix(part[0], part[1]) if part else (S.SHEETS.get(sheet) or {}).get("json")
+
+
+def load_package(data_dir, sheet):
+    """{id: packaged row} for a tab, or None when the package has no file for it."""
+    idc = sheet_info(sheet)[0]
+    name = json_name(sheet)
+    path = os.path.join(data_dir, f"{name}.json") if name and idc else None
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return {str(r.get(idc)).strip(): r for r in json.load(f) if not blank(r.get(idc))}
+
+
+def restore_value(field, v):
+    """Packaged value -> cell value (the packager wrote ids as text; the workbooks hold numbers)."""
+    if field in ID_LIKE and isinstance(v, str) and re.fullmatch(r"\d+", v.strip()):
+        return int(v)
+    return v
+
+
+def inspect_workbook(book, data_dir=None):
+    """Read-only health report: rows, empty gaps, pictures, unkeepable content, and what the package has
+    that the workbook doesn't."""
+    from beyblade_store import picture_count
+    out = {"path": book.path, "picturesInFile": picture_count(book.path) if os.path.exists(book.path) else 0,
+           "picturesReadable": book.image_count(), "unsupported": list(book.unsupported), "sheets": []}
+    for name in data_sheets(book):
+        ws = book.wb[name]
+        idc, img, _ = sheet_info(name)
+        rows = book.rows(ws)
+        full, _ = image_rows(book, name)
+        live = [(r, x) for r, x in rows if not is_deleted(x)]
+        e = {"sheet": name, "rows": len(live), "deleted": len(rows) - len(live), "gaps": book.gaps(ws)[:50],
+             "withPicture": sum(1 for r, _ in live if r in full) if img else None}
+        pkg = load_package(data_dir, name) if data_dir else None
+        if pkg is not None:
+            have = {str(x.get(idc)).strip(): (r, x) for r, x in live}
+            e["packageRows"] = len(pkg)
+            e["inPackageNotInWorkbook"] = sorted((k for k in pkg if k not in have), key=lambda k: (len(k), k))
+            blanks = 0
+            for k, prow in pkg.items():
+                if k in have:
+                    x = have[k][1]
+                    blanks += sum(1 for f, v in prow.items()
+                                  if f not in PACKAGE_SKIP and f in x and blank(x[f]) and not blank(v))
+            e["blankCellsThePackageCanFill"] = blanks
+            if img:
+                e["picturesThePackageCanAdd"] = sum(
+                    1 for k in pkg if k in have and have[k][0] not in full
+                    and os.path.exists(os.path.join(data_dir, "images", f"{json_name(name)}-{k}.webp")))
+        out["sheets"].append(e)
+    return out
 
 
 def find_row(book, sheet, row_id):
@@ -575,6 +643,72 @@ class Engine:
         self._logged(f"new row {sheet} #{rid}", [("row", sheet, r, None, None)],
                      [{"action": "add_row", "sheet": sheet, "rowId": rid, "note": note}])
         return {"row": r, "id": rid}
+
+    def restore(self, data_dir, add_missing_rows=False, dry_run=False, sheets=None):
+        """Fills what's missing from a packaged data folder (data/*.json + data/images): blank cells get the
+        packaged value, rows without a picture get the packaged picture, and (add_missing_rows) packaged rows the
+        workbook no longer has are added back. Never overwrites a filled cell or an existing picture.
+        One undo step; one change-log line per tab."""
+        report, changes, entries = [], [], []
+        for name in sheets or data_sheets(self.book):
+            pkg = load_package(data_dir, name)
+            if pkg is None:
+                continue
+            idc, img, mini = sheet_info(name)
+            ws = self.book.wb[name]
+            hdr = self.book.headers(ws)
+            have = {str(x.get(idc)).strip(): r for r, x in self.book.rows(ws)}
+            full, small = image_rows(self.book, name)
+            rep = {"sheet": name, "cells": 0, "pictures": 0, "rowsAdded": [], "missingRows": []}
+            for rid, prow in pkg.items():
+                r = have.get(rid)
+                if r is None:
+                    rep["missingRows"].append(rid)
+                    if not add_missing_rows:
+                        continue
+                    if dry_run:
+                        rep["rowsAdded"].append(rid)
+                        continue
+                    vals = {k: restore_value(k, v) for k, v in prow.items()
+                            if k in hdr and k not in PACKAGE_SKIP and not blank(v)}
+                    r, _, _ = self.book.write(ws, vals, id_col=idc)
+                    changes.append(("row", name, r, None, None))
+                    rep["rowsAdded"].append(rid)
+                    filled_row = True
+                else:
+                    filled_row = False
+                    for k, v in prow.items():
+                        if k in PACKAGE_SKIP or k not in hdr or blank(v):
+                            continue
+                        cell = ws.cell(r, hdr[k])
+                        if blank(cell.value):
+                            rep["cells"] += 1
+                            if not dry_run:
+                                changes.append(("cell", name, r, hdr[k], cell.value))
+                                cell.value = restore_value(k, v)
+                                filled_row = True
+                for col, rows_with, suffix, size in ((img, full, "", "full"), (mini, small, "-min", "min")):
+                    if not col or r in rows_with:
+                        continue
+                    f = os.path.join(data_dir, "images", f"{json_name(name)}-{rid}{suffix}.webp")
+                    if os.path.exists(f):
+                        rep["pictures"] += 1 if size == "full" else 0
+                        if not dry_run:
+                            with open(f, "rb") as fh:
+                                if self.book.set_image(ws, r, col, fh.read(), size):
+                                    changes.append(("image", name, r, hdr[col], None))
+                                    filled_row = True
+                if filled_row and not dry_run:
+                    self.book.touch(ws, r)
+            if rep["cells"] or rep["pictures"] or rep["rowsAdded"]:
+                entries.append({"action": "restore", "sheet": name,
+                                "note": f"from {os.path.basename(os.path.abspath(data_dir))}: {rep['cells']} cells, "
+                                        f"{rep['pictures']} pictures, {len(rep['rowsAdded'])} rows added"})
+            report.append(rep)
+        if not dry_run:
+            self._cache.clear()
+            self._logged(f"restore from {data_dir}", changes, entries)
+        return {"dryRun": dry_run, "sheets": report}
 
     def summary(self):
         sheets = []
@@ -914,7 +1048,7 @@ def run_cli(argv):
         return serve()
     ap = argparse.ArgumentParser(description="Find and fill missing data in the workbooks")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("report", "fill", "set", "image", "wiki", "add-column", "add-row", "log"):
+    for name in ("report", "fill", "set", "image", "wiki", "add-column", "add-row", "log", "inspect", "restore"):
         p = sub.add_parser(name)
         p.add_argument("--workbook", required=True)
         p.add_argument("--sheet", required=name in ("set", "image", "add-row"),
@@ -934,6 +1068,14 @@ def run_cli(argv):
             p.add_argument("--set", nargs="*", default=[], metavar="FIELD=VALUE")
         if name == "log":
             p.add_argument("--limit", type=int, default=50)
+        if name in ("inspect", "restore"):
+            p.add_argument("--from", dest="data_dir", required=name == "restore",
+                           help="a packaged data folder (data/ of this repo, or one checked out from git history)")
+        if name == "restore":
+            p.add_argument("--dry-run", action="store_true", help="only report what would be filled")
+            p.add_argument("--add-missing-rows", action="store_true",
+                           help="also add back packaged rows the workbook no longer has")
+            p.add_argument("--out", help="file to write (default: <workbook>-restored.xlsx; the original is untouched)")
         if name == "report":
             p.add_argument("--csv")
             p.add_argument("--all-columns", action="store_true", help="also count optional columns")
@@ -953,6 +1095,47 @@ def run_cli(argv):
             p.add_argument("--ids", nargs="*", help="row ids (default: every row with something missing)")
             p.add_argument("--limit", type=int)
     a = ap.parse_args(argv)
+    if a.cmd == "inspect":  # strictly read-only: never saves
+        rep = inspect_workbook(Book(a.workbook, kind_of_workbook(a.workbook)), a.data_dir)
+        print(f"{rep['path']}: {rep['picturesInFile']} pictures in the file, {rep['picturesReadable']} readable")
+        for u in rep["unsupported"]:
+            print(f"  ! can't be kept by the tools: {u}")
+        for e in rep["sheets"]:
+            line = f"  {e['sheet']:<28} {e['rows']:>4} rows"
+            if e["withPicture"] is not None:
+                line += f", {e['withPicture']:>4} with picture"
+            if e["deleted"]:
+                line += f", {e['deleted']} marked deleted"
+            if e["gaps"]:
+                line += f", empty rows at {', '.join(map(str, e['gaps'][:8]))}{' ...' if len(e['gaps']) > 8 else ''}"
+            if "packageRows" in e:
+                miss = e["inPackageNotInWorkbook"]
+                line += (f" | package: {e['packageRows']} rows; restore can fill {e['blankCellsThePackageCanFill']} "
+                         f"cells, {e.get('picturesThePackageCanAdd', 0)} pictures; {len(miss)} packaged rows missing"
+                         + (f" ({', '.join(miss[:10])}{' ...' if len(miss) > 10 else ''})" if miss else ""))
+            print(line)
+        return
+    if a.cmd == "restore":
+        eng = Engine(source="restore")
+        eng.open(a.workbook)
+        if eng.book.unsupported and not a.dry_run:
+            sys.exit("Can't write a restored copy - it would lose: " + "; ".join(eng.book.unsupported))
+        res = eng.restore(a.data_dir, a.add_missing_rows, a.dry_run, [a.sheet] if a.sheet else None)
+        for r in res["sheets"]:
+            if r["cells"] or r["pictures"] or r["rowsAdded"] or r["missingRows"]:
+                print(f"  {r['sheet']:<28} {r['cells']:>5} cells, {r['pictures']:>4} pictures"
+                      + (f", {len(r['rowsAdded'])} rows added" if r["rowsAdded"] else "")
+                      + (f", {len(r['missingRows'])} packaged rows not in the workbook"
+                         + ("" if a.add_missing_rows else " (add them with --add-missing-rows)")
+                         if r["missingRows"] else ""))
+        if a.dry_run:
+            print("(dry run - nothing written)")
+            return
+        out = a.out or os.path.splitext(a.workbook)[0] + "-restored.xlsx"
+        eng.book.path, eng.path = out, out
+        eng.save()
+        print(f"Written to {out} - check it, then replace your workbook with it. {a.workbook} is unchanged.")
+        return
     if a.cmd in ("add-column", "add-row", "log"):  # through the engine: logged in _edit_log, saved
         eng = Engine(source="cli")
         eng.open(a.workbook)
@@ -1072,9 +1255,11 @@ def run_gui(workbook=""):
     ttk.Button(tb2, text="Change log", command=lambda: log_dialog()).pack(side=tk.LEFT, padx=4)
     ttk.Button(tb2, text="Recently edited", command=lambda: recent_dialog()).pack(side=tk.LEFT)
     ttk.Button(tb2, text="Export CSV...", command=lambda: export()).pack(side=tk.LEFT, padx=4)
-    autosave = tk.BooleanVar(value=prefs.get("autosave", True))
-    ttk.Checkbutton(tb2, text="Autosave every 2 min", variable=autosave,
-                    command=lambda: prefs.set("autosave", autosave.get())).pack(side=tk.RIGHT)
+    # Off by default (new pref key, so an old "on" doesn't carry over). Even when on, it only saves after edits
+    # you made - never just because the workbook was opened.
+    autosave = tk.BooleanVar(value=prefs.get("autosave_v2", False))
+    ttk.Checkbutton(tb2, text="Autosave my edits every 2 min", variable=autosave,
+                    command=lambda: prefs.set("autosave_v2", autosave.get())).pack(side=tk.RIGHT)
     all_cols = tk.BooleanVar(value=False)
     ttk.Checkbutton(tb2, text="Count optional columns", variable=all_cols,
                     command=lambda: reload_sheet()).pack(side=tk.RIGHT, padx=8)
@@ -1666,7 +1851,7 @@ def run_gui(workbook=""):
             report(eng.book, None, all_cols.get(), pth, out=add_log)
 
     def tick_autosave():
-        if autosave.get() and eng.book and eng.book.dirty and not runner.busy:
+        if autosave.get() and eng.book and eng.book.dirty and eng._undo and not runner.busy:
             runner.run(eng.save, lambda r: (add_log("Autosaved."), refresh_title()), err, "Autosaving ...")
         root.after(120000, tick_autosave)
 

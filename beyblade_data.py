@@ -40,15 +40,19 @@ NO_IMAGE_SHEETS = {name: cfg["json"] for name, cfg in S.SHEETS.items() if not cf
 # --- Core Logic Helpers ---
 
 
-def read_sheet_rows(ws):
-    """Stops at the first fully-blank row."""
+def read_sheet_rows_numbered(ws):
+    """[(sheet row number, row)] for every non-empty row. Empty rows are skipped, not the end: a cleared row
+    used to hide every row below it."""
     headers = [str(c.value) if c.value else "" for c in ws[1]]
-    rows = []
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if not any(v not in (None, "") for v in row):
-            break
-        rows.append({h: v for h, v in zip(headers, row) if h})
-    return rows
+    out = []
+    for r, row in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
+        if any(v not in (None, "") for v in row):
+            out.append((r, {h: v for h, v in zip(headers, row) if h}))
+    return out
+
+
+def read_sheet_rows(ws):
+    return [row for _, row in read_sheet_rows_numbered(ws)]
 
 
 def png_bytes_to_webp(png_bytes: bytes) -> bytes:
@@ -168,7 +172,9 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         log(f"  SKIP {ws.title}: missing columns {missing}")
         return
     img_col, min_col = headers.index(img_field) + 1, headers.index(min_field) + 1
-    raw_rows = read_sheet_rows(ws)
+    numbered = read_sheet_rows_numbered(ws)  # images are matched by the real sheet row, gaps or not
+    raw_rows = [row for _, row in numbered]
+    row_no = [r for r, _ in numbered]
     images_by_row = extract_embedded_images(ws, img_col, min_col)
     out_images_dir = out_dir / "images"
     out_images_dir.mkdir(parents=True, exist_ok=True)
@@ -178,7 +184,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
     for i, row in enumerate(raw_rows):
         data_id = row.get(id_field)
         for kind, suffix in (("full", ""), ("min", "-min")):
-            data = images_by_row.get(i + 2, {}).get(kind)
+            data = images_by_row.get(row_no[i], {}).get(kind)
             if data_id not in (None, "") and data and not is_deleted(row):
                 jobs[(i, kind)] = (f"{prefix}-{data_id}{suffix}.webp", data)
 
@@ -204,7 +210,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             no_id += 1
             continue
         if str(data_id) in seen_ids:
-            log(f"  WARNING {ws.title}: duplicate {id_field} {data_id!r} (row {i + 2})")
+            log(f"  WARNING {ws.title}: duplicate {id_field} {data_id!r} (row {row_no[i]})")
         seen_ids.add(str(data_id))
         row.pop(img_field, None)
         row.pop(min_field, None)

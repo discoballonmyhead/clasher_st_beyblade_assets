@@ -155,13 +155,50 @@ files to the release `<tag>`.
 Hobbies: parts and products are hobby `Beyblade`; the card game is its own hobby `Beyblade TCG` (own packs).
 Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.
 
+## Keeping your workbooks safe (and recovering them)
+* **Every save** first copies the current file to `backups/<name>-<date-time>.xlsx` next to the workbook (the newest
+  20 are kept), plus the `.bak`.
+* **A save that would lose pictures is refused**, and the file stays as it was. That covers:
+  * pictures put in with Excel's *Place in Cell*, or anything else the tools can't read;
+  * a written file holding fewer pictures than the workbook had.
+
+  In Excel, always use **Place over Cells** for pictures.
+* **Empty rows don't hide data any more.** The tools and the packager used to stop at the first empty row, so
+  clearing a row (Delete key) made every row below it look gone. Now empty rows are skipped. To remove a part, put
+  `true` in `deleted`; if you delete rows in Excel, use right-click → Delete.
+* **Close the workbook in Excel before opening it in a tool, and the other way round.** Whichever saves last wins.
+
+**Something looks wrong?** Don't open the workbook in a tool again. Copy it somewhere safe first, then:
+```bash
+python missing_data_tool.py inspect --workbook beyblade_parts.xlsx --from data
+```
+`inspect` is read-only. It shows per tab:
+* how many rows it has, and any empty rows;
+* how many pictures are in the file and how many can be read;
+* anything the tools can't keep;
+* what your last package (`data/`) has that the workbook doesn't: blank cells it can fill, pictures, missing rows.
+```bash
+python missing_data_tool.py restore --workbook beyblade_parts.xlsx --from data --dry-run
+```
+```bash
+python missing_data_tool.py restore --workbook beyblade_parts.xlsx --from data
+```
+`restore` fills blank cells and missing pictures from the package, and never overwrites a filled cell or an
+existing picture. It writes `beyblade_parts-restored.xlsx` and leaves your workbook untouched: check the copy, then
+replace the original with it.
+* `--add-missing-rows` also adds back packaged rows the workbook no longer has. Leave it off for rows you deleted on
+  purpose.
+* To restore from an older package, check out that commit's `data/` (e.g.
+  `git worktree add ../data_old <commit>`) and pass `--from ../data_old/data`.
+
 ## Missing data tool (`missing_data_tool.py`)
 A separate tool to see what's empty, field by field, and fill it. Run it without arguments for the GUI, or use the
 Flutter app in `missing_data_app/`. Both work the same way. Pick a workbook and a tab, and the left list shows how
 many rows miss each field (click one to list those rows). Pick a row to edit its values (blank fields are
 highlighted) or give it an image.
 
-* **Edits stay in memory until you save** (Ctrl+S, or autosave every 2 min). Every change can be undone with Ctrl+Z,
+* **Edits stay in memory until you save** (Ctrl+S). Autosave is off unless you switch it on, and even then it only
+  saves edits you made, never just because a workbook was opened. Every change can be undone with Ctrl+Z,
   including auto-fills, images and wiki fills. Closing with unsaved changes asks first.
 * **Last edited:** each row shows when it was last changed. Sort by it, or open *Recently edited* to jump back.
 * **Quick keys:** Enter applies the field, Ctrl+Enter applies and jumps to the next row with a gap, Ctrl+F searches.
