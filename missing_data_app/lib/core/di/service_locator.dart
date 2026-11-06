@@ -46,6 +46,8 @@ Future<void> initDependencies({
     ..registerLazySingleton(() => SaveWorkbook(sl()))
     ..registerLazySingleton(() => UndoLastChange(sl()))
     ..registerLazySingleton(() => GetRecentEdits(sl()))
+    ..registerLazySingleton(() => RecoverUnsaved(sl()))
+    ..registerLazySingleton(() => DiscardUnsaved(sl()))
     ..registerLazySingleton(() => AnalyzeSheet(sl()))
     ..registerLazySingleton(() => ListRows(sl()))
     ..registerLazySingleton(() => GetRow(sl()))
@@ -64,7 +66,15 @@ Future<void> initDependencies({
   // App-wide (one workbook open at a time): singletons. Dialog-scoped: factories.
   sl
     ..registerLazySingleton(() => WorkbookCubit(
-        open: sl(), summary: sl(), save: sl(), undo: sl(), settings: sl(), picker: sl(), changes: sl()))
+        open: sl(),
+        summary: sl(),
+        save: sl(),
+        undo: sl(),
+        recover: sl(),
+        discard: sl(),
+        settings: sl(),
+        picker: sl(),
+        changes: sl()))
     ..registerLazySingleton(() => SheetCubit(analyze: sl(), listRows: sl(), changes: sl(), settings: sl()))
     ..registerLazySingleton(() => RowEditorCubit(
         getRow: sl(), updateRow: sl(), setImage: sl(), parentImage: sl(), picker: sl(), changes: sl()))

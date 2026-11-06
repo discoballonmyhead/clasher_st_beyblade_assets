@@ -116,4 +116,23 @@ void main() {
     expect((await repo.editLog()).valueOrNull!.total, 3);
     expect((await repo.summary()).valueOrNull!.customColumns, 2);
   }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
+
+  test('a session stopped without saving loses nothing: reopen offers the edits back', () async {
+    final copy = '${File(workbook).parent.path}/crash.xlsx';
+    await File(workbook).copy(copy);
+    await repo.open(copy);
+    final id = (await repo.addRow('Parts_X_Blades', values: {'name': 'Typed before the crash'})).valueOrNull!;
+    await repo.updateRow('Parts_X_Blades', id, {'attack': '44'});
+    await bridge.stop(); // the window closes: the engine ends without saving
+
+    final s = (await repo.open(copy)).valueOrNull!; // a new engine starts on the next call
+    expect(s.unsavedEntries, 2);
+    expect((await repo.row('Parts_X_Blades', id)).fold((f) => f.message, (_) => ''), contains('No row'));
+    expect((await repo.recoverUnsaved()).valueOrNull, 2);
+    final row = (await repo.row('Parts_X_Blades', id)).valueOrNull!;
+    expect(row.values['name'], 'Typed before the crash');
+    expect(row.values['attack'], 44);
+    await repo.save();
+    expect((await repo.open(copy)).valueOrNull!.unsavedEntries, 0, reason: 'saved: nothing left to recover');
+  }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
 }

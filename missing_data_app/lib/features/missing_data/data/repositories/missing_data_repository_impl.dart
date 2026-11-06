@@ -114,5 +114,12 @@ class MissingDataRepositoryImpl implements MissingDataRepository {
       _guard(() async => editLogFromJson(await _ds.editLog(limit, sheet, query)));
 
   @override
+  Future<Result<int>> recoverUnsaved() =>
+      _guard(() async => ((await _ds.recover())['recovered'] as num? ?? 0).toInt());
+
+  @override
+  Future<Result<void>> discardUnsaved() => _guard(() => _ds.discardUnsaved());
+
+  @override
   Stream<String> get logLines => _ds.log;
 }

@@ -28,6 +28,18 @@ class UndoLastChange {
   Future<Result<String?>> call() => _repo.undo();
 }
 
+class RecoverUnsaved {
+  const RecoverUnsaved(this._repo);
+  final MissingDataRepository _repo;
+  Future<Result<int>> call() => _repo.recoverUnsaved();
+}
+
+class DiscardUnsaved {
+  const DiscardUnsaved(this._repo);
+  final MissingDataRepository _repo;
+  Future<Result<void>> call() => _repo.discardUnsaved();
+}
+
 class GetRecentEdits {
   const GetRecentEdits(this._repo);
   final MissingDataRepository _repo;

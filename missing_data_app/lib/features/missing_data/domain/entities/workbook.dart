@@ -24,6 +24,8 @@ class WorkbookSummary extends Equatable {
     this.logEntries = 0,
     this.customColumns = 0,
     this.addedColumns = const [],
+    this.unsavedEntries = 0,
+    this.unsavedLast,
   });
 
   final String path;
@@ -47,11 +49,16 @@ class WorkbookSummary extends Equatable {
   /// when it was opened. Saved with the next save.
   final List<String> addedColumns;
 
+  /// Edits from an earlier session that was closed (or crashed) without saving: kept in the recovery file and
+  /// offered when the workbook opens.
+  final int unsavedEntries;
+  final DateTime? unsavedLast;
+
   String get fileName => path.split(RegExp(r'[\\/]')).last;
 
   @override
   List<Object?> get props =>
-      [path, kind, sheets, dirty, undoSteps, lastSaved, logEntries, customColumns, addedColumns];
+      [path, kind, sheets, dirty, undoSteps, lastSaved, logEntries, customColumns, addedColumns, unsavedEntries];
 }
 
 /// A row someone (or the scraper) changed, newest first.

@@ -43,3 +43,7 @@ scraper_config.json
 
 # release builder output
 _release/
+
+# missing data tool: recovery files for unsaved edits, and timestamped backups
+*.unsaved*.jsonl
+backups/

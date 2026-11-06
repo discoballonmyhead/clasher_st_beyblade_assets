@@ -62,7 +62,10 @@ On first start, open **Settings** (gear icon) and check:
   row, field, and old → new. Search it, limit it to the open tab, and tap an entry to jump to its row. It's kept in the
   workbook's `_edit_log` tab, and the packager exports it.
 * **Undo** (Ctrl+Z) undoes edits, auto-fills, images, new rows and new columns (and their change-log entries). **Save** (Ctrl+S) writes the workbook and keeps
-  a `.bak` copy. Closing with unsaved changes asks first.
+  a `.bak` copy. Closing the window (or the workbook) with unsaved changes asks Save / Don't save / Cancel.
+* **Recovery:** every edit is also written at once to `<workbook>.unsaved.jsonl`, so nothing is lost if the app is
+  closed without saving, crashes or the engine stops. On the next open of that workbook the app offers **Recover**,
+  **Discard them** (kept in `backups/`) or **Ask me next time**. Saving removes the file.
 
 ## Structure (clean architecture + service locator)
 
