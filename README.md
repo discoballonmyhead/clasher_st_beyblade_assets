@@ -156,6 +156,12 @@ Hobbies: parts and products are hobby `Beyblade`; the card game is its own hobby
 Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, `BattlePass`.
 
 ## Keeping your workbooks safe (and recovering them)
+* **Unsaved edits survive a closed window or a crash.** Every edit in the missing data tool (the app or the Python
+  GUI) is written straight away to `<workbook>.unsaved.jsonl` next to the workbook. Saving removes it. If the tool
+  closes without saving, the next time you open that workbook it asks **Recover** (replays every edit, then save),
+  **Discard** (moved to `backups/`, not deleted) or **Ask me next time**. Don't delete that file by hand while it
+  holds work you want.
+* **Closing the window with unsaved changes asks** Save / Don't save / Cancel, in the app and in the Python GUI.
 * **Every save** first copies the current file to `backups/<name>-<date-time>.xlsx` next to the workbook (the newest
   20 are kept), plus the `.bak`.
 * **A save that would lose pictures is refused**, and the file stays as it was. That covers:

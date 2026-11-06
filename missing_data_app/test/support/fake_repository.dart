@@ -24,6 +24,10 @@ class FakeRepository implements MissingDataRepository {
 
   /// What the engine reports as added from the schema when the workbook opens.
   List<String> addedOnOpen = const [];
+
+  /// Edits left in the recovery file by a session closed without saving.
+  int unsavedEntries = 0;
+  bool recovered = false;
   final editLogEntries = <EditLogEntry>[];
 
   List<String> get _checked => ['type', 'mass', ...customColumns];
@@ -56,6 +60,7 @@ class FakeRepository implements MissingDataRepository {
         logEntries: editLogEntries.length,
         customColumns: customColumns.length,
         addedColumns: addedOnOpen,
+        unsavedEntries: unsavedEntries,
       );
 
   @override
@@ -213,6 +218,22 @@ class FakeRepository implements MissingDataRepository {
         if (q.isEmpty || '${e.action} ${e.rowId} ${e.field} ${e.newValue}'.toLowerCase().contains(q)) e,
     ];
     return Ok(EditLogPage(total: list.length, entries: list.take(limit).toList()));
+  }
+
+  @override
+  Future<Result<int>> recoverUnsaved() async {
+    final n = unsavedEntries;
+    rowsData['203']!['type'] = 'attack'; // what the lost session had typed
+    unsavedEntries = 0;
+    recovered = true;
+    dirty = true;
+    return Ok(n);
+  }
+
+  @override
+  Future<Result<void>> discardUnsaved() async {
+    unsavedEntries = 0;
+    return const Ok(null);
   }
 
   @override

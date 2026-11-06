@@ -28,6 +28,13 @@ abstract class MissingDataRepository {
   Future<Result<int>> fillFromWiki(String sheet, List<String> ids);
   Future<Result<void>> stopWiki();
 
+  // ── recovery of unsaved edits from a closed / crashed session ──
+  /// Replays them -> how many were recovered.
+  Future<Result<int>> recoverUnsaved();
+
+  /// Drops them (the engine moves the file to backups/).
+  Future<Result<void>> discardUnsaved();
+
   // ── structure + change log ──
   /// Appends a column to each tab (after the last column) and registers it.
   Future<Result<void>> addColumn({

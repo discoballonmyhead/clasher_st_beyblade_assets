@@ -490,6 +490,52 @@ def wiki_fill(book_path, sheet, ids, limit=None, log=print, stop_event=None, cfg
     return len(titles)
 
 
+# ── recovery journal: unsaved edits survive a closed window, a crash or a power cut ──
+
+JOURNALED = ("set_values", "apply", "set_image", "add_column", "add_row", "undo", "restore")
+
+
+def _jsonable(v):
+    if isinstance(v, (bytes, bytearray)):
+        return {"__b64__": base64.b64encode(bytes(v)).decode()}
+    if isinstance(v, dict):
+        return {k: _jsonable(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_jsonable(x) for x in v]
+    return v
+
+
+def _unjson(v):
+    if isinstance(v, dict):
+        if set(v) == {"__b64__"}:
+            return base64.b64decode(v["__b64__"])
+        return {k: _unjson(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_unjson(x) for x in v]
+    return v
+
+
+def journal_path(workbook):
+    return workbook + ".unsaved.jsonl"
+
+
+def pending_journals(workbook):
+    """Journals of earlier sessions that never saved, oldest first."""
+    import glob
+    return sorted(glob.glob(glob.escape(workbook) + ".unsaved-pending-*.jsonl"))
+
+
+def _journaled(fn):
+    """Runs an engine edit, then appends it to the recovery journal (only when it succeeded)."""
+    def wrapper(self, *args, **kwargs):
+        result = fn(self, *args, **kwargs)
+        self._journal(fn.__name__, args, kwargs)
+        return result
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
+
+
 # ── engine (shared by the Tk GUI, the CLI "serve" mode and the Flutter app) ────
 
 class Engine:
@@ -506,9 +552,81 @@ class Engine:
         self._cache = {}           # sheet -> {"rows": {r: row}, "missing": {r: [..]}, "opt": bool}
         self._undo = []            # [(label, [(kind, sheet, r, col, old)])]
         self.last_saved = None
+        self.journaling = True     # every edit is also appended to <workbook>.unsaved.jsonl until saved
 
     # ---- workbook ---------------------------------------------------------------
+    # ---- recovery journal ---------------------------------------------------------
+    def _journal(self, op, args, kwargs):
+        if not self.journaling or not self.path:
+            return
+        jp = journal_path(self.path)
+        try:
+            with open(jp, "a", encoding="utf-8") as f:
+                if f.tell() == 0:
+                    f.write(json.dumps({"journal": 1, "workbook": os.path.basename(self.path),
+                                        "started": now_iso()}) + "\n")
+                f.write(json.dumps({"at": now_iso(), "op": op, "args": _jsonable(list(args)),
+                                    "kwargs": _jsonable(kwargs)}, default=str) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as e:  # never block an edit because the journal can't be written - but say so
+            self.log(f"Warning: couldn't write the recovery file {jp}: {e}")
+
+    def journal_info(self):
+        """Unsaved edits left by earlier sessions (closed window, crash): count and time range."""
+        entries, first, last = 0, None, None
+        for jp in pending_journals(self.path) if self.path else []:
+            with open(jp, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if "op" in e:
+                        entries += 1
+                        first = first or e.get("at")
+                        last = e.get("at")
+        return {"entries": entries, "first": first, "last": last}
+
+    def recover(self):
+        """Replays the unsaved edits of earlier sessions, in order (rows are found by id, so it still lands right
+        if rows moved). The replayed edits go into this session's journal; the old files are removed after."""
+        done, failed = 0, []
+        files = pending_journals(self.path)
+        for jp in files:
+            with open(jp, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    if e.get("op") not in JOURNALED:
+                        continue
+                    try:
+                        getattr(self, e["op"])(*_unjson(e.get("args") or []), **_unjson(e.get("kwargs") or {}))
+                        done += 1
+                    except Exception as x:  # keep going: one bad entry must not lose the rest
+                        failed.append(f"{e.get('op')} {str(e.get('args', ''))[:60]}: {x}")
+        for jp in files:
+            os.remove(jp)
+        self._cache.clear()
+        return {"recovered": done, "failed": failed}
+
+    def discard_journal(self):
+        """Drops the unsaved edits of earlier sessions (moved to backups/, not deleted)."""
+        files = pending_journals(self.path)
+        folder = os.path.join(os.path.dirname(os.path.abspath(self.path)), "backups")
+        os.makedirs(folder, exist_ok=True)
+        for jp in files:
+            os.replace(jp, os.path.join(folder, "discarded-" + os.path.basename(jp)))
+        return {"discarded": len(files)}
+
     def open(self, path):
+        # A journal from a session that never saved: keep it aside, offer it (journal_info / recover).
+        jp = journal_path(path)
+        if os.path.exists(jp):
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+            os.replace(jp, f"{path}.unsaved-pending-{stamp}.jsonl")
         self.book = Book(path, kind_of_workbook(path))
         self.path = path
         self._cache.clear()
@@ -564,6 +682,7 @@ class Engine:
             for c in self.book.headers(self.book.wb[sheet])]}
 
     # ---- structure: new columns / rows -----------------------------------------
+    @_journaled
     def add_column(self, sheets, name, optional=False, inherit=False, default=None, note=""):
         name = (name or "").strip()
         if not COLUMN_NAME.match(name):
@@ -600,6 +719,7 @@ class Engine:
         self._logged(f"add column {name} ({len(sheets)} tab{'s' if len(sheets) != 1 else ''})", changes, entries)
         return {"added": sheets, "column": name}
 
+    @_journaled
     def add_row(self, sheet, values=None, copy_from=None, mode="variant"):
         """New row with the next id. mode: "empty" (only values + what follows from the tab), "variant" (copies
         the fields a variant shares, parent id = copy_from's root) or "copy" (every field of copy_from)."""
@@ -644,6 +764,7 @@ class Engine:
                      [{"action": "add_row", "sheet": sheet, "rowId": rid, "note": note}])
         return {"row": r, "id": rid}
 
+    @_journaled
     def restore(self, data_dir, add_missing_rows=False, dry_run=False, sheets=None):
         """Fills what's missing from a packaged data folder (data/*.json + data/images): blank cells get the
         packaged value, rows without a picture get the packaged picture, and (add_missing_rows) packaged rows the
@@ -726,12 +847,15 @@ class Engine:
                 "dirty": bool(self.book.dirty), "undo": len(self._undo), "lastSaved": self.last_saved,
                 "logEntries": log_rows,
                 "addedColumns": [f"{t}.{c}" for t, c in getattr(self, "added_on_open", [])],
+                "unsavedFromLastTime": self.journal_info(),
                 "customColumns": sum(len(v) for v in self.book.custom_columns().values())}
 
     def save(self):
         if self.book.dirty:
             self.book.save()
             self.last_saved = os.path.getmtime(self.path)
+        if os.path.exists(journal_path(self.path)):
+            os.remove(journal_path(self.path))  # everything in it is in the workbook now
         return {"saved": True, "lastSaved": self.last_saved}
 
     # ---- analysis (cached per sheet, rows refreshed one by one after edits) -----
@@ -831,6 +955,7 @@ class Engine:
             self._undo.append((label, changes))
             del self._undo[:-50]
 
+    @_journaled
     def set_values(self, sheet, row_id, values):
         r = find_row(self.book, sheet, row_id)
         if r is None:
@@ -860,13 +985,16 @@ class Engine:
         return [{"row": r, "id": rid, "field": f, "value": v, "source": src}
                 for r, rid, f, v, src in propose_fills(self.book, sheet, parent, siblings, derive)]
 
+    @_journaled
     def apply(self, sheet, items):
         ws = self.book.wb[sheet]
         hdr = self.book.headers(ws)
         changes, rows, entries = [], set(), []
         idc = sheet_info(sheet)[0]
         for it in items:
-            r, f = int(it["row"]), it["field"]
+            f = it["field"]
+            r = find_row(self.book, sheet, it["id"]) if not blank(it.get("id")) else None
+            r = r or int(it["row"])
             if f in hdr and blank(ws.cell(r, hdr[f]).value):
                 changes.append(("cell", sheet, r, hdr[f], None))
                 ws.cell(r, hdr[f]).value = it["value"]
@@ -882,6 +1010,7 @@ class Engine:
         self._logged(f"auto-fill {sheet} ({len(rows)} rows)", changes, entries)
         return {"filled": len([c for c in changes if c[3] != hdr.get("updated_at")]), "rows": len(rows)}
 
+    @_journaled
     def set_image(self, sheet, row_id, data):
         idc, img, mini = sheet_info(sheet)
         r = find_row(self.book, sheet, row_id)
@@ -907,6 +1036,7 @@ class Engine:
         data = current_image(self.book, sheet, pr) if pr else None
         return base64.b64encode(data).decode() if data else None
 
+    @_journaled
     def undo(self):
         if not self._undo:
             return {"undone": None, "undo": 0}
@@ -1003,6 +1133,8 @@ def serve(stdin=None, stdout=None):
         "undo": lambda a: eng.undo(),
         "save": lambda a: eng.save(),
         "recent": lambda a: eng.recent_edits(a.get("limit", 30)),
+        "recover": lambda a: eng.recover(),
+        "discardUnsaved": lambda a: eng.discard_journal(),
         "log": lambda a: eng.edit_log(a.get("limit", 200), a.get("sheet"), a.get("action"), a.get("query", "")),
         "columns": lambda a: eng.columns(a["sheet"]),
         "addColumn": lambda a: eng.add_column(a.get("sheets") or [a["sheet"]], a["name"], a.get("optional", False),
@@ -1117,6 +1249,7 @@ def run_cli(argv):
         return
     if a.cmd == "restore":
         eng = Engine(source="restore")
+        eng.journaling = False  # writes a separate file; nothing to recover for the original
         eng.open(a.workbook)
         if eng.book.unsupported and not a.dry_run:
             sys.exit("Can't write a restored copy - it would lose: " + "; ".join(eng.book.unsupported))
@@ -1421,7 +1554,31 @@ def run_gui(workbook=""):
                 stree.selection_set(pick)
             add_log(f"Opened {pth}")
             refresh_title()
+            offer_recovery(summary.get("unsavedFromLastTime") or {})
         runner.run(lambda: eng.open(pth), done, err, f"Opening {os.path.basename(pth)} ...")
+
+    def offer_recovery(info):
+        n = info.get("entries") or 0
+        if not n:
+            return
+        last = f" (last one {info['last'][:16].replace('T', ' ')})" if info.get("last") else ""
+        ans = messagebox.askyesnocancel(
+            "Recover unsaved changes?",
+            f"{n} change(s) made in this workbook were never saved{last}. They are kept in a recovery file next "
+            "to the workbook.\n\nYes: recover them\nNo: discard them (moved to backups/)\nCancel: ask me next time")
+        if ans is None:
+            return
+        if ans:
+            def recovered(r):
+                add_log(f"Recovered {r.get('recovered', 0)} unsaved change(s) - save to keep them")
+                for f in r.get("failed") or []:
+                    add_log(f"  could not replay: {f}")
+                reload_sheet()
+                refresh_title()
+            runner.run(eng.recover, recovered, err, "Recovering unsaved changes ...")
+        else:
+            eng.discard_journal()
+            add_log("Discarded the unsaved changes (copy in backups/)")
 
     def on_sheet(_=None):
         sel = stree.selection()

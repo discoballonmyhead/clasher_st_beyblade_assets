@@ -68,6 +68,8 @@ class EngineDataSource {
   Future<Json> addRow(String sheet, Map<String, String>? values, String? copyFrom, String mode) =>
       _map('addRow', {'sheet': sheet, 'values': values, 'copyFrom': copyFrom, 'mode': mode});
   Future<Json> columns(String sheet) => _map('columns', {'sheet': sheet});
+  Future<Json> recover() => _map('recover', const {}, const Duration(minutes: 5));
+  Future<Json> discardUnsaved() => _map('discardUnsaved');
   Future<Json> editLog(int limit, String? sheet, String query) =>
       _map('log', {'limit': limit, 'sheet': sheet, 'query': query});
 

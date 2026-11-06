@@ -1,3 +1,5 @@
+import 'dart:ui' show AppExitResponse;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -34,6 +36,10 @@ class WorkbookPage extends StatefulWidget {
 class _WorkbookPageState extends State<WorkbookPage> {
   final _searchFocus = FocusNode();
 
+  /// Asks before the WINDOW closes (title-bar ×, Alt+F4, Cmd+Q) when there are unsaved changes - not only
+  /// when the in-app Close button is used.
+  late final AppLifecycleListener _exitGuard = AppLifecycleListener(onExitRequested: _onExitRequested);
+
   @override
   void initState() {
     super.initState();
@@ -41,7 +47,12 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final sheetCubit = context.read<SheetCubit>();
     if (sheetCubit.state.sheet == null && sheets.isNotEmpty) sheetCubit.selectSheet(sheets.first.name);
     // Columns a newer schema defines (e.g. simpleRatchet) were added on open: say so once the page is up.
-    final added = context.read<WorkbookCubit>().state.summary?.addedColumns ?? const [];
+    _exitGuard; // start listening
+    final summary = context.read<WorkbookCubit>().state.summary;
+    if ((summary?.unsavedEntries ?? 0) > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _offerRecovery(summary!));
+    }
+    final added = summary?.addedColumns ?? const [];
     if (added.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _snack('New columns added to this workbook: ${added.join(', ')} - save to keep');
@@ -49,8 +60,55 @@ class _WorkbookPageState extends State<WorkbookPage> {
     }
   }
 
+  Future<void> _offerRecovery(WorkbookSummary s) async {
+    if (!mounted) return;
+    final wb = context.read<WorkbookCubit>();
+    final choice = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => AlertDialog(
+        title: const Text('Recover unsaved changes?'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Text('${s.unsavedEntries} change(s) made in this workbook were never saved - the app was closed '
+              'or stopped${s.unsavedLast != null ? ' (last one ${formatWhen(s.unsavedLast)})' : ''}. They are kept '
+              'in a recovery file next to the workbook.'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, 'later'), child: const Text('Ask me next time')),
+          TextButton(onPressed: () => Navigator.pop(c, 'discard'), child: const Text('Discard them')),
+          FilledButton(onPressed: () => Navigator.pop(c, 'recover'), child: const Text('Recover')),
+        ],
+      ),
+    );
+    if (choice == 'recover') await wb.recoverUnsaved();
+    if (choice == 'discard') await wb.discardUnsaved();
+  }
+
+  /// Save / Don't save / Cancel. Every edit is also in the recovery file, so even a hard kill loses nothing,
+  /// but the normal way out should never be a silent discard.
+  Future<AppExitResponse> _onExitRequested() async {
+    final wb = context.read<WorkbookCubit>();
+    if (!(wb.state.summary?.dirty ?? false) || !mounted) return AppExitResponse.exit;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Unsaved changes'),
+        content: const Text('Save before closing?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, 'cancel'), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, 'discard'), child: const Text("Don't save")),
+          FilledButton(onPressed: () => Navigator.pop(c, 'save'), child: const Text('Save')),
+        ],
+      ),
+    );
+    if (choice == 'save') return await wb.save() ? AppExitResponse.exit : AppExitResponse.cancel;
+    return choice == 'discard' ? AppExitResponse.exit : AppExitResponse.cancel;
+  }
+
   @override
   void dispose() {
+    _exitGuard.dispose();
     _searchFocus.dispose();
     super.dispose();
   }

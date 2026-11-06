@@ -15,6 +15,8 @@ class WorkbookCubit extends Cubit<WorkbookState> {
     required GetWorkbookSummary summary,
     required SaveWorkbook save,
     required UndoLastChange undo,
+    RecoverUnsaved? recover,
+    DiscardUnsaved? discard,
     required AppSettings settings,
     required FilePickerService picker,
     required DataChangeNotifier changes,
@@ -22,6 +24,8 @@ class WorkbookCubit extends Cubit<WorkbookState> {
         _summary = summary,
         _save = save,
         _undo = undo,
+        _recover = recover,
+        _discard = discard,
         _settings = settings,
         _picker = picker,
         _changes = changes,
@@ -33,6 +37,8 @@ class WorkbookCubit extends Cubit<WorkbookState> {
   final GetWorkbookSummary _summary;
   final SaveWorkbook _save;
   final UndoLastChange _undo;
+  final RecoverUnsaved? _recover;
+  final DiscardUnsaved? _discard;
   final AppSettings _settings;
   final FilePickerService _picker;
   final DataChangeNotifier _changes;
@@ -65,18 +71,46 @@ class WorkbookCubit extends Cubit<WorkbookState> {
     res.fold((f) => emit(state.copyWith(error: f.message)), (s) => emit(state.copyWith(summary: s)));
   }
 
-  Future<void> save() async {
-    if (state.summary == null || state.saving) return;
+  /// True when the workbook is saved (the close-window guard waits for this).
+  Future<bool> save() async {
+    if (state.summary == null || state.saving) return false;
     emit(state.copyWith(saving: true));
     final res = await _save();
-    await res.fold(
-      (f) async => emit(state.copyWith(saving: false, error: f.message)),
+    return res.fold(
+      (f) {
+        emit(state.copyWith(saving: false, error: f.message));
+        return false;
+      },
       (_) async {
         final s = (await _summary()).valueOrNull;
-        emit(state.copyWith(saving: false, summary: s, message: 'Saved (a .bak copy was kept)'));
+        emit(state.copyWith(saving: false, summary: s, message: 'Saved (a backup copy was kept)'));
         _changes.notify(DataChange.saved);
+        return true;
       },
     );
+  }
+
+  /// Replays the edits of a session that was closed without saving.
+  Future<void> recoverUnsaved() async {
+    final recover = _recover;
+    if (recover == null) return;
+    final res = await recover();
+    await res.fold((f) async => emit(state.copyWith(error: f.message)), (n) async {
+      final s = (await _summary()).valueOrNull;
+      emit(state.copyWith(summary: s, message: 'Recovered $n unsaved change(s) - save to keep them'));
+      _changes.notify(DataChange.structureChanged);
+    });
+  }
+
+  /// Drops them (the engine keeps the file in backups/).
+  Future<void> discardUnsaved() async {
+    final discard = _discard;
+    if (discard == null) return;
+    final res = await discard();
+    await res.fold((f) async => emit(state.copyWith(error: f.message)), (_) async {
+      final s = (await _summary()).valueOrNull;
+      emit(state.copyWith(summary: s, message: 'Unsaved changes discarded (a copy is in backups/)'));
+    });
   }
 
   Future<void> undo() async {
