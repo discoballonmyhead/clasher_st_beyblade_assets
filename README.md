@@ -170,8 +170,32 @@ Accessory types use the app's values: `Stadium`, `Launcher`, `Grip`, `DeckBox`, 
 
   In Excel, always use **Place over Cells** for pictures.
 * **Empty rows don't hide data any more.** The tools and the packager used to stop at the first empty row, so
-  clearing a row (Delete key) made every row below it look gone. Now empty rows are skipped. To remove a part, put
-  `true` in `deleted`; if you delete rows in Excel, use right-click → Delete.
+  clearing a row (Delete key) made every row below it look gone. Now empty rows are skipped.
+* **Delete rows with the tool, not in Excel.** Deleting rows in Excel leaves pictures behind or squashes them, which
+  is how pictures ended up on the wrong rows. Use **Delete row** in the missing data tool (app or Python GUI) or
+  `missing_data_tool.py delete-row`:
+  * the rows below move up **together with their pictures**;
+  * each deleted row goes to **Recently deleted** (the `_deleted` tab: its values and pictures) until you restore it
+    or empty it. Restoring puts it back at the end of its tab, with its old id when that's still free;
+  * Undo brings it back too, and the change log records it.
+
+  To hide a part from the app without deleting it, put `true` in `deleted`.
+* **Ids are checked.** When a tab's ids don't run 1..N (gaps after deleting, duplicates), the tool asks whether to
+  shift them, on open and after rows are added, deleted or restored. **Shift ids** keeps their order and updates
+  everything that points at them:
+  * parent ids in the tab;
+  * `ProductContents.partDataID` and `TCG_Cards.linkedPartDataID` (in the other workbooks when you save; close them
+    in Excel first);
+  * links to deleted rows are **cleared**, never left to point at whichever part gets that number.
+
+  **Not now** waits until the tab's ids change again.
+
+  **Careful with ids the app already has:** saved builds, collections and decks in clasher_st store part ids. Once
+  a catalog is released, shifting those ids makes them point at other parts. The prompt says how many changed ids
+  are already in `data/`. Shift before a release, not after.
+
+  Command line: `ids` lists the tabs, `renumber --sheet TAB` shifts one. Undo reverts a shift until you save; after
+  saving, the other workbooks keep their updated links.
 * **Pictures can't vanish in Excel any more.** Excel sizes the pictures it saves by the cells they cover, so
   deleting or resizing rows can squash a picture to nothing: still in the file (the tools and the app show it),
   invisible in Excel. Every tool save now gives each picture its own size, the way new pictures are written.

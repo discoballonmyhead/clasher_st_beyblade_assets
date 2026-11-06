@@ -22,6 +22,9 @@ class SheetCubit extends Cubit<SheetState> {
     _sub = changes.stream.listen((c) {
       if (c == DataChange.workbookOpened) {
         emit(const SheetState().copyWith(sort: state.sort));
+      } else if (c == DataChange.idsChanged && state.sheet != null) {
+        emit(state.copyWith(selected: const {}, focusedId: () => null));
+        refresh();
       } else if (c != DataChange.saved && state.sheet != null) {
         refresh();
       }

@@ -22,6 +22,7 @@ import os
 import hashlib
 import io
 import json
+import re
 import sys
 import threading
 from datetime import datetime, timezone
@@ -198,6 +199,14 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
     if jobs:
         with cf.ThreadPoolExecutor(max_workers=WORKERS) as ex:
             encoded = dict(ex.map(encode, jobs.items()))
+    # pictures of ids this tab no longer has (deleted or renumbered rows) would linger in the image packs
+    keep = {name for name, _ in jobs.values()}
+    own = re.compile(rf"{re.escape(prefix)}-[^-]+(-min)?\.webp")
+    stale = [f for f in out_images_dir.iterdir() if own.fullmatch(f.name) and f.name not in keep]
+    for f in stale:
+        f.unlink()
+    if stale:
+        log(f"  {ws.title}: removed {len(stale)} old picture file(s) of ids it no longer has")
 
     rows, seen_ids = [], set()
     with_image = without_image = no_id = n_deleted = 0

@@ -17,7 +17,9 @@ THE THREE WORKBOOKS
   3. beyblade_tcg.xlsx       TCG_Sets, TCG_Cards
 
 ID MODEL (same everywhere)
-  dataID         stable integer per sheet, never reused, never renumbered
+  dataID         integer per sheet. The missing data tool can renumber a tab to 1..N (it asks first, and
+                 updates parent ids, ProductContents and TCG card links) - ids already released to the app
+                 then point at other parts, so renumber before a release, not after
   parent...Id    empty for a base item; for a variant it holds the dataID/productID of the base
   variantLabel   what makes the variant different ("Metal Coat: Black", "06", "Parallel Foil")
 """
@@ -31,6 +33,10 @@ HOBBY_NAME = "Beyblade"
 #   _columns   columns people added to a tab with the tool, and how the tool treats them
 EDIT_LOG_SHEET = "_edit_log"
 EDIT_LOG_COLUMNS = ["at", "source", "action", "sheet", "rowId", "field", "oldValue", "newValue", "note"]
+# _deleted  rows deleted with the tool (values as JSON + their pictures), until restored or emptied
+DELETED_SHEET = "_deleted"
+DELETED_COLUMNS = ["key", "deletedAt", "source", "sheet", "rowId", "name", "values"]
+DELETED_IMAGE_COLS = ("image", "minifiedImage")
 CUSTOM_COLUMNS_SHEET = "_columns"
 CUSTOM_COLUMNS_COLUMNS = ["sheet", "column", "optional", "inherit", "note", "addedAt", "source"]
 # The card game is its own hobby in the app (separate catalog, separate image/data packs),

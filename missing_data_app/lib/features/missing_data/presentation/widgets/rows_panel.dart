@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../domain/entities/row.dart';
+import 'delete_rows.dart';
 import 'new_row_dialog.dart';
 import '../cubits/sheet/sheet_cubit.dart';
 import '../cubits/sheet/sheet_state.dart';
@@ -54,6 +55,14 @@ class RowsPanel extends StatelessWidget {
             if (st.selected.isNotEmpty) ...[
               const SizedBox(width: 12),
               Chip(label: Text('${st.selected.length} ticked'), onDeleted: cubit.clearSelection),
+              TextButton.icon(
+                style: TextButton.styleFrom(foregroundColor: cs.error),
+                onPressed: st.sheet == null
+                    ? null
+                    : () => deleteRowsWithConfirm(context, st.sheet!, st.selected.toList()),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Delete ticked'),
+              ),
             ],
             const Spacer(),
             TextButton.icon(

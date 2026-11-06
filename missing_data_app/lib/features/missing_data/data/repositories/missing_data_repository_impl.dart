@@ -4,6 +4,7 @@ import '../../../../core/bridge/engine_bridge.dart';
 import '../../../../core/error/failure.dart';
 import '../../domain/entities/fill_proposal.dart';
 import '../../domain/entities/row.dart';
+import '../../domain/entities/row_lifecycle.dart';
 import '../../domain/entities/sheet_analysis.dart';
 import '../../domain/entities/structure.dart';
 import '../../domain/entities/workbook.dart';
@@ -112,6 +113,30 @@ class MissingDataRepositoryImpl implements MissingDataRepository {
   @override
   Future<Result<EditLogPage>> editLog({int limit = 500, String? sheet, String query = ''}) =>
       _guard(() async => editLogFromJson(await _ds.editLog(limit, sheet, query)));
+
+  @override
+  Future<Result<DeleteResult>> deleteRows(String sheet, List<String> ids) =>
+      _guard(() async => deleteResultFromJson(await _ds.deleteRows(sheet, ids)));
+
+  @override
+  Future<Result<List<DeletedRow>>> deletedRows() =>
+      _guard(() async => [for (final e in await _ds.deleted()) deletedRowFromJson(e)]);
+
+  @override
+  Future<Result<List<RestoredRow>>> restoreDeleted(List<String> keys) =>
+      _guard(() async => [for (final e in await _ds.undelete(keys)) restoredRowFromJson(e)]);
+
+  @override
+  Future<Result<int>> purgeDeleted({List<String>? keys}) =>
+      _guard(() async => ((await _ds.purgeDeleted(keys))['purged'] as num? ?? 0).toInt());
+
+  @override
+  Future<Result<List<IdIssue>>> idCheck() =>
+      _guard(() async => [for (final e in await _ds.idCheck()) idIssueFromJson(e)]);
+
+  @override
+  Future<Result<RenumberResult>> renumber(String sheet) =>
+      _guard(() async => renumberResultFromJson(await _ds.renumber(sheet)));
 
   @override
   Future<Result<int>> recoverUnsaved() =>

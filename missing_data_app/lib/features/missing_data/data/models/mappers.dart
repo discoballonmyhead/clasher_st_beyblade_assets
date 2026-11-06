@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../../domain/entities/fill_proposal.dart';
 import '../../domain/entities/row.dart';
+import '../../domain/entities/row_lifecycle.dart';
 import '../../domain/entities/sheet_analysis.dart';
 import '../../domain/entities/structure.dart';
 import '../../domain/entities/workbook.dart';
@@ -133,4 +134,46 @@ RecentEdit recentEditFromJson(Json j) => RecentEdit(
       id: _s(j['id']),
       name: _s(j['name']),
       updatedAt: _date(j['updatedAt']),
+    );
+
+List<String> _strings(Object? v) => [for (final x in (v as List? ?? const [])) '$x'];
+
+DeletedRow deletedRowFromJson(Json j) => DeletedRow(
+      key: _s(j['key']),
+      sheet: _s(j['sheet']),
+      rowId: _s(j['rowId']),
+      name: _s(j['name']),
+      deletedAt: _date(j['deletedAt']),
+      source: _s(j['source']),
+      hasImage: j['hasImage'] == true,
+    );
+
+DeleteResult deleteResultFromJson(Json j) =>
+    DeleteResult(deleted: _strings(j['deleted']), orphans: _strings(j['orphans']));
+
+RestoredRow restoredRowFromJson(Json j) =>
+    RestoredRow(sheet: _s(j['sheet']), id: _s(j['id']), oldId: _s(j['oldId']));
+
+IdIssue idIssueFromJson(Json j) => IdIssue(
+      sheet: _s(j['sheet']),
+      rows: _i(j['rows']),
+      max: _i(j['max']),
+      gaps: _strings(j['gaps']),
+      gapCount: _i(j['gapCount']),
+      duplicates: _strings(j['duplicates']),
+      nonNumeric: _i(j['nonNumeric']),
+      released: _i(j['released']),
+      fingerprint: _s(j['fingerprint']),
+    );
+
+RenumberResult renumberResultFromJson(Json j) => RenumberResult(
+      sheet: _s(j['sheet']),
+      changed: _i(j['changed']),
+      references: {
+        for (final e in (j['references'] as Map? ?? const {}).entries) '${e.key}': _i(e.value),
+      },
+      cleared: {
+        for (final e in (j['cleared'] as Map? ?? const {}).entries) '${e.key}': _strings(e.value),
+      },
+      pendingFiles: _strings(j['pendingFiles']),
     );

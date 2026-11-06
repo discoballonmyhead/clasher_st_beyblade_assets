@@ -88,7 +88,7 @@ flowchart TD
 | step | command | creates |
 |---|---|---|
 | scrape | `python fandom_scraper.py` (GUI) or `--target parts:X:blades ...` | rows and images in the three workbooks, `scrape_state/` (resume point and log) |
-| fill gaps | `python missing_data_tool.py` or the `missing_data_app` | edits, new rows and new columns in the workbooks (each edit stamps `updated_at`); the `_edit_log` tab (every change: when, tool, tab, row, field, old → new) and the `_columns` tab (columns added with the tool); a `.bak` on every save |
+| fill gaps | `python missing_data_tool.py` or the `missing_data_app` | edits, new / deleted rows, id shifts and new columns in the workbooks (each edit stamps `updated_at`); the `_deleted` tab (recently deleted rows with their pictures); the `_edit_log` tab (every change: when, tool, tab, row, field, old → new) and the `_columns` tab (columns added with the tool); a `.bak` on every save |
 | package | `python beyblade_data.py --parts ... --products ... --tcg ... --out data` | `data/<sheet>.json` for every sheet (including new rows and columns), `data/images/<sheet>-<id>[-min].webp`, `manifest.json` (with a `changes` summary), `_images_by_hobby.json`, `_package_diff.json` (rows/columns added, removed or changed since the last package), `_edit_log.json`, `_custom_columns.json`, and a catalog check report |
 | release | `python build_release.py --tag <tag> [--drop-invalid] [--app-assets DIR]` | `_release/<tag>/`: `catalog.zip`, `catalog_manifest.json`, image packs, data packs, `packs.json` (and the bundled catalog in `DIR`) |
 | check only | `python catalog_check.py --data data` | a report; exits 1 when the app would reject or break on the data |
