@@ -9,10 +9,12 @@ Rules it follows so the packager and humans stay happy:
   * images are PNGs anchored to the row's image cell
   * a .bak copy is made before the first save of a session; saves are atomic
 """
+import glob
 import io
 import os
 import re
 import shutil
+import zipfile
 from datetime import datetime, timezone
 
 import openpyxl
@@ -29,6 +31,7 @@ import beyblade_schema as S
 HEAD_FILL = {"id": "7F6000", "variant": "806000", "data": "1F3864", "image": "375623", "meta": "595959",
              "custom": "7030A0"}  # custom = added with missing_data_tool
 IMAGE_DISPLAY = {"full": 110, "min": 44}
+BACKUPS_KEPT = 20
 LOG_SHEET = "_scrape_log"
 LOG_COLUMNS = ["target", "sheet", "id", "wikiTitle", "url", "revid", "imageFile", "scrapedAt"]
 
@@ -54,9 +57,12 @@ README = {
         "                  only ratchets with simpleRatchet = 1. Filled by hand.",
         "  incompleteData  1 while a row still needs checking; set 0 when verified.",
         "  deleted         leave empty; put 'true' to hide a row without losing its dataID.",
-        "  image / minifiedImage  paste a PNG INTO that row's cell (Insert > Pictures > Place in cell / over cell).",
+        "  image / minifiedImage  a picture placed OVER that row's cell (Insert > Pictures > Place over Cells), or let",
+        "                  the missing data tool put it there. Never 'Place in Cell': the tools can't keep those.",
         "",
-        "Keep rows contiguous: the packager stops reading at the first completely blank row.",
+        "Empty rows are skipped (the tools and the packager read every non-empty row).",
+        "To remove a part, put 'true' in deleted (its dataID stays reserved); if you delete a row in Excel, use",
+        "right-click > Delete, and pictures should be placed OVER cells, not 'Place in cell' (the tools can't keep those).",
         "Green headers = image columns, gold = ids/variants, blue = data, grey = bookkeeping.",
         "Dropdown values live in the Lists sheet; add new values there.",
         "_scrape_log (if present) records which wiki page each scraped row came from - the scraper uses it to avoid duplicates.",
@@ -81,7 +87,7 @@ README = {
         "",
         "itemCost is a plain number; put the currency in the currency column (JPY, USD...).",
         "releaseDate: YYYY-MM-DD.",
-        "Keep rows contiguous: the packager stops at the first blank row.",
+        "Empty rows are skipped; to remove a row use deleted = true.",
     ],
     "tcg": [
         "BEYBLADE TCG WORKBOOK",
@@ -115,11 +121,63 @@ def norm_name(s):
     return re.sub(r"[^a-z0-9]+", "", str(s or "").lower())
 
 
+SPREADSHEET_DRAWING = "{http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing}"
+
+
+def picture_count(path):
+    """Pictures in an .xlsx's drawings (pic elements, whatever namespace prefix the writer used)."""
+    import xml.etree.ElementTree as ET
+    n = 0
+    with zipfile.ZipFile(path) as z:
+        for name in z.namelist():
+            if name.startswith("xl/drawings/") and name.endswith(".xml") and "/_rels/" not in name:
+                n += sum(1 for el in ET.fromstring(z.read(name)).iter(SPREADSHEET_DRAWING + "pic"))
+    return n
+
+
+def unkeepable_content(path, loaded_images):
+    """What's in the file that openpyxl can't read back, so a save would drop it."""
+    out = []
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = z.namelist()
+            rich = [n for n in names if n.startswith("xl/richData/")]
+            if rich:
+                out.append("pictures placed IN cells (Excel 'Place in cell'). In Excel: select those pictures, "
+                           "right-click > 'Place over Cells', save, then use the tool again")
+            if any(n.startswith("xl/cellimages") for n in names):
+                out.append("WPS in-cell pictures (cellimages). Float them over the cells first")
+    except zipfile.BadZipFile:
+        return ["the file isn't a valid .xlsx"]
+    pics = picture_count(path)
+    if pics > loaded_images:
+        out.append(f"{pics - loaded_images} picture(s) this tool can't read (grouped, linked or another format)")
+    return out
+
+
+def backup(path):
+    """Timestamped copy into <folder>/backups/, keeping the newest BACKUPS_KEPT per workbook."""
+    folder = os.path.join(os.path.dirname(os.path.abspath(path)), "backups")
+    os.makedirs(folder, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(path))[0]
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = os.path.join(folder, f"{stem}-{stamp}.xlsx")
+    n = 1
+    while os.path.exists(dest):
+        dest = os.path.join(folder, f"{stem}-{stamp}-{n}.xlsx")
+        n += 1
+    shutil.copy2(path, dest)
+    for old in sorted(glob.glob(os.path.join(folder, f"{stem}-*.xlsx")))[:-BACKUPS_KEPT]:
+        os.remove(old)
+    return dest
+
+
 class Book:
     def __init__(self, path, kind):
         self.path, self.kind = path, kind
         self.backed_up = False
         self.dirty = not os.path.exists(path)
+        self.unsupported = []  # content in the file this library can't keep -> save() refuses
         if os.path.exists(path):
             self.wb = openpyxl.load_workbook(path)
             for ws in self.wb.worksheets:
@@ -127,6 +185,7 @@ class Book:
                     # keep the original bytes: img._data() would re-encode WebP as PNG
                     raw = img.ref.getvalue() if hasattr(img.ref, "getvalue") else None
                     self._pin(img, raw or img._data())
+            self.unsupported = unkeepable_content(path, self.image_count())
         else:
             self.wb = openpyxl.Workbook()
             ws = self.wb.active
@@ -236,17 +295,27 @@ class Book:
         return cache[ws.title]
 
     def rows(self, ws):
-        """[(row_number, {header: value})] for the contiguous block the packager will read."""
+        """[(row_number, {header: value})] for every non-empty row. Empty rows are skipped, not treated as the
+        end: a cleared row in the middle used to hide everything below it."""
         if ws.title in self._rows_cache:
             return self._rows_cache[ws.title]
         hdr = self.headers(ws)
         out = []
         for r, vals in enumerate(ws.iter_rows(min_row=2, max_col=max(hdr.values()), values_only=True), 2):
-            if not any(v not in (None, "") for v in vals):
-                break
-            out.append((r, {h: vals[i - 1] for h, i in hdr.items()}))
+            if any(v not in (None, "") for v in vals):
+                out.append((r, {h: vals[i - 1] for h, i in hdr.items()}))
         self._rows_cache[ws.title] = out
         return out
+
+    def next_row(self, ws):
+        """Where a new row goes: after the last non-empty one (never into a gap, never over data)."""
+        rows = self.rows(ws)
+        return (rows[-1][0] if rows else 1) + 1
+
+    def gaps(self, ws):
+        """Empty rows between data rows (harmless now, but worth tidying in Excel)."""
+        nums = [r for r, _ in self.rows(ws)]
+        return [r for a, b in zip(nums, nums[1:]) for r in range(a + 1, b)]
 
     def find(self, ws, pred):
         for r, row in self.rows(ws):
@@ -270,7 +339,7 @@ class Book:
         hdr = self.headers(ws)
         new = row is None
         if new:
-            row = len(self.rows(ws)) + 2
+            row = self.next_row(ws)
             vals = dict(defaults or {})
             vals.update({k: v for k, v in values.items() if v not in (None, "")})
             if id_col and vals.get(id_col) in (None, ""):
@@ -412,7 +481,7 @@ class Book:
         ws = self.sheet(sheet_name, columns)
         nxt = self.__dict__.setdefault("_next_row", {})
         if sheet_name not in nxt:
-            nxt[sheet_name] = len(self.rows(ws)) + 2
+            nxt[sheet_name] = self.next_row(ws)
         hdr = self.headers(ws)
         start = nxt[sheet_name]
         for i, e in enumerate(entries):
@@ -464,12 +533,31 @@ class Book:
         self.dirty = True
         self.log_index(target)[title] = (sheet, rid)
 
+    def image_count(self):
+        return sum(len(ws._images) for ws in self.wb.worksheets)
+
     def save(self):
+        """Writes the workbook - but never one that would lose pictures:
+          * refuses when the file has pictures this library can't keep (Excel "Place in cell" pictures ...);
+          * writes to a temp file, checks every picture is in it, and only then replaces the workbook;
+          * keeps a timestamped copy of the previous file in backups/ (last BACKUPS_KEPT) plus the .bak."""
+        if self.unsupported:
+            raise RuntimeError("Not saved - saving would lose part of this workbook:\n  "
+                               + "\n  ".join(self.unsupported)
+                               + "\nThe file on disk is unchanged.")
         os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
-        if os.path.exists(self.path) and not self.backed_up:
-            shutil.copy2(self.path, self.path + ".bak")
-            self.backed_up = True
         tmp = self.path + ".tmp.xlsx"
         self.wb.save(tmp)
+        expected = self.image_count()
+        written = picture_count(tmp)
+        if written < expected:
+            os.remove(tmp)
+            raise RuntimeError(f"Not saved - the written file had {written} pictures instead of {expected}. "
+                               "The file on disk is unchanged.")
+        if os.path.exists(self.path):
+            backup(self.path)
+            if not self.backed_up:
+                shutil.copy2(self.path, self.path + ".bak")
+                self.backed_up = True
         os.replace(tmp, self.path)
         self.dirty = False
