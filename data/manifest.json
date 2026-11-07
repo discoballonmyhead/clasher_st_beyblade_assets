@@ -1,13 +1,13 @@
 {
-  "packagedAt": "2026-11-06T08:17:12.293516+00:00",
+  "packagedAt": "2026-11-07T00:55:04.882711+00:00",
   "workbooks": [
     "beyblade_parts.xlsx",
     "beyblade_products.xlsx"
   ],
   "sheets": {
     "blades": {
-      "rowCount": 482,
-      "withImage": 482,
+      "rowCount": 484,
+      "withImage": 484,
       "withoutImage": 0
     },
     "burstLayers": {
@@ -26,14 +26,14 @@
       "withoutImage": 151
     },
     "lockChips": {
-      "rowCount": 81,
-      "withImage": 61,
-      "withoutImage": 20
+      "rowCount": 84,
+      "withImage": 84,
+      "withoutImage": 0
     },
     "overBlades": {
-      "rowCount": 21,
-      "withImage": 15,
-      "withoutImage": 6
+      "rowCount": 22,
+      "withImage": 20,
+      "withoutImage": 2
     },
     "metalBlades": {
       "rowCount": 21,
@@ -66,11 +66,11 @@
   },
   "imagesByGeneration": {
     "X": {
-      "blades": 482,
+      "blades": 484,
       "ratchets": 305,
       "bits": 289,
-      "lockChips": 61,
-      "overBlades": 15,
+      "lockChips": 84,
+      "overBlades": 20,
       "metalBlades": 15,
       "mainBlades": 34,
       "assistBlades": 48,
@@ -83,7 +83,7 @@
   },
   "imagesByHobby": {
     "Beyblade": {
-      "X": 1538,
+      "X": 1568,
       "Burst": 66
     },
     "Hasbro": {
@@ -91,38 +91,18 @@
     }
   },
   "changes": {
-    "previousPackagedAt": "2026-11-05T03:20:54.280058+00:00",
+    "previousPackagedAt": "2026-11-07T00:45:49.957988+00:00",
     "sheets": {
-      "assistBlades": {
-        "rowsChanged": 74,
-        "columnsAdded": 1
-      },
-      "blades": {
-        "rowsAdded": 99,
-        "rowsChanged": 383,
-        "columnsAdded": 1
-      },
-      "productContents": {
-        "rowsAdded": 29,
-        "rowsRemoved": 29
-      },
-      "ratchets": {
-        "rowsChanged": 420,
-        "columnsAdded": 1
+      "overBlades": {
+        "rowsChanged": 1
       }
     },
     "missingDataTool": {
-      "entriesSincePrevious": 1207,
+      "entriesSincePrevious": 2,
       "byAction": {
-        "set": 745,
-        "add_row": 113,
-        "image": 139,
-        "add_column": 3,
-        "renumber": 189,
-        "renumber_refs": 6,
-        "delete_row": 12
+        "set": 2
       },
-      "totalEntries": 1207
+      "totalEntries": 1435
     },
     "customColumns": []
   }
