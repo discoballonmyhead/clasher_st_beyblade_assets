@@ -9,6 +9,7 @@ import 'features/missing_data/presentation/cubits/row_editor/row_editor_cubit.da
 import 'features/missing_data/presentation/cubits/sheet/sheet_cubit.dart';
 import 'features/missing_data/presentation/cubits/wiki/wiki_cubit.dart';
 import 'features/missing_data/presentation/cubits/workbook/workbook_cubit.dart';
+import 'features/translations/presentation/cubits/translation_cubit.dart';
 
 class MissingDataApp extends StatefulWidget {
   const MissingDataApp({super.key, this.router});
@@ -24,18 +25,19 @@ class _MissingDataAppState extends State<MissingDataApp> {
 
   @override
   Widget build(BuildContext context) => MultiBlocProvider(
-        providers: [
-          BlocProvider.value(value: sl<WorkbookCubit>()),
-          BlocProvider.value(value: sl<SheetCubit>()),
-          BlocProvider.value(value: sl<RowEditorCubit>()),
-          BlocProvider.value(value: sl<WikiCubit>()),
-        ],
-        child: MaterialApp.router(
-          title: 'Missing data tool',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.light(),
-          darkTheme: AppTheme.dark(),
-          routerConfig: _router,
-        ),
-      );
+    providers: [
+      BlocProvider.value(value: sl<WorkbookCubit>()),
+      BlocProvider.value(value: sl<SheetCubit>()),
+      BlocProvider.value(value: sl<RowEditorCubit>()),
+      BlocProvider.value(value: sl<WikiCubit>()),
+      BlocProvider.value(value: sl<TranslationCubit>()),
+    ],
+    child: MaterialApp.router(
+      title: 'Clasher Studio',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      routerConfig: _router,
+    ),
+  );
 }
