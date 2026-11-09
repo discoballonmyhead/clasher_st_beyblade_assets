@@ -16,7 +16,8 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `flutter_integration/` | drop-in changes for the clasher_st app: real parts picker for ban/approve lists, lists page, optional tournament stadium, card game (TCG) – changed files + `patches/` + SQL, see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
-| `missing_data_app/` | Flutter desktop version of the missing data tool (get_it, go_router, cubits, clean architecture) – see its README |
+| `translation_tool.py` | translations for any Flutter app: reads its TrTokens / default English / language registry (never writes the project), keeps the sheet in step, checks placeholders, exports the constants and builds `lang_<code>.zip` packs. Used by Clasher Studio's Translations section |
+| `clasher_st_missing_data/` | Flutter desktop version of the missing data tool (get_it, go_router, cubits, clean architecture) – see its README |
 | `tk_ui.py` | shared look and helpers for the Python GUIs (theme, remembered settings, background jobs, status bar) |
 
 **Speed and convenience (all tools):** image encoding uses every CPU core (the packager went from 23.6 s to 7.4 s on
@@ -237,7 +238,7 @@ replace the original with it.
 
 ## Missing data tool (`missing_data_tool.py`)
 A separate tool to see what's empty, field by field, and fill it. Run it without arguments for the GUI, or use the
-Flutter app in `missing_data_app/`. Both work the same way. Pick a workbook and a tab, and the left list shows how
+Flutter app in `clasher_st_missing_data/`. Both work the same way. Pick a workbook and a tab, and the left list shows how
 many rows miss each field (click one to list those rows). Pick a row to edit its values (blank fields are
 highlighted) or give it an image.
 

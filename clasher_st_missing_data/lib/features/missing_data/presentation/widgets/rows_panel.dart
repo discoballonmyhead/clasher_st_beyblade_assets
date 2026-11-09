@@ -68,32 +68,41 @@ class RowsPanel extends StatelessWidget {
               a.loading != b.loading,
           builder: (context, st) => Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
+            // the left group wraps onto a second line on narrow windows instead of overflowing
             child: Row(
               children: [
-                Text(
-                  '${st.total} rows${st.field != null ? ' missing ${st.field}' : ''}',
-                  style: TextStyle(color: cs.onSurfaceVariant),
-                ),
-                if (st.selected.isNotEmpty) ...[
-                  const SizedBox(width: 12),
-                  Chip(
-                    label: Text('${st.selected.length} ticked'),
-                    onDeleted: cubit.clearSelection,
-                  ),
-                  TextButton.icon(
-                    style: TextButton.styleFrom(foregroundColor: cs.error),
-                    onPressed: st.sheet == null
-                        ? null
-                        : () => deleteRowsWithConfirm(
-                            context,
-                            st.sheet!,
-                            st.selected.toList(),
+                Expanded(
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: [
+                      Text(
+                        '${st.total} rows${st.field != null ? ' missing ${st.field}' : ''}',
+                        style: TextStyle(color: cs.onSurfaceVariant),
+                      ),
+                      if (st.selected.isNotEmpty) ...[
+                        Chip(
+                          label: Text('${st.selected.length} ticked'),
+                          onDeleted: cubit.clearSelection,
+                        ),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: cs.error,
                           ),
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('Delete ticked'),
+                          onPressed: st.sheet == null
+                              ? null
+                              : () => deleteRowsWithConfirm(
+                                  context,
+                                  st.sheet!,
+                                  st.selected.toList(),
+                                ),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          label: const Text('Delete ticked'),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
-                const Spacer(),
+                ),
                 TextButton.icon(
                   onPressed: st.sheet == null
                       ? null
@@ -127,10 +136,12 @@ class RowsPanel extends StatelessWidget {
                 a.selected != b.selected ||
                 a.focusedId != b.focusedId,
             builder: (context, st) {
-              if (st.sheet == null)
+              if (st.sheet == null) {
                 return const Center(child: Text('Pick a tab on the left'));
-              if (st.rows.isEmpty && !st.loading)
+              }
+              if (st.rows.isEmpty && !st.loading) {
                 return const Center(child: Text('No rows match'));
+              }
               return ListView.builder(
                 itemCount: st.rows.length,
                 itemExtent: 44,

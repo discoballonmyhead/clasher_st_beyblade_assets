@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -42,11 +41,6 @@ class WorkbookPage extends StatefulWidget {
 class _WorkbookPageState extends State<WorkbookPage> {
   final _searchFocus = FocusNode();
 
-  /// Asks before the WINDOW closes (title-bar ×, Alt+F4, Cmd+Q) when there are unsaved changes - not only
-  /// when the in-app Close button is used.
-  late final AppLifecycleListener _exitGuard = AppLifecycleListener(
-    onExitRequested: _onExitRequested,
-  );
   StreamSubscription<DataChange>? _changesSub;
   bool _askingIds = false;
   bool _checkAgain = false;
@@ -73,8 +67,9 @@ class _WorkbookPageState extends State<WorkbookPage> {
         if (await askAboutIds(context, issue) == IdChoice.renumber) {
           await ids.renumber(issue);
           final s = ids.state;
-          if (s.error != null || s.message != null)
+          if (s.error != null || s.message != null) {
             _snack(s.error ?? s.message!);
+          }
         } else {
           ids.snooze(issue);
         }
@@ -94,10 +89,10 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final sheets =
         context.read<WorkbookCubit>().state.summary?.sheets ?? const [];
     final sheetCubit = context.read<SheetCubit>();
-    if (sheetCubit.state.sheet == null && sheets.isNotEmpty)
+    if (sheetCubit.state.sheet == null && sheets.isNotEmpty) {
       sheetCubit.selectSheet(sheets.first.name);
+    }
     // Columns a newer schema defines (e.g. simpleRatchet) were added on open: say so once the page is up.
-    _exitGuard; // start listening
     final summary = context.read<WorkbookCubit>().state.summary;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if ((summary?.unsavedEntries ?? 0) > 0) await _offerRecovery(summary!);
@@ -112,10 +107,11 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final added = summary?.addedColumns ?? const [];
     if (added.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted)
+        if (mounted) {
           _snack(
             'New columns added to this workbook: ${added.join(', ')} - save to keep',
           );
+        }
       });
     }
   }
@@ -156,42 +152,9 @@ class _WorkbookPageState extends State<WorkbookPage> {
     if (choice == 'discard') await wb.discardUnsaved();
   }
 
-  /// Save / Don't save / Cancel. Every edit is also in the recovery file, so even a hard kill loses nothing,
-  /// but the normal way out should never be a silent discard.
-  Future<AppExitResponse> _onExitRequested() async {
-    final wb = context.read<WorkbookCubit>();
-    if (!(wb.state.summary?.dirty ?? false) || !mounted)
-      return AppExitResponse.exit;
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Unsaved changes'),
-        content: const Text('Save before closing?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, 'cancel'),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(c, 'discard'),
-            child: const Text("Don't save"),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(c, 'save'),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    if (choice == 'save')
-      return await wb.save() ? AppExitResponse.exit : AppExitResponse.cancel;
-    return choice == 'discard' ? AppExitResponse.exit : AppExitResponse.cancel;
-  }
-
   @override
   void dispose() {
     _changesSub?.cancel();
-    _exitGuard.dispose();
     _searchFocus.dispose();
     super.dispose();
   }
@@ -213,8 +176,9 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final sheet = context.read<SheetCubit>().state.sheet;
     if (sheet == null) return;
     final n = await showAutofillDialog(context, sheet);
-    if (n != null && mounted)
+    if (n != null && mounted) {
       _snack('Auto-fill: $n cells filled - save to keep (Ctrl+Z undoes)');
+    }
   }
 
   Future<void> _wiki() async {
@@ -246,8 +210,9 @@ class _WorkbookPageState extends State<WorkbookPage> {
         ],
       ),
     );
-    if (ok == true && mounted)
+    if (ok == true && mounted) {
       await context.read<WikiCubit>().start(st.sheet!, ids);
+    }
   }
 
   Future<void> _recent() async {
@@ -268,10 +233,11 @@ class _WorkbookPageState extends State<WorkbookPage> {
     ];
     if (sheet == null) return;
     final ok = await showAddColumnDialog(context, sheet: sheet, allSheets: all);
-    if (ok == true && mounted)
+    if (ok == true && mounted) {
       _snack(
         'Column added - save to keep (Ctrl+Z undoes). It shows in the field list and editor.',
       );
+    }
   }
 
   Future<void> _changeLog() async {
@@ -422,7 +388,7 @@ class _WorkbookPageState extends State<WorkbookPage> {
                 ),
                 IconButton(
                   tooltip: 'Settings',
-                  onPressed: () => context.push(Routes.settings),
+                  onPressed: () => context.go(Routes.settings),
                   icon: const Icon(Icons.settings_outlined),
                 ),
                 const SizedBox(width: 8),
