@@ -25,6 +25,16 @@ class StudioShell extends StatefulWidget {
       label: 'Translations',
     ),
     (
+      icon: Icons.rocket_launch_outlined,
+      selected: Icons.rocket_launch,
+      label: 'Publish',
+    ),
+    (
+      icon: Icons.travel_explore_outlined,
+      selected: Icons.travel_explore,
+      label: 'Scrapers',
+    ),
+    (
       icon: Icons.settings_outlined,
       selected: Icons.settings,
       label: 'Settings',

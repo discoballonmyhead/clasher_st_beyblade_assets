@@ -1842,6 +1842,8 @@ class Engine:
 
 def serve(stdin=None, stdout=None):
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
+    if stdout is sys.stdout:
+        sys.stdout = sys.stderr  # a stray print() must never corrupt the JSON lines
 
     def send(obj):
         stdout.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")

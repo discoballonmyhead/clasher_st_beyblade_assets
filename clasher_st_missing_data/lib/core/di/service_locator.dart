@@ -19,6 +19,14 @@ import '../../features/missing_data/presentation/cubits/structure/structure_cubi
 import '../../features/missing_data/presentation/cubits/wiki/wiki_cubit.dart';
 import '../../features/missing_data/presentation/cubits/workbook/workbook_cubit.dart';
 import '../../features/settings/presentation/cubit/settings_cubit.dart';
+import '../../features/publish/presentation/cubits/data_release_cubit.dart';
+import '../../features/publish/presentation/cubits/history_cubit.dart';
+import '../../features/publish/presentation/cubits/packaging_cubit.dart';
+import '../../features/publish/presentation/cubits/translations_release_cubit.dart';
+import '../../features/scrapers/presentation/cubits/scrapers_cubit.dart';
+import '../../features/studio/data/studio_repository_impl.dart';
+import '../../features/studio/domain/job_center.dart';
+import '../../features/studio/domain/repositories/studio_repository.dart';
 import '../../features/translations/data/datasources/translation_data_source.dart';
 import '../../features/translations/data/repositories/translation_repository_impl.dart';
 import '../../features/translations/data/translation_project_store.dart';
@@ -36,11 +44,15 @@ final sl = GetIt.instance;
 /// Name of the EngineBridge that runs translation_tool.py.
 const translationsEngine = 'translations';
 
+/// Name of the EngineBridge that runs studio_tool.py (workspace, publishing, scrapers).
+const studioEngine = 'studio';
+
 Future<void> initDependencies({
   SharedPreferences? prefs,
   FilePickerService? picker,
   MissingDataRepository? repository,
   TranslationRepository? translationRepository,
+  StudioRepository? studioRepository,
 }) async {
   // ── core ──
   sl.registerLazySingleton<AppSettings>(() => AppSettings(prefs!));
@@ -57,6 +69,11 @@ Future<void> initDependencies({
   sl.registerLazySingleton<EngineBridge>(
     EngineBridge.new,
     instanceName: translationsEngine,
+    dispose: (b) => b.dispose(),
+  );
+  sl.registerLazySingleton<EngineBridge>(
+    EngineBridge.new,
+    instanceName: studioEngine,
     dispose: (b) => b.dispose(),
   );
   sl.registerLazySingleton<FilePickerService>(
@@ -177,6 +194,18 @@ Future<void> initDependencies({
     ..registerLazySingleton(
       () => TranslationCubit(repository: sl(), store: sl(), prefs: prefs!),
     );
+
+  // ── studio: workspace, publishing, scrapers ──
+  sl
+    ..registerLazySingleton<StudioRepository>(
+      () => studioRepository ?? StudioRepositoryImpl(sl(instanceName: studioEngine), sl()),
+    )
+    ..registerLazySingleton(() => JobCenter(sl()), dispose: (j) => j.dispose())
+    ..registerLazySingleton(() => DataReleaseCubit(repository: sl(), jobs: sl(), settings: sl()))
+    ..registerLazySingleton(() => TranslationsReleaseCubit(repository: sl(), jobs: sl(), settings: sl()))
+    ..registerLazySingleton(() => PackagingCubit(sl()))
+    ..registerLazySingleton(() => HistoryCubit(repository: sl(), settings: sl()))
+    ..registerLazySingleton(() => ScrapersCubit(repository: sl(), jobs: sl()));
 
   // ── what the window-close prompt asks about ──
   sl<UnsavedWork>()

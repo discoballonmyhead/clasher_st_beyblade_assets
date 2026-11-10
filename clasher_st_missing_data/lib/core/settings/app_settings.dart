@@ -34,6 +34,13 @@ class AppSettings {
     scriptName: 'translation_tool.py',
   );
 
+  /// The workspace / publishing / scraper engine (studio_tool.py, same folder and interpreter).
+  EngineConfig get studioEngineConfig => EngineConfig(
+    python: python,
+    toolsDir: toolsDir,
+    scriptName: 'studio_tool.py',
+  );
+
   static const _publishing = 'publishing';
 
   /// Repo names, branches and release tags: set once, used everywhere.

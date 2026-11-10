@@ -1008,6 +1008,61 @@ def title_to_name(title, prefixes=(), label=None):
     return re.sub(r"\s*\(([^)]{4,})\)\s*$", "", name).strip()
 
 
+# =============================================================================
+# PER HOBBY / GENERATION CODE (scrapers/<hobby>/<generation>.py, edited in Clasher Studio)
+# =============================================================================
+# A plugin file may define:
+#   adjust_row(target, title, fields, row) -> row   change the mapped row (fields = the page's infobox fields)
+# It runs after the built-in mapping for every page of its hobby + generation. A plugin that fails to load or
+# raises is reported once and skipped - it never stops a scrape.
+PLUGIN_DIR = os.path.join(HERE, "scrapers")
+_PLUGINS = {}
+
+
+def plugin_path(hobby, gen):
+    return os.path.join(PLUGIN_DIR, re.sub(r"[^a-z0-9]+", "_", hobby.lower()).strip("_"), f"{gen}.py")
+
+
+def _plugin(hobby, gen):
+    path = plugin_path(hobby, gen)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    cached = _PLUGINS.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    mod = None
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(f"scraper_plugin_{abs(hash(path))}", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        log(f"Using {os.path.relpath(path, HERE)}")
+    except Exception as e:  # never stop a scrape for a plugin
+        log(f"WARNING: {os.path.relpath(path, HERE)} could not be loaded ({type(e).__name__}: {e}) - skipped")
+        mod = None
+    _PLUGINS[path] = (mtime, mod)
+    return mod
+
+
+def run_plugin(hobby, gen, target, title, fields, row):
+    mod = _plugin(hobby, gen)
+    fn = getattr(mod, "adjust_row", None) if mod else None
+    if not fn or not isinstance(row, dict):
+        return row
+    try:
+        out = fn(target, title, dict(fields or {}), row)
+        return out if isinstance(out, dict) else row
+    except Exception as e:
+        key = (hobby, gen, "error")
+        if key not in _PLUGINS:
+            _PLUGINS[key] = True
+            log(f"WARNING: adjust_row in {os.path.relpath(plugin_path(hobby, gen), HERE)} failed on {title}: "
+                f"{type(e).__name__}: {e} - the row is kept as mapped")
+        return row
+
+
 def detect_generation(fields, categories=(), title=""):
     """Which series a wiki page belongs to: series field, then system, then product-code prefix,
     then categories/title. None if nothing says (the page stays in the target it was listed for)."""
@@ -1177,6 +1232,27 @@ def map_tcg_card(title, fields, src, gen="X", categories=()):
 # =============================================================================
 # PRODUCT LIST PAGES ("List of Beyblade X products (Takara Tomy)")
 # =============================================================================
+
+_map_part, _map_product, _map_tcg_set, _map_tcg_card = map_part, map_product, map_tcg_set, map_tcg_card
+
+
+def map_part(gen, key, title, fields, src):  # noqa: F811 - built-in mapping + the generation's plugin
+    return run_plugin(S.HOBBY_NAME, gen, f"parts:{gen}:{key}", title, fields, _map_part(gen, key, title, fields, src))
+
+
+def map_product(gen, title, fields, src, manufacturer_hint=None):  # noqa: F811
+    row, code = _map_product(gen, title, fields, src, manufacturer_hint)
+    return run_plugin(S.HOBBY_NAME, gen, f"products:{gen}", title, fields, row), code
+
+
+def map_tcg_set(title, fields, src, gen="X"):  # noqa: F811
+    return run_plugin(S.TCG_HOBBY_NAME, gen, f"tcg:{gen}:sets", title, fields, _map_tcg_set(title, fields, src, gen))
+
+
+def map_tcg_card(title, fields, src, gen="X", categories=()):  # noqa: F811
+    return run_plugin(S.TCG_HOBBY_NAME, gen, f"tcg:{gen}:cards", title, fields,
+                      _map_tcg_card(title, fields, src, gen, categories))
+
 
 def _split_outside_links(line, sep):
     """Split a wikitable row on '||' / '!!' but not inside [[...]] or {{...}}."""
@@ -2645,6 +2721,7 @@ def run_cli(argv):
     ap.add_argument("--quiet", action="store_true", help="hide the per-request lines on screen (still in the log file)")
     ap.add_argument("--log-file", help="default: <state_dir>/scrape.log")
     ap.add_argument("--config", default=CONFIG_PATH)
+    ap.add_argument("--stop-file", help="stop safely (progress saved) as soon as this file exists - Clasher Studio")
     a = ap.parse_args(argv)
 
     cfg = load_config(a.config)
@@ -2657,6 +2734,15 @@ def run_cli(argv):
     sc = Scraper(cfg, overwrite=a.overwrite, no_images=a.no_images, relist=a.relist,
                  refresh_existing=a.refresh_existing)
     LOG_OPTS["quiet"] = a.quiet
+    if a.stop_file:
+        def watch_stop():
+            while not sc.client.stop_event.is_set():
+                if os.path.exists(a.stop_file):
+                    log("Stop requested - finishing the current step and saving ...")
+                    sc.client.stop_event.set()
+                    return
+                time.sleep(1)
+        threading.Thread(target=watch_stop, daemon=True).start()
     set_log_file(a.log_file or os.path.join(sc.state_dir, "scrape.log"))
     log(f"Log file: {_LOG_FILE['path']}  (every request and step is recorded there)")
     start_heartbeat(int(cfg["politeness"].get("heartbeat_seconds", 15)))
