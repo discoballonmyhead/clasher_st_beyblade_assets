@@ -38,13 +38,10 @@ TYPED_PARTS = {"blades", "overBlades", "metalBlades", "mainBlades", "assistBlade
 
 
 def required_fields(sheet):
-    """The fields the app's models read with requiredString() for this JSON sheet."""
-    if sheet in APP_PART_SHEETS:
-        req = list(S.APP_REQUIRED["_part"])
-        if sheet in TYPED_PARTS:
-            req += S.APP_REQUIRED["_typed"]
-        return req + list(S.APP_REQUIRED.get(sheet, []))
-    return list(S.APP_REQUIRED.get(sheet, []))
+    """The fields the app's models read with requiredString() for this JSON sheet, plus the columns the
+    packaging profile marks required (Clasher Studio -> Publish -> Packaging)."""
+    req = S.app_required(sheet)
+    return req + [c for c in S.profile_required(sheet) if c not in req]
 
 
 def id_field(sheet):
@@ -107,7 +104,7 @@ def check(sheets):
         for i, row in enumerate(rows):
             rid = row.get(idf) if idf else None
             missing = [f for f in req if _blank(row.get(f))]
-            if missing and name in APP_SHEETS:
+            if missing and (name in APP_SHEETS or set(missing) & set(S.profile_required(name))):
                 r.error(name, i, rid, f"empty required {', '.join(missing)}")
             elif name in ("tcgCards", "tcgSets") and (_blank(row.get(idf)) or _blank(row.get("name" if name == "tcgCards" else "setName"))):
                 r.warn(name, rid, "no id or name - the app skips this row")

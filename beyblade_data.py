@@ -100,12 +100,24 @@ def _dump(path: Path, rows):
                     encoding="utf-8")
 
 
+def apply_profile(sheet_key, rows, log):
+    """Leaves out the columns the packaging profile excludes (never ids, images or app-required fields)."""
+    drop = S.profile_excluded(sheet_key)
+    if drop:
+        for r in rows:
+            for c in drop:
+                r.pop(c, None)
+        log(f"    {sheet_key}: left out {', '.join(sorted(drop))} (packaging profile)")
+    return rows
+
+
 def check_required(sheet_key, rows, log):
-    """Warn about empty columns the app's models read with requiredString()."""
+    """Warn about empty columns the app's models read with requiredString() (and profile-required ones)."""
     req = list(S.APP_REQUIRED.get(sheet_key, []))
     part = next((p for g, k, p in S.all_part_targets() if S.part_json_prefix(g, k) == sheet_key), None)
     if part:
         req = S.APP_REQUIRED["_part"] + (S.APP_REQUIRED["_typed"] if "spinDir" in part["columns"] else []) + req
+    req += [c for c in S.profile_required(sheet_key) if c not in req]
     empty = {c: sum(1 for r in rows if r.get(c) in (None, "")) for c in req if any(c in r for r in rows) or rows}
     empty = {c: n for c, n in empty.items() if n}
     if empty:
@@ -250,6 +262,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             row["minifiedImageHash"] = None
         rows.append(row)
 
+    apply_profile(prefix, rows, log)
     _dump(out_dir / f"{prefix}.json", rows)
     check_required(prefix, rows, log)
     manifest["sheets"][prefix] = {"rowCount": len(rows), "withImage": with_image, "withoutImage": without_image}
@@ -376,6 +389,7 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
                 if NO_IMAGE_SHEETS[name] == "productContents":  # the app resolves contents by JSON sheet key
                     for r in rows:
                         r["partType"] = app_part_type(r.get("partType"))
+                apply_profile(NO_IMAGE_SHEETS[name], rows, log)
                 _dump(out_dir / f"{NO_IMAGE_SHEETS[name]}.json", rows)
                 check_required(NO_IMAGE_SHEETS[name], rows, log)
                 manifest["sheets"][NO_IMAGE_SHEETS[name]] = {"rowCount": len(rows)}

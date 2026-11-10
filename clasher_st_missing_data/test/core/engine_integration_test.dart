@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:missing_data_app/core/bridge/engine_bridge.dart';
+import 'package:missing_data_app/core/bridge/engine_pool.dart';
 import 'package:missing_data_app/core/error/failure.dart';
 import 'package:missing_data_app/features/missing_data/data/datasources/engine_data_source.dart';
 import 'package:missing_data_app/features/missing_data/data/repositories/missing_data_repository_impl.dart';
@@ -17,7 +17,7 @@ void main() {
   final python = Platform.environment['MDT_PYTHON'] ?? 'python3';
   final hasTools = File('$toolsDir/missing_data_tool.py').existsSync();
 
-  late EngineBridge bridge;
+  late WorkbookEngines engines;
   late MissingDataRepositoryImpl repo;
   late String workbook;
 
@@ -27,14 +27,14 @@ void main() {
       'toolsDir': toolsDir,
     });
     final settings = AppSettings(await SharedPreferences.getInstance());
-    bridge = EngineBridge();
-    repo = MissingDataRepositoryImpl(EngineDataSource(bridge, settings));
+    engines = WorkbookEngines();
+    repo = MissingDataRepositoryImpl(EngineDataSource(engines, settings));
     final tmp = await Directory.systemTemp.createTemp('mdt');
     workbook = '${tmp.path}/beyblade_parts.xlsx';
     await File('$toolsDir/samples/beyblade_parts.xlsx').copy(workbook);
   });
 
-  tearDownAll(() => bridge.dispose());
+  tearDownAll(() => engines.dispose());
 
   test(
     'open, analyse, edit, auto-fill, undo, save against the real engine',
@@ -175,7 +175,7 @@ void main() {
       values: {'name': 'Typed before the crash'},
     )).valueOrNull!;
     await repo.updateRow('Parts_X_Blades', id, {'attack': '44'});
-    await bridge.stop(); // the window closes: the engine ends without saving
+    await engines.bridge.stop(); // the window closes: the engine ends without saving
 
     final s = (await repo.open(copy))
         .valueOrNull!; // a new engine starts on the next call
@@ -251,5 +251,30 @@ void main() {
       for (final x in (await repo.rows('Parts_X_Blades')).valueOrNull!.rows)
         x.id,
     ], containsAll(['65', '72']));
+  }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
+
+  test('two workbooks open at once: each engine keeps its own unsaved edits', () async {
+    final tmp = await Directory.systemTemp.createTemp('mdt-multi');
+    final parts = '${tmp.path}/beyblade_parts.xlsx';
+    final products = '${tmp.path}/beyblade_products.xlsx';
+    await File('$toolsDir/samples/beyblade_parts.xlsx').copy(parts);
+    await File('$toolsDir/samples/beyblade_products.xlsx').copy(products);
+
+    await repo.open(parts);
+    final id = (await repo.addRow('Parts_X_Blades', values: {'name': 'Only in parts'})).valueOrNull!;
+    expect((await repo.summary()).valueOrNull!.dirty, isTrue);
+
+    final p = (await repo.open(products)).valueOrNull!;
+    expect(p.path.replaceAll('\\', '/'), endsWith('beyblade_products.xlsx'));
+    expect(p.dirty, isFalse, reason: 'the other workbook has its own engine');
+    expect(engines.paths.length, greaterThanOrEqualTo(2));
+
+    final back = (await repo.open(parts)).valueOrNull!;
+    expect(back.dirty, isTrue, reason: 'switching back keeps the edit in memory, no reload');
+    expect((await repo.row('Parts_X_Blades', id)).valueOrNull!.values['name'], 'Only in parts');
+
+    await repo.close(products);
+    expect(engines.isOpen(products), isFalse);
+    await repo.save();
   }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
 }

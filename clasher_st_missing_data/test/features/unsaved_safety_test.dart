@@ -7,6 +7,7 @@ import 'package:missing_data_app/core/di/service_locator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_repository.dart';
+import '../support/fake_studio_repository.dart';
 
 void main() {
   late FakeRepository repo;
@@ -16,7 +17,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     repo = FakeRepository();
     await initDependencies(
-      prefs: await SharedPreferences.getInstance(),
+      prefs: await SharedPreferences.getInstance(), studioRepository: FakeStudioRepository(),
       repository: repo,
     );
   });

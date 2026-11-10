@@ -26,7 +26,12 @@ class FakeRepository implements MissingDataRepository {
       'mass': null,
     },
   };
-  bool dirty = false;
+  /// The open workbook; each workbook keeps its own unsaved flag (one engine per workbook).
+  String path = '/tmp/beyblade_parts.xlsx';
+  final dirtyByPath = <String, bool>{};
+  bool get dirty => dirtyByPath[path] ?? false;
+  set dirty(bool v) => dirtyByPath[path] = v;
+  final opened = <String>[];
   int undoSteps = 0;
   final _log = StreamController<String>.broadcast();
 
@@ -78,7 +83,7 @@ class FakeRepository implements MissingDataRepository {
   );
 
   WorkbookSummary get _summary => WorkbookSummary(
-    path: '/tmp/beyblade_parts.xlsx',
+    path: path,
     kind: 'parts',
     sheets: [
       SheetInfo(
@@ -99,9 +104,21 @@ class FakeRepository implements MissingDataRepository {
   );
 
   @override
-  Future<Result<WorkbookSummary>> open(String path) async => Ok(_summary);
+  Future<Result<WorkbookSummary>> open(String path) async {
+    this.path = path;
+    opened.add(path);
+    return Ok(_summary);
+  }
   @override
   Future<Result<WorkbookSummary>> summary() async => Ok(_summary);
+
+  final closed = <String>[];
+  @override
+  Future<Result<void>> close(String path) async {
+    closed.add(path);
+    dirtyByPath.remove(path);
+    return const Ok(null);
+  }
 
   @override
   Future<Result<SheetAnalysis>> analyze(
@@ -131,6 +148,7 @@ class FakeRepository implements MissingDataRepository {
     String query = '',
     RowSort sort = RowSort.sheet,
     bool includeOptional = false,
+    String? generation,
   }) async {
     final list = [
       for (final e in rowsData.entries)

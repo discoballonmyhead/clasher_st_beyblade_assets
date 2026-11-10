@@ -47,3 +47,8 @@ _release/
 # missing data tool: recovery files for unsaved edits, and timestamped backups
 *.unsaved*.jsonl
 backups/
+
+# Clasher Studio: scraper code backups and caches
+scrapers/backups/
+scrapers/**/__pycache__/
+*.tmp

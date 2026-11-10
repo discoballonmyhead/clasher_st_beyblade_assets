@@ -17,6 +17,7 @@ class SheetState extends Equatable {
     this.selected = const {},
     this.focusedId,
     this.error,
+    this.generation,
   });
 
   final String? sheet;
@@ -38,6 +39,9 @@ class SheetState extends Equatable {
   final String? focusedId;
   final String? error;
 
+  /// Only this generation's rows in tabs that hold several (Products, Accessories ...); null = all.
+  final String? generation;
+
   SheetState copyWith({
     String? sheet,
     SheetAnalysis? analysis,
@@ -51,6 +55,7 @@ class SheetState extends Equatable {
     Set<String>? selected,
     String? Function()? focusedId,
     String? error,
+    String? Function()? generation,
   }) =>
       SheetState(
         sheet: sheet ?? this.sheet,
@@ -65,9 +70,10 @@ class SheetState extends Equatable {
         selected: selected ?? this.selected,
         focusedId: focusedId != null ? focusedId() : this.focusedId,
         error: error,
+        generation: generation != null ? generation() : this.generation,
       );
 
   @override
   List<Object?> get props =>
-      [sheet, analysis, rows, total, field, query, sort, includeOptional, loading, selected, focusedId, error];
+      [sheet, analysis, rows, total, field, query, sort, includeOptional, loading, selected, focusedId, error, generation];
 }

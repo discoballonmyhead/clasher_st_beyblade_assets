@@ -9,6 +9,7 @@ import 'features/missing_data/presentation/cubits/row_editor/row_editor_cubit.da
 import 'features/missing_data/presentation/cubits/sheet/sheet_cubit.dart';
 import 'features/missing_data/presentation/cubits/wiki/wiki_cubit.dart';
 import 'features/missing_data/presentation/cubits/workbook/workbook_cubit.dart';
+import 'features/missing_data/presentation/cubits/workspace/data_workspace_cubit.dart';
 import 'features/translations/presentation/cubits/translation_cubit.dart';
 
 class MissingDataApp extends StatefulWidget {
@@ -31,6 +32,7 @@ class _MissingDataAppState extends State<MissingDataApp> {
       BlocProvider.value(value: sl<RowEditorCubit>()),
       BlocProvider.value(value: sl<WikiCubit>()),
       BlocProvider.value(value: sl<TranslationCubit>()),
+      BlocProvider.value(value: sl<DataWorkspaceCubit>()),
     ],
     child: MaterialApp.router(
       title: 'Clasher Studio',

@@ -25,7 +25,7 @@ class SheetCubit extends Cubit<SheetState> {
        ) {
     _sub = changes.stream.listen((c) {
       if (c == DataChange.workbookOpened) {
-        emit(const SheetState().copyWith(sort: state.sort));
+        emit(const SheetState().copyWith(sort: state.sort, generation: () => state.generation));
       } else if (c == DataChange.idsChanged && state.sheet != null) {
         emit(state.copyWith(selected: const {}, focusedId: () => null));
         refresh();
@@ -48,6 +48,7 @@ class SheetCubit extends Cubit<SheetState> {
         sort: state.sort,
         includeOptional: state.includeOptional,
         loading: true,
+        generation: state.generation,
       ),
     );
     await refresh();
@@ -64,6 +65,7 @@ class SheetCubit extends Cubit<SheetState> {
       query: state.query,
       sort: state.sort,
       includeOptional: state.includeOptional,
+      generation: state.generation,
     );
     if (sheet != state.sheet) return; // tab changed meanwhile
     emit(
@@ -97,6 +99,25 @@ class SheetCubit extends Cubit<SheetState> {
   Future<void> sortBy(RowSort sort) async {
     _settings.rowSort = sort.name;
     emit(state.copyWith(sort: sort));
+    await refresh();
+  }
+
+  /// Shared tabs (Products, Accessories ...) list only this generation's rows; null = all.
+  /// Shows [generation] only. [tabs] are the workbook's tabs of that generation: when the open tab isn't one of
+  /// them, the first one opens (or none, when the workbook has no tab of that generation).
+  Future<void> setGeneration(String? generation, {List<String>? tabs}) async {
+    final keep = tabs == null || (state.sheet != null && tabs.contains(state.sheet));
+    if (generation == state.generation && keep) return;
+    if (!keep) {
+      if (tabs.isEmpty) {
+        emit(SheetState(sort: state.sort, includeOptional: state.includeOptional, generation: generation));
+        return;
+      }
+      emit(state.copyWith(generation: () => generation, selected: const {}));
+      await selectSheet(tabs.first);
+      return;
+    }
+    emit(state.copyWith(generation: () => generation, selected: const {}));
     await refresh();
   }
 

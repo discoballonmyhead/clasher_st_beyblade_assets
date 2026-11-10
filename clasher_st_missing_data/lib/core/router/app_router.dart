@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../../features/missing_data/presentation/cubits/workbook/workbook_cubit.dart';
 import '../../features/missing_data/presentation/pages/home_page.dart';
 import '../../features/missing_data/presentation/pages/workbook_page.dart';
+import '../../features/publish/presentation/pages/publish_page.dart';
+import '../../features/scrapers/presentation/pages/scrapers_page.dart';
 import '../../features/settings/presentation/cubit/settings_cubit.dart';
 import '../../features/settings/presentation/pages/settings_page.dart';
 import '../../features/translations/presentation/pages/translations_page.dart';
@@ -14,6 +16,8 @@ abstract final class Routes {
   static const home = '/';
   static const workbook = '/workbook';
   static const translations = '/translations';
+  static const publish = '/publish';
+  static const scrapers = '/scrapers';
   static const settings = '/settings';
 }
 
@@ -44,6 +48,12 @@ GoRouter buildRouter() => GoRouter(
               builder: (_, _) => const TranslationsPage(),
             ),
           ],
+        ),
+        StatefulShellBranch(
+          routes: [GoRoute(path: Routes.publish, builder: (_, _) => const PublishPage())],
+        ),
+        StatefulShellBranch(
+          routes: [GoRoute(path: Routes.scrapers, builder: (_, _) => const ScrapersPage())],
         ),
         StatefulShellBranch(
           routes: [

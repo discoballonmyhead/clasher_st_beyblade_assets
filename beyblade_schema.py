@@ -23,6 +23,8 @@ ID MODEL (same everywhere)
   parent...Id    empty for a base item; for a variant it holds the dataID/productID of the base
   variantLabel   what makes the variant different ("Metal Coat: Black", "06", "Parallel Foil")
 """
+import json
+import os
 import re
 from collections import OrderedDict
 
@@ -338,3 +340,75 @@ DROPDOWNS = {"manufacturer": "manufacturer", "hobbyName": "hobbyName", "hobbyGen
              "accessoryType": "accessoryType", "region": "region", "currency": "currency",
              "rarity": "rarity", "cardType": "cardType", "incompleteData": "yesNo", "wbolegality": "yesNo",
              "sequential": "yesNo", "simpleRatchet": "yesNo", "requiresSimpleRatchet": "yesNo"}
+
+
+# -----------------------------------------------------------------------------
+# Packaging profiles: what each JSON sheet carries and how critical each column is
+# -----------------------------------------------------------------------------
+# packaging_profiles.json (next to this file, edited in Clasher Studio -> Publish -> Packaging):
+#   {"version": 1, "sheets": {"blades": {"columns": {"notes": {"include": false},
+#                                                    "requiresSimpleRatchet": {"criticality": "required"}}}}}
+# criticality: required    an empty cell blocks the release (catalog check error) and counts as missing
+#              recommended counts as missing in the missing data tool (the default for ordinary columns)
+#              optional    never counted as missing
+# include: false leaves the column out of the JSON. Columns the app reads as required, ids and images can't be
+# left out or made less than required.
+PROFILES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "packaging_profiles.json")
+CRITICALITY = ("required", "recommended", "optional")
+_profiles_cache = {"mtime": None, "path": None, "data": None}
+
+
+def load_profiles(path=None):
+    path = path or PROFILES_FILE
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {"version": 1, "sheets": {}}
+    c = _profiles_cache
+    if c["path"] != path or c["mtime"] != mtime:
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {"version": 1, "sheets": {}}
+        data.setdefault("sheets", {})
+        c.update(path=path, mtime=mtime, data=data)
+    return c["data"]
+
+
+def save_profiles(data, path=None):
+    path = path or PROFILES_FILE
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, path)
+    _profiles_cache["mtime"] = None
+
+
+TYPED_PART_KEYS = {"blades", "overBlades", "metalBlades", "mainBlades", "assistBlades"}
+
+
+def app_required(json_sheet):
+    """Fields the app's models read with requiredString() for this JSON sheet."""
+    if json_sheet in {"blades", "ratchets", "bits", "lockChips", "overBlades", "metalBlades", "mainBlades",
+                      "assistBlades"}:
+        req = list(APP_REQUIRED["_part"])
+        if json_sheet in TYPED_PART_KEYS:
+            req += APP_REQUIRED["_typed"]
+        return req + list(APP_REQUIRED.get(json_sheet, []))
+    return list(APP_REQUIRED.get(json_sheet, []))
+
+
+def column_rules(json_sheet):
+    """{column: {"include": bool, "criticality": str}} set in the profile (only what was changed)."""
+    return (load_profiles().get("sheets", {}).get(json_sheet) or {}).get("columns", {}) or {}
+
+
+def profile_required(json_sheet):
+    return [c for c, r in column_rules(json_sheet).items() if r.get("criticality") == "required"]
+
+
+def profile_excluded(json_sheet):
+    locked = set(app_required(json_sheet))
+    return {c for c, r in column_rules(json_sheet).items() if r.get("include") is False and c not in locked}

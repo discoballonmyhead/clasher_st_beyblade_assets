@@ -7,6 +7,9 @@ class SheetInfo extends Equatable {
     required this.rows,
     required this.rowsWithMissing,
     required this.hasImages,
+    this.generation,
+    this.generations = const [],
+    this.hobby,
   });
 
   final String name;
@@ -14,8 +17,19 @@ class SheetInfo extends Equatable {
   final int rowsWithMissing;
   final bool hasImages;
 
+  /// A part tab's generation (Parts_X_Blades -> X); null for tabs that hold several (Products, Accessories ...).
+  final String? generation;
+
+  /// The generations the tab's rows belong to.
+  final List<String> generations;
+  final String? hobby;
+
+  /// Shown when [gen] is picked: its own part tabs, and shared tabs that have rows of it (or no rows yet).
+  bool belongsTo(String? gen) =>
+      gen == null || generation == gen || (generation == null && (generations.isEmpty || generations.contains(gen)));
+
   @override
-  List<Object?> get props => [name, rows, rowsWithMissing, hasImages];
+  List<Object?> get props => [name, rows, rowsWithMissing, hasImages, generation, generations, hobby];
 }
 
 class WorkbookSummary extends Equatable {

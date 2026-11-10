@@ -122,6 +122,13 @@ def expected_fields(book, sheet, include_optional=False):
     idc, img, mini = sheet_info(sheet)
     cols = [c for c in book.headers(book.wb[sheet]) if c not in (idc, img, mini)]
     optional = OPTIONAL | {c for c, m in custom_columns(book, sheet).items() if m["optional"]}
+    # the packaging profile decides when it says something (Studio -> Publish -> Packaging)
+    for c, rule in S.column_rules(json_name(sheet) or "").items():
+        crit = rule.get("criticality")
+        if crit == "optional" and c not in S.app_required(json_name(sheet) or ""):
+            optional.add(c)
+        elif crit in ("required", "recommended"):
+            optional.discard(c)
     return cols if include_optional else [c for c in cols if c not in optional]
 
 
@@ -1373,9 +1380,15 @@ class Engine:
             if not rows:
                 continue
             idx = self._index(name)
+            part = S.parse_part_sheet(name)
+            gens = sorted({str(x.get("hobbyGeneration")) for x in rows if not blank(x.get("hobbyGeneration"))})
             sheets.append({"name": name, "rows": len(rows),
                            "rowsWithMissing": sum(1 for m in idx["missing"].values() if m),
-                           "hasImages": bool(sheet_info(name)[1])})
+                           "hasImages": bool(sheet_info(name)[1]),
+                           # a part tab belongs to one generation; Products/Accessories/TCG hold several
+                           "generation": part[0] if part else None,
+                           "generations": [part[0]] if part else gens,
+                           "hobby": S.TCG_HOBBY_NAME if name.startswith("TCG_") else S.HOBBY_NAME})
         log_rows = (len(self.book.rows(self.book.wb[S.EDIT_LOG_SHEET]))
                     if S.EDIT_LOG_SHEET in self.book.wb.sheetnames else 0)
         return {"path": self.path, "kind": kind_of_workbook(self.path), "sheets": sheets,
@@ -1458,12 +1471,16 @@ class Engine:
                 "updatedAt": str(x.get("updated_at") or ""), "missing": c["missing"][r],
                 "hasImage": bool(img) and img not in c["missing"][r]}
 
-    def rows(self, sheet, field=None, query="", sort="sheet", include_optional=False, offset=0, limit=None):
+    def rows(self, sheet, field=None, query="", sort="sheet", include_optional=False, offset=0, limit=None,
+             generation=None):
         c = self._index(sheet, include_optional)
         q = (query or "").strip().lower()
         out = []
         for r in c["rows"]:
             if field and field not in c["missing"][r]:
+                continue
+            if generation and str(c["rows"][r].get("hobbyGeneration") or "") != generation \
+                    and not S.parse_part_sheet(sheet):
                 continue
             s = self._row_summary(sheet, r)
             if q and q not in f"{s['id']} {s['name']} {s['code']} {s['edition']}".lower():
@@ -1677,7 +1694,8 @@ def serve(stdin=None, stdout=None):
         "summary": lambda a: eng.summary(),
         "analyze": lambda a: eng.analyze(a["sheet"], a.get("includeOptional", False)),
         "rows": lambda a: eng.rows(a["sheet"], a.get("field"), a.get("query", ""), a.get("sort", "sheet"),
-                                   a.get("includeOptional", False), a.get("offset", 0), a.get("limit")),
+                                   a.get("includeOptional", False), a.get("offset", 0), a.get("limit"),
+                                   a.get("generation")),
         "row": lambda a: eng.row(a["sheet"], a["id"]),
         "set": lambda a: eng.set_values(a["sheet"], a["id"], a["values"]),
         "proposals": lambda a: eng.proposals(a["sheet"], a.get("parent", True), a.get("siblings", True),

@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../../core/router/app_router.dart';
 import '../cubits/workbook/workbook_cubit.dart';
+import '../cubits/workspace/data_workspace_cubit.dart';
+import '../widgets/hobbies_dialog.dart';
 import '../cubits/workbook/workbook_state.dart';
 
 /// Start page: open a workbook (dialog, typed path, or a recent one).
@@ -16,6 +18,12 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final _path = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    context.read<DataWorkspaceCubit>().load();
+  }
 
   @override
   void dispose() {
@@ -41,7 +49,7 @@ class _HomePageState extends State<HomePage> {
         final busy = s.status == WorkbookStatus.opening;
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Missing data tool'),
+            title: const Text('Data'),
             actions: [
               IconButton(
                 tooltip: 'Settings',
@@ -117,6 +125,8 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 24),
+                  _Hobbies(busy: busy),
                   if (s.recent.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     Text(
@@ -147,6 +157,63 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
         );
+      },
+    );
+  }
+}
+
+
+/// Each hobby with its generations and workbooks, to open in one click.
+class _Hobbies extends StatelessWidget {
+  const _Hobbies({required this.busy});
+  final bool busy;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return BlocBuilder<DataWorkspaceCubit, DataWorkspaceState>(
+      builder: (context, ws) {
+        final hobbies = ws.workspace?.hobbies ?? const [];
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            Expanded(child: Text('Hobbies', style: Theme.of(context).textTheme.titleMedium)),
+            TextButton.icon(
+              onPressed: ws.workspace == null ? null : () => showHobbiesDialog(context),
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('Edit hobbies'),
+            ),
+          ]),
+          if (ws.error != null) Text(ws.error!, style: TextStyle(color: cs.error, fontSize: 12)),
+          for (final h in hobbies)
+            Card(
+              margin: const EdgeInsets.only(top: 8),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(h.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text('${h.kind == 'cards' ? 'Card game' : 'Parts'} · ${h.generations.join(', ')}',
+                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+                  const SizedBox(height: 8),
+                  Wrap(spacing: 8, runSpacing: 6, children: [
+                    for (final w in h.workbooks)
+                      Tooltip(
+                        message: w.exists ? w.path : 'Not found: ${w.path}',
+                        child: OutlinedButton.icon(
+                          onPressed: busy || !w.exists
+                              ? null
+                              : () {
+                                  context.read<DataWorkspaceCubit>().selectHobby(h.name);
+                                  context.read<WorkbookCubit>().open(w.path);
+                                },
+                          icon: Icon(w.exists ? Icons.table_chart_outlined : Icons.help_outline, size: 18),
+                          label: Text(w.file),
+                        ),
+                      ),
+                  ]),
+                ]),
+              ),
+            ),
+        ]);
       },
     );
   }

@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../cubits/wiki/wiki_cubit.dart';
 import '../cubits/wiki/wiki_state.dart';
+import '../../../../core/theme/app_theme.dart';
 
 /// Engine / scraper log at the bottom; collapsible.
 class LogPanel extends StatefulWidget {
@@ -63,7 +64,7 @@ class _LogPanelState extends State<LogPanel> {
               padding: const EdgeInsets.all(8),
               itemCount: s.lines.length,
               itemBuilder: (_, i) => Text(s.lines[i],
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: Color(0xFFD7DCE5))),
+                  style: const TextStyle(fontFamily: monoFamily, fontFamilyFallback: monoFallback, fontSize: 12, color: Color(0xFFD7DCE5))),
             ),
           ),
       ]),

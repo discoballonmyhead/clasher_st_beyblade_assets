@@ -14,6 +14,11 @@ class ListRows {
   const ListRows(this._repo);
   final MissingDataRepository _repo;
   Future<Result<RowsPage>> call(String sheet,
-          {String? field, String query = '', RowSort sort = RowSort.sheet, bool includeOptional = false}) =>
-      _repo.rows(sheet, field: field, query: query, sort: sort, includeOptional: includeOptional);
+          {String? field,
+          String query = '',
+          RowSort sort = RowSort.sheet,
+          bool includeOptional = false,
+          String? generation}) =>
+      _repo.rows(sheet,
+          field: field, query: query, sort: sort, includeOptional: includeOptional, generation: generation);
 }

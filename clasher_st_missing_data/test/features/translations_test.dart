@@ -11,6 +11,7 @@ import 'package:missing_data_app/features/translations/presentation/widgets/proj
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_repository.dart';
+import '../support/fake_studio_repository.dart';
 import '../support/fake_translation_repository.dart';
 
 const _project = TranslationProject(
@@ -23,6 +24,7 @@ const _project = TranslationProject(
 
 void main() {
   late FakeTranslationRepository tr;
+  late FakeStudioRepository studio;
 
   Future<void> setUpWith({TranslationProject? project = _project}) async {
     await sl.reset();
@@ -33,7 +35,7 @@ void main() {
     });
     tr = FakeTranslationRepository();
     await initDependencies(
-      prefs: await SharedPreferences.getInstance(),
+      prefs: await SharedPreferences.getInstance(), studioRepository: studio = FakeStudioRepository(),
       repository: FakeRepository(),
       translationRepository: tr,
     );
@@ -344,4 +346,32 @@ void main() {
       );
     },
   );
+
+  testWidgets('translations release: build packs, upload the changed ones once, confirmed', (tester) async {
+    await setUpWith();
+    tester.view.physicalSize = const Size(1700, 1050);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(const MissingDataApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byType(NavigationRail), matching: find.text('Publish')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(Tab, 'Translations release'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Build packs'));
+    await tester.pumpAndSettle();
+    final n = tr.languages.length;
+    expect(find.text('Upload $n pack(s)'), findsOneWidget);
+
+    await tester.tap(find.text('Upload $n pack(s)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Upload $n language pack(s)?'), findsOneWidget);
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Upload')));
+    await tester.pumpAndSettle();
+    final call = studio.calls['publishRelease']!.single;
+    expect(call['slug'], 'discoballonmyhead/clasher_st_translations');
+    expect((call['files'] as List).length, n);
+    expect(find.text('All uploaded'), findsOneWidget, reason: 'uploaded packs are not offered again');
+  });
 }

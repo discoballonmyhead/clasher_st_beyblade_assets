@@ -5,6 +5,7 @@ import 'package:missing_data_app/core/di/service_locator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_repository.dart';
+import '../support/fake_studio_repository.dart';
 
 void main() {
   late FakeRepository repo;
@@ -13,11 +14,11 @@ void main() {
     await sl.reset();
     SharedPreferences.setMockInitialValues({});
     repo = FakeRepository();
-    await initDependencies(prefs: await SharedPreferences.getInstance(), repository: repo);
+    await initDependencies(prefs: await SharedPreferences.getInstance(), studioRepository: FakeStudioRepository(), repository: repo);
   });
 
   testWidgets('open a workbook, see what is missing, fix a row', (tester) async {
-    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.physicalSize = const Size(1600, 1060);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 

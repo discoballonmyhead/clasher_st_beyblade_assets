@@ -32,8 +32,15 @@ class MissingDataRepositoryImpl implements MissingDataRepository {
       m.replaceFirst(RegExp(r'^(ValueError|RuntimeError|KeyError): '), '');
 
   @override
-  Future<Result<WorkbookSummary>> open(String path) =>
-      _guard(() async => workbookFromJson(await _ds.open(path)));
+  Future<Result<WorkbookSummary>> open(String path) => _guard(() async {
+    // A new engine, or one that stopped (crash, closed window), loads the workbook again: its recovery journal
+    // then offers the unsaved edits back. A running one keeps its in-memory edits.
+    final fresh = _ds.engines.activate(path) || !_ds.engines.bridge.isRunning;
+    return workbookFromJson(fresh ? await _ds.open(path) : await _ds.summary());
+  });
+
+  @override
+  Future<Result<void>> close(String path) => _guard(() => _ds.engines.close(path));
 
   @override
   Future<Result<WorkbookSummary>> summary() =>
@@ -54,9 +61,10 @@ class MissingDataRepositoryImpl implements MissingDataRepository {
     String query = '',
     RowSort sort = RowSort.sheet,
     bool includeOptional = false,
+    String? generation,
   }) => _guard(
     () async => rowsPageFromJson(
-      await _ds.rows(sheet, field, query, sort, includeOptional),
+      await _ds.rows(sheet, field, query, sort, includeOptional, generation),
     ),
   );
 
