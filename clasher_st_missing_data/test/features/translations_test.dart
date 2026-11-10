@@ -11,6 +11,7 @@ import 'package:missing_data_app/features/translations/presentation/widgets/proj
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_repository.dart';
+import '../support/fake_studio_repository.dart';
 import '../support/fake_translation_repository.dart';
 
 const _project = TranslationProject(
@@ -33,7 +34,7 @@ void main() {
     });
     tr = FakeTranslationRepository();
     await initDependencies(
-      prefs: await SharedPreferences.getInstance(),
+      prefs: await SharedPreferences.getInstance(), studioRepository: FakeStudioRepository(),
       repository: FakeRepository(),
       translationRepository: tr,
     );

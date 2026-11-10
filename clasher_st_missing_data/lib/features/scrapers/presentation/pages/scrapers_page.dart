@@ -3,7 +3,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/di/service_locator.dart';
 import '../../../publish/presentation/widgets/job_log.dart';
-import '../../../studio/domain/entities/studio_models.dart';
 import '../cubits/scrapers_cubit.dart';
 import '../widgets/code_editor.dart';
 

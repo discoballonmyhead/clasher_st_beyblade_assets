@@ -92,6 +92,13 @@ class AppSettings {
     await _prefs.setStringList(_recent, list);
   }
 
+  /// The Data section's hobby and generation (null = all generations).
+  String? get dataHobby => _prefs.getString('dataHobby');
+  set dataHobby(String? v) => v == null ? _prefs.remove('dataHobby') : _prefs.setString('dataHobby', v);
+  String? get dataGeneration => _prefs.getString('dataGeneration');
+  set dataGeneration(String? v) =>
+      v == null ? _prefs.remove('dataGeneration') : _prefs.setString('dataGeneration', v);
+
   String get rowSort => _prefs.getString(_sort) ?? 'sheet';
   set rowSort(String v) => _prefs.setString(_sort, v);
 

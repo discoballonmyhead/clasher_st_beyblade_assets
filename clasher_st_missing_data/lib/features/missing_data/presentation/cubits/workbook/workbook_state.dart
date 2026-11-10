@@ -12,6 +12,8 @@ class WorkbookState extends Equatable {
     this.saving = false,
     this.message,
     this.error,
+    this.docs = const [],
+    this.dirtyDocs = const {},
   });
 
   final WorkbookStatus status;
@@ -23,7 +25,14 @@ class WorkbookState extends Equatable {
   final String? message;
   final String? error;
 
+  /// Workbooks open as tabs (paths), in opening order; [summary] is the current one.
+  final List<String> docs;
+
+  /// Open workbooks with unsaved changes.
+  final Set<String> dirtyDocs;
+
   bool get isOpen => summary != null;
+  bool get anyDirty => dirtyDocs.isNotEmpty || (summary?.dirty ?? false);
 
   WorkbookState copyWith({
     WorkbookStatus? status,
@@ -32,16 +41,21 @@ class WorkbookState extends Equatable {
     bool? saving,
     String? message,
     String? error,
+    List<String>? docs,
+    Set<String>? dirtyDocs,
+    bool clearSummary = false,
   }) =>
       WorkbookState(
         status: status ?? this.status,
-        summary: summary ?? this.summary,
+        summary: clearSummary ? null : summary ?? this.summary,
         recent: recent ?? this.recent,
         saving: saving ?? this.saving,
         message: message,
         error: error,
+        docs: docs ?? this.docs,
+        dirtyDocs: dirtyDocs ?? this.dirtyDocs,
       );
 
   @override
-  List<Object?> get props => [status, summary, recent, saving, message, error];
+  List<Object?> get props => [status, summary, recent, saving, message, error, docs, dirtyDocs];
 }

@@ -103,6 +103,13 @@ class FakeRepository implements MissingDataRepository {
   @override
   Future<Result<WorkbookSummary>> summary() async => Ok(_summary);
 
+  final closed = <String>[];
+  @override
+  Future<Result<void>> close(String path) async {
+    closed.add(path);
+    return const Ok(null);
+  }
+
   @override
   Future<Result<SheetAnalysis>> analyze(
     String sheet, {
@@ -131,6 +138,7 @@ class FakeRepository implements MissingDataRepository {
     String query = '',
     RowSort sort = RowSort.sheet,
     bool includeOptional = false,
+    String? generation,
   }) async {
     final list = [
       for (final e in rowsData.entries)

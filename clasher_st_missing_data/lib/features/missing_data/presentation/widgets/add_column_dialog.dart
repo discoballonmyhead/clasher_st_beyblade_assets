@@ -10,19 +10,35 @@ Future<bool?> showAddColumnDialog(
   BuildContext context, {
   required String sheet,
   required List<String> allSheets,
+  String? generation,
+  List<String>? generationSheets,
 }) => showDialog<bool>(
   context: context,
   builder: (_) => BlocProvider(
     create: (_) => sl<StructureCubit>(),
-    child: _AddColumnDialog(sheet: sheet, allSheets: allSheets),
+    child: _AddColumnDialog(
+      sheet: sheet,
+      allSheets: allSheets,
+      generation: generation,
+      generationSheets: generationSheets ?? const [],
+    ),
   ),
 );
 
 class _AddColumnDialog extends StatefulWidget {
-  const _AddColumnDialog({required this.sheet, required this.allSheets});
+  const _AddColumnDialog({
+    required this.sheet,
+    required this.allSheets,
+    this.generation,
+    this.generationSheets = const [],
+  });
 
   final String sheet;
   final List<String> allSheets;
+
+  /// "Every tab of this generation" (Parts_X_* when X is picked) - for adding an attribute to all parts.
+  final String? generation;
+  final List<String> generationSheets;
 
   @override
   State<_AddColumnDialog> createState() => _AddColumnDialogState();
@@ -32,7 +48,7 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
   final _name = TextEditingController();
   final _default = TextEditingController();
   final _note = TextEditingController();
-  bool _allTabs = false;
+  String _scope = 'tab'; // tab | generation | all
   bool _inherit = true;
   bool _optional = false;
 
@@ -46,7 +62,11 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
 
   Future<void> _add() async {
     final ok = await context.read<StructureCubit>().addColumn(
-      sheets: _allTabs ? widget.allSheets : [widget.sheet],
+      sheets: switch (_scope) {
+        'all' => widget.allSheets,
+        'generation' => widget.generationSheets,
+        _ => [widget.sheet],
+      },
       name: _name.text,
       optional: _optional,
       inherit: _inherit,
@@ -81,19 +101,18 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
                   onSubmitted: (_) => _add(),
                 ),
                 const SizedBox(height: 12),
-                SegmentedButton<bool>(
+                SegmentedButton<String>(
                   segments: [
-                    ButtonSegment(
-                      value: false,
-                      label: Text('This tab (${widget.sheet})'),
-                    ),
-                    ButtonSegment(
-                      value: true,
-                      label: Text('All ${widget.allSheets.length} tabs'),
-                    ),
+                    ButtonSegment(value: 'tab', label: Text('This tab (${widget.sheet})')),
+                    if (widget.generation != null && widget.generationSheets.isNotEmpty)
+                      ButtonSegment(
+                        value: 'generation',
+                        label: Text('All ${widget.generationSheets.length} ${widget.generation} tabs'),
+                      ),
+                    ButtonSegment(value: 'all', label: Text('All ${widget.allSheets.length} tabs')),
                   ],
-                  selected: {_allTabs},
-                  onSelectionChanged: (v) => setState(() => _allTabs = v.first),
+                  selected: {_scope},
+                  onSelectionChanged: (v) => setState(() => _scope = v.first),
                 ),
                 CheckboxListTile(
                   value: _inherit,

@@ -18,7 +18,9 @@ import '../cubits/wiki/wiki_cubit.dart';
 import '../cubits/wiki/wiki_state.dart';
 import '../cubits/workbook/workbook_cubit.dart';
 import '../cubits/workbook/workbook_state.dart';
+import '../cubits/workspace/data_workspace_cubit.dart';
 import '../widgets/add_column_dialog.dart';
+import '../widgets/data_bar.dart';
 import '../widgets/autofill_dialog.dart';
 import '../widgets/edit_log_dialog.dart';
 import '../widgets/formatting.dart';
@@ -89,8 +91,13 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final sheets =
         context.read<WorkbookCubit>().state.summary?.sheets ?? const [];
     final sheetCubit = context.read<SheetCubit>();
+    final ws = context.read<DataWorkspaceCubit>();
+    if (sheetCubit.state.generation != ws.state.generation) sheetCubit.setGeneration(ws.state.generation);
+    final summaryNow = context.read<WorkbookCubit>().state.summary;
+    if (summaryNow != null) ws.followWorkbook(summaryNow.path);
     if (sheetCubit.state.sheet == null && sheets.isNotEmpty) {
-      sheetCubit.selectSheet(sheets.first.name);
+      final visible = [for (final x in sheets) if (x.belongsTo(ws.state.generation)) x.name];
+      sheetCubit.selectSheet(visible.firstOrNull ?? sheets.first.name);
     }
     // Columns a newer schema defines (e.g. simpleRatchet) were added on open: say so once the page is up.
     final summary = context.read<WorkbookCubit>().state.summary;
@@ -232,7 +239,20 @@ class _WorkbookPageState extends State<WorkbookPage> {
         s.name,
     ];
     if (sheet == null) return;
-    final ok = await showAddColumnDialog(context, sheet: sheet, allSheets: all);
+    final gen = context.read<SheetCubit>().state.generation;
+    final genSheets = gen == null
+        ? null
+        : [
+            for (final s in context.read<WorkbookCubit>().state.summary?.sheets ?? const <SheetInfo>[])
+              if (s.generation == gen) s.name,
+          ];
+    final ok = await showAddColumnDialog(
+      context,
+      sheet: sheet,
+      allSheets: all,
+      generation: gen,
+      generationSheets: genSheets,
+    );
     if (ok == true && mounted) {
       _snack(
         'Column added - save to keep (Ctrl+Z undoes). It shows in the field list and editor.',
@@ -252,29 +272,53 @@ class _WorkbookPageState extends State<WorkbookPage> {
   }
 
   Future<void> _close() async {
-    final dirty = context.read<WorkbookCubit>().state.summary?.dirty ?? false;
+    final path = context.read<WorkbookCubit>().state.summary?.path;
+    if (path != null) await _closeDoc(path);
+  }
+
+  /// Closes a workbook tab; asks first when it has unsaved changes.
+  Future<void> _closeDoc(String path) async {
+    final wb = context.read<WorkbookCubit>();
+    final dirty = wb.state.dirtyDocs.contains(path) ||
+        (wb.state.summary?.path == path && (wb.state.summary?.dirty ?? false));
     if (dirty) {
       final save = await showDialog<bool>(
         context: context,
         builder: (c) => AlertDialog(
           title: const Text('Unsaved changes'),
-          content: const Text('Save before closing the workbook?'),
+          content: Text('Save ${path.split(RegExp(r'[\\/]')).last} before closing it? If you don\'t, the changes stay '
+              'in its recovery file and are offered back when you open it again.'),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Discard'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Save'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text("Don't save")),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Save')),
           ],
         ),
       );
       if (save == null || !mounted) return;
-      if (save) await context.read<WorkbookCubit>().save();
+      if (save) {
+        await wb.switchTo(path);
+        if (!await wb.save()) return;
+      }
     }
-    if (mounted) context.go(Routes.home);
+    await wb.closeDoc(path);
+    if (mounted && wb.state.docs.isEmpty) context.go(Routes.home);
+  }
+
+  /// Picks a tab when a workbook becomes current: the one used last in it, else the first of the generation.
+  final _lastSheet = <String, String>{};
+
+  void _onWorkbookChanged(WorkbookState s) {
+    final summary = s.summary;
+    if (summary == null) return;
+    context.read<DataWorkspaceCubit>().followWorkbook(summary.path);
+    final gen = context.read<SheetCubit>().state.generation;
+    final visible = [for (final x in summary.sheets) if (x.belongsTo(gen)) x.name];
+    final pick = _lastSheet[summary.path] ?? visible.firstOrNull ?? summary.sheets.firstOrNull?.name;
+    if (pick != null) context.read<SheetCubit>().selectSheet(pick);
+    if (summary.unsavedEntries > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _offerRecovery(summary));
+    }
   }
 
   @override
@@ -292,6 +336,17 @@ class _WorkbookPageState extends State<WorkbookPage> {
               a.focusedId != b.focusedId && b.focusedId != null,
           listener: (context, s) =>
               context.read<RowEditorCubit>().load(s.sheet!, s.focusedId!),
+        ),
+        BlocListener<WorkbookCubit, WorkbookState>(
+          listenWhen: (a, b) => b.summary != null && a.summary?.path != b.summary?.path && a.summary != null,
+          listener: (_, s) => _onWorkbookChanged(s),
+        ),
+        BlocListener<SheetCubit, SheetState>(
+          listenWhen: (a, b) => b.sheet != null && a.sheet != b.sheet,
+          listener: (context, s) {
+            final p = context.read<WorkbookCubit>().state.summary?.path;
+            if (p != null) _lastSheet[p] = s.sheet!;
+          },
         ),
         BlocListener<SheetCubit, SheetState>(
           listenWhen: (a, b) => b.error != null && a.error != b.error,
@@ -412,6 +467,8 @@ class _WorkbookPageState extends State<WorkbookPage> {
             ),
             body: Column(
               children: [
+                DataBar(onClose: _closeDoc),
+                const Divider(height: 1),
                 Expanded(
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,

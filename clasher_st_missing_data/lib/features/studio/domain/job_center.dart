@@ -54,6 +54,8 @@ class JobCenter {
         feed(_done[id] ?? JobEvent(id: id)); // what arrived before we listened
         final end = await done.future;
         _waiters.remove(id);
+        _lines.remove(id);
+        _done.remove(id);
         return Ok(end);
     }
   }

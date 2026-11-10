@@ -2,25 +2,28 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import '../../../../core/bridge/engine_bridge.dart';
+import '../../../../core/bridge/engine_pool.dart';
 import '../../../../core/settings/app_settings.dart';
 import '../../domain/entities/row.dart';
 import '../models/mappers.dart';
 
 /// Raw engine calls. Starts the engine on first use with the configured Python + tools folder.
 class EngineDataSource {
-  EngineDataSource(this._bridge, this._settings);
+  EngineDataSource(this._engines, this._settings);
 
-  final EngineBridge _bridge;
+  final WorkbookEngines _engines;
   final AppSettings _settings;
+
+  WorkbookEngines get engines => _engines;
 
   Future<Object?> _call(
     String cmd, [
     Map<String, Object?> args = const {},
     Duration? timeout = const Duration(minutes: 2),
   ]) async {
-    if (!_bridge.isRunning) await _bridge.start(_settings.engineConfig);
-    return _bridge.call(cmd, args, timeout);
+    final bridge = _engines.bridge;
+    if (!bridge.isRunning) await bridge.start(_settings.engineConfig);
+    return bridge.call(cmd, args, timeout);
   }
 
   Future<Json> _map(
@@ -40,13 +43,15 @@ class EngineDataSource {
     String? field,
     String query,
     RowSort sort,
-    bool includeOptional,
-  ) => _map('rows', {
+    bool includeOptional, [
+    String? generation,
+  ]) => _map('rows', {
     'sheet': sheet,
     'field': field,
     'query': query,
     'sort': sort.name,
     'includeOptional': includeOptional,
+    'generation': generation,
   });
   Future<Json> row(String sheet, String id) =>
       _map('row', {'sheet': sheet, 'id': id});
@@ -135,7 +140,7 @@ class EngineDataSource {
       _map('log', {'limit': limit, 'sheet': sheet, 'query': query});
 
   /// Engine log lines (scraper progress during wiki fills, errors on stderr).
-  Stream<String> get log => _bridge.events
+  Stream<String> get log => _engines.events
       .where((e) => e['message'] != null)
       .map((e) => '${e['message']}');
 }

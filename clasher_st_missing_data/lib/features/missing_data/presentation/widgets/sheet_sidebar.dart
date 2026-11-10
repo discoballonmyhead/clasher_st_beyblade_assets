@@ -19,10 +19,11 @@ class SheetSidebar extends StatelessWidget {
       BlocBuilder<WorkbookCubit, WorkbookState>(
         buildWhen: (a, b) => a.summary?.sheets != b.summary?.sheets,
         builder: (context, wb) => BlocBuilder<SheetCubit, SheetState>(
-          buildWhen: (a, b) => a.sheet != b.sheet,
+          buildWhen: (a, b) => a.sheet != b.sheet || a.generation != b.generation,
           builder: (context, st) => Flexible(
             child: ListView(shrinkWrap: true, children: [
               for (final s in wb.summary?.sheets ?? const [])
+                if (s.belongsTo(st.generation))
                 ListTile(
                   selected: s.name == st.sheet,
                   title: Text(s.name.replaceFirst('Parts_', ''), maxLines: 1, overflow: TextOverflow.ellipsis),

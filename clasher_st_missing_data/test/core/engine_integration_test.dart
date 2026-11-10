@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:missing_data_app/core/bridge/engine_bridge.dart';
+import 'package:missing_data_app/core/bridge/engine_pool.dart';
 import 'package:missing_data_app/core/error/failure.dart';
 import 'package:missing_data_app/features/missing_data/data/datasources/engine_data_source.dart';
 import 'package:missing_data_app/features/missing_data/data/repositories/missing_data_repository_impl.dart';
@@ -17,7 +17,7 @@ void main() {
   final python = Platform.environment['MDT_PYTHON'] ?? 'python3';
   final hasTools = File('$toolsDir/missing_data_tool.py').existsSync();
 
-  late EngineBridge bridge;
+  late WorkbookEngines engines;
   late MissingDataRepositoryImpl repo;
   late String workbook;
 
@@ -27,14 +27,14 @@ void main() {
       'toolsDir': toolsDir,
     });
     final settings = AppSettings(await SharedPreferences.getInstance());
-    bridge = EngineBridge();
-    repo = MissingDataRepositoryImpl(EngineDataSource(bridge, settings));
+    engines = WorkbookEngines();
+    repo = MissingDataRepositoryImpl(EngineDataSource(engines, settings));
     final tmp = await Directory.systemTemp.createTemp('mdt');
     workbook = '${tmp.path}/beyblade_parts.xlsx';
     await File('$toolsDir/samples/beyblade_parts.xlsx').copy(workbook);
   });
 
-  tearDownAll(() => bridge.dispose());
+  tearDownAll(() => engines.dispose());
 
   test(
     'open, analyse, edit, auto-fill, undo, save against the real engine',
@@ -175,7 +175,7 @@ void main() {
       values: {'name': 'Typed before the crash'},
     )).valueOrNull!;
     await repo.updateRow('Parts_X_Blades', id, {'attack': '44'});
-    await bridge.stop(); // the window closes: the engine ends without saving
+    await engines.bridge.stop(); // the window closes: the engine ends without saving
 
     final s = (await repo.open(copy))
         .valueOrNull!; // a new engine starts on the next call

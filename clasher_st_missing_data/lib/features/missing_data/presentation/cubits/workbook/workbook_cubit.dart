@@ -5,6 +5,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../../core/services/data_change_notifier.dart';
 import '../../../../../core/services/file_picker_service.dart';
 import '../../../../../core/settings/app_settings.dart';
+import '../../../domain/entities/workbook.dart';
+import '../../../domain/repositories/missing_data_repository.dart';
 import '../../../domain/usecases/workbook_usecases.dart';
 import 'workbook_state.dart';
 
@@ -20,7 +22,9 @@ class WorkbookCubit extends Cubit<WorkbookState> {
     required AppSettings settings,
     required FilePickerService picker,
     required DataChangeNotifier changes,
-  }) : _open = open,
+    MissingDataRepository? repository,
+  }) : _repo = repository,
+       _open = open,
        _summary = summary,
        _save = save,
        _undo = undo,
@@ -35,6 +39,7 @@ class WorkbookCubit extends Cubit<WorkbookState> {
         .listen((_) => refresh());
   }
 
+  final MissingDataRepository? _repo;
   final OpenWorkbook _open;
   final GetWorkbookSummary _summary;
   final SaveWorkbook _save;
@@ -64,6 +69,8 @@ class WorkbookCubit extends Cubit<WorkbookState> {
             status: WorkbookStatus.ready,
             summary: summary,
             recent: _settings.recentWorkbooks,
+            docs: [...state.docs.where((d) => _same(d, path) == false), path],
+            dirtyDocs: _dirtyWith(summary),
           ),
         );
         _changes.notify(DataChange.workbookOpened);
@@ -71,12 +78,54 @@ class WorkbookCubit extends Cubit<WorkbookState> {
     );
   }
 
+  static bool _same(String a, String b) => a.replaceAll('\\', '/') == b.replaceAll('\\', '/');
+
+  Set<String> _dirtyWith(WorkbookSummary s) {
+    final d = {...state.dirtyDocs.where((p) => !_same(p, s.path))};
+    if (s.dirty) d.add(s.path);
+    return d;
+  }
+
   Future<void> refresh() async {
     final res = await _summary();
     res.fold(
       (f) => emit(state.copyWith(error: f.message)),
-      (s) => emit(state.copyWith(summary: s)),
+      (s) => emit(state.copyWith(summary: s, dirtyDocs: _dirtyWith(s))),
     );
+  }
+
+  /// Switches to an open workbook (or opens it).
+  Future<void> switchTo(String path) async {
+    if (state.summary != null && _same(state.summary!.path, path)) return;
+    await open(path);
+  }
+
+  /// Closes an open workbook tab. Ask first when it has unsaved changes - they'd only be in its recovery file.
+  Future<void> closeDoc(String path) async {
+    final repo = _repo;
+    if (repo != null) await repo.close(path);
+    final docs = [...state.docs.where((d) => !_same(d, path))];
+    final dirty = {...state.dirtyDocs.where((d) => !_same(d, path))};
+    final wasCurrent = state.summary != null && _same(state.summary!.path, path);
+    emit(state.copyWith(docs: docs, dirtyDocs: dirty));
+    if (!wasCurrent) return;
+    if (docs.isNotEmpty) {
+      await open(docs.last);
+    } else {
+      emit(state.copyWith(status: WorkbookStatus.idle, clearSummary: true));
+    }
+  }
+
+  /// Saves every open workbook with unsaved changes -> true when all saved.
+  Future<bool> saveAll() async {
+    final back = state.summary?.path;
+    var ok = true;
+    for (final p in [...state.dirtyDocs]) {
+      if (state.summary == null || !_same(state.summary!.path, p)) await open(p);
+      ok = await save() && ok;
+    }
+    if (back != null && state.summary != null && !_same(state.summary!.path, back)) await open(back);
+    return ok;
   }
 
   /// True when the workbook is saved (the close-window guard waits for this).
@@ -95,6 +144,7 @@ class WorkbookCubit extends Cubit<WorkbookState> {
           state.copyWith(
             saving: false,
             summary: s,
+            dirtyDocs: s == null ? null : _dirtyWith(s),
             message: 'Saved (a backup copy was kept)',
           ),
         );

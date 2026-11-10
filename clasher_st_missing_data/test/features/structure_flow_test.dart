@@ -6,6 +6,7 @@ import 'package:missing_data_app/features/missing_data/presentation/cubits/struc
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_repository.dart';
+import '../support/fake_studio_repository.dart';
 
 void main() {
   late FakeRepository repo;
@@ -15,13 +16,13 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     repo = FakeRepository();
     await initDependencies(
-      prefs: await SharedPreferences.getInstance(),
+      prefs: await SharedPreferences.getInstance(), studioRepository: FakeStudioRepository(),
       repository: repo,
     );
   });
 
   Future<void> openWorkbook(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1700, 1100);
+    tester.view.physicalSize = const Size(1700, 1160);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(const MissingDataApp());

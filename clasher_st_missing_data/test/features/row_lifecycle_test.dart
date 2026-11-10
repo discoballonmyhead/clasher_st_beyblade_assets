@@ -7,6 +7,7 @@ import 'package:missing_data_app/features/missing_data/presentation/cubits/row_e
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../support/fake_repository.dart';
+import '../support/fake_studio_repository.dart';
 
 void main() {
   late FakeRepository repo;
@@ -15,7 +16,7 @@ void main() {
     await sl.reset();
     SharedPreferences.setMockInitialValues({});
     repo = FakeRepository();
-    await initDependencies(prefs: await SharedPreferences.getInstance(), repository: repo);
+    await initDependencies(prefs: await SharedPreferences.getInstance(), studioRepository: FakeStudioRepository(), repository: repo);
   });
 
   Future<void> openWorkbook(WidgetTester tester) async {

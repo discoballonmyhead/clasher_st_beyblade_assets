@@ -18,6 +18,7 @@ import '../../features/missing_data/presentation/cubits/recycle_bin/recycle_bin_
 import '../../features/missing_data/presentation/cubits/structure/structure_cubit.dart';
 import '../../features/missing_data/presentation/cubits/wiki/wiki_cubit.dart';
 import '../../features/missing_data/presentation/cubits/workbook/workbook_cubit.dart';
+import '../../features/missing_data/presentation/cubits/workspace/data_workspace_cubit.dart';
 import '../../features/settings/presentation/cubit/settings_cubit.dart';
 import '../../features/publish/presentation/cubits/data_release_cubit.dart';
 import '../../features/publish/presentation/cubits/history_cubit.dart';
@@ -33,6 +34,7 @@ import '../../features/translations/data/translation_project_store.dart';
 import '../../features/translations/domain/repositories/translation_repository.dart';
 import '../../features/translations/presentation/cubits/translation_cubit.dart';
 import '../bridge/engine_bridge.dart';
+import '../bridge/engine_pool.dart';
 import '../services/data_change_notifier.dart';
 import '../services/file_picker_service.dart';
 import '../services/unsaved_work.dart';
@@ -84,6 +86,10 @@ Future<void> initDependencies({
   sl.registerLazySingleton<EngineDataSource>(
     () => EngineDataSource(sl(), sl()),
   );
+  sl.registerLazySingleton<WorkbookEngines>(
+    WorkbookEngines.new,
+    dispose: (e) => e.dispose(),
+  );
   sl.registerLazySingleton<MissingDataRepository>(
     () => repository ?? MissingDataRepositoryImpl(sl()),
   );
@@ -131,6 +137,7 @@ Future<void> initDependencies({
         settings: sl(),
         picker: sl(),
         changes: sl(),
+        repository: sl(),
       ),
     )
     ..registerLazySingleton(
@@ -205,17 +212,24 @@ Future<void> initDependencies({
     ..registerLazySingleton(() => TranslationsReleaseCubit(repository: sl(), jobs: sl(), settings: sl()))
     ..registerLazySingleton(() => PackagingCubit(sl()))
     ..registerLazySingleton(() => HistoryCubit(repository: sl(), settings: sl()))
-    ..registerLazySingleton(() => ScrapersCubit(repository: sl(), jobs: sl()));
+    ..registerLazySingleton(() => ScrapersCubit(repository: sl(), jobs: sl()))
+    ..registerLazySingleton(() => DataWorkspaceCubit(repository: sl(), settings: sl()));
 
   // ── what the window-close prompt asks about ──
   sl<UnsavedWork>()
     ..register(
       UnsavedSource(
         id: 'workbook',
-        label: () =>
-            'Data: ${sl<WorkbookCubit>().state.summary?.fileName ?? 'workbook'}',
-        isDirty: () => sl<WorkbookCubit>().state.summary?.dirty ?? false,
-        save: () => sl<WorkbookCubit>().save(),
+        label: () {
+          final s = sl<WorkbookCubit>().state;
+          final names = {
+            for (final p in {...s.dirtyDocs, if (s.summary?.dirty ?? false) s.summary!.path})
+              p.split(RegExp(r'[\\/]')).last,
+          };
+          return 'Data: ${names.isEmpty ? 'workbook' : names.join(', ')}';
+        },
+        isDirty: () => sl<WorkbookCubit>().state.anyDirty,
+        save: () => sl<WorkbookCubit>().saveAll(),
       ),
     )
     ..register(

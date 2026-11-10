@@ -11,7 +11,11 @@ import '../entities/workbook.dart';
 /// Everything the missing-data screens need. Implemented today by the Python engine
 /// (data/repositories); an admin app can implement it against its own backend.
 abstract class MissingDataRepository {
+  /// Opens a workbook - or switches to it when it's already open (its unsaved edits kept).
   Future<Result<WorkbookSummary>> open(String path);
+
+  /// Closes an open workbook (unsaved edits stay in its recovery file).
+  Future<Result<void>> close(String path);
   Future<Result<WorkbookSummary>> summary();
   Future<Result<SheetAnalysis>> analyze(
     String sheet, {
@@ -22,7 +26,7 @@ abstract class MissingDataRepository {
     String? field,
     String query = '',
     RowSort sort = RowSort.sheet,
-    bool includeOptional = false,
+    bool includeOptional = false, String? generation,
   });
   Future<Result<RowDetail>> row(String sheet, String id);
   Future<Result<int>> updateRow(
