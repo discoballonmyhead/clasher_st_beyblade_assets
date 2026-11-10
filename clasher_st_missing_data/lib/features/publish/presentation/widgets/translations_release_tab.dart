@@ -39,7 +39,13 @@ class _TranslationsReleaseTabState extends State<TranslationsReleaseTab> {
         builder: (context, s) {
           final pub = rel.pub;
           final packs = tr.packs;
-          final files = packs == null ? <String>[] : TranslationsReleaseCubit.packFiles(packs, onlyChanged: _onlyChanged);
+          final done = s.uploadedOf(packs);
+          final files = packs == null
+              ? <String>[]
+              : [for (final f in TranslationsReleaseCubit.packFiles(packs, onlyChanged: _onlyChanged)) if (!done.contains(f)) f];
+          final withProblems = packs == null
+              ? 0
+              : packs.packs.where((p) => p.errors > 0 && files.contains('${packs.out}/${p.file}')).length;
           return Column(children: [
             Expanded(
               child: ListView(padding: const EdgeInsets.all(20), children: [
@@ -90,9 +96,12 @@ class _TranslationsReleaseTabState extends State<TranslationsReleaseTab> {
                   for (final p in packs.packs)
                     ListTile(
                       dense: true,
-                      leading: Icon(p.changed ? Icons.fiber_new_outlined : Icons.check, color: p.changed ? cs.primary : cs.outline),
+                      leading: done.contains('${packs.out}/${p.file}')
+                          ? Icon(Icons.cloud_done_outlined, color: cs.primary)
+                          : Icon(p.changed ? Icons.fiber_new_outlined : Icons.check, color: p.changed ? cs.primary : cs.outline),
                       title: Text('${p.file}  (${p.column})'),
-                      subtitle: Text('${p.keys} keys, ${(p.bytes / 1024).toStringAsFixed(1)} KB - ${p.changed ? 'changed since the last build' : 'same as last build'}'
+                      subtitle: Text('${p.keys} keys, ${(p.bytes / 1024).toStringAsFixed(1)} KB - '
+                          '${done.contains('${packs.out}/${p.file}') ? 'uploaded' : p.changed ? 'changed since the last build' : 'same as last build'}'
                           '${p.errors > 0 ? ' - ${p.errors} key(s) with problems' : ''}'),
                     ),
                   for (final sk in packs.skipped)
@@ -116,13 +125,17 @@ class _TranslationsReleaseTabState extends State<TranslationsReleaseTab> {
                                   'Repository: ${pub.translationsRepoSlug} (as ${s.tools!.ghUser ?? 'you'})',
                                   'Release: ${pub.translationsTag}${s.releaseExists == true ? '' : ' (created now)'}',
                                   'Files: ${files.map((f) => f.split('/').last).join(', ')} - same names are replaced',
+                                  if (withProblems > 0)
+                                    '$withProblems pack(s) have keys with problems (broken placeholders) - turn on Strict and build again to leave them out.',
                                   'People get the new texts the next time the app checks.',
                                 ],
                               );
-                              if (ok) await rel.upload(files);
+                              if (ok) await rel.upload(files, from: packs);
                             },
                       icon: const Icon(Icons.cloud_upload_outlined),
-                      label: Text(files.isEmpty ? 'Nothing changed to upload' : 'Upload ${files.length} pack(s)'),
+                      label: Text(files.isEmpty
+                          ? (done.isNotEmpty ? 'All uploaded' : 'Nothing changed to upload')
+                          : 'Upload ${files.length} pack(s)'),
                     ),
                     TextButton.icon(onPressed: () => openInSystem(packs.out), icon: const Icon(Icons.folder_open_outlined), label: const Text('Open folder')),
                   ]),

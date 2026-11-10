@@ -7,8 +7,19 @@ import '../../../studio/domain/entities/studio_models.dart';
 import '../cubits/history_cubit.dart';
 
 /// Releases on the data repo and the translations repo, with their files.
-class HistoryTab extends StatelessWidget {
+class HistoryTab extends StatefulWidget {
   const HistoryTab({super.key});
+
+  @override
+  State<HistoryTab> createState() => _HistoryTabState();
+}
+
+class _HistoryTabState extends State<HistoryTab> {
+  @override
+  void initState() {
+    super.initState();
+    context.read<HistoryCubit>().load(); // each time the tab opens: a release made a moment ago shows up
+  }
 
   @override
   Widget build(BuildContext context) {

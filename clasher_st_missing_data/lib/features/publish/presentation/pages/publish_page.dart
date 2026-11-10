@@ -22,7 +22,7 @@ class PublishPage extends StatelessWidget {
       BlocProvider.value(value: sl<DataReleaseCubit>()..load()),
       BlocProvider.value(value: sl<TranslationsReleaseCubit>()..load()),
       BlocProvider.value(value: sl<PackagingCubit>()..load()),
-      BlocProvider.value(value: sl<HistoryCubit>()..load()),
+      BlocProvider.value(value: sl<HistoryCubit>()), // loads when its tab opens
     ],
     child: DefaultTabController(
       length: 4,

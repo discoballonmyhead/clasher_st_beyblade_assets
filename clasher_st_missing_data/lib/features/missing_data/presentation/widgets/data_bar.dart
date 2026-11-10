@@ -6,6 +6,12 @@ import '../cubits/workbook/workbook_cubit.dart';
 import '../cubits/workbook/workbook_state.dart';
 import '../cubits/workspace/data_workspace_cubit.dart';
 
+/// The open workbook's tabs that belong to [gen] (all of them for null).
+List<String> tabsOf(WorkbookState wb, String? gen) => [
+  for (final s in wb.summary?.sheets ?? const [])
+    if (s.belongsTo(gen)) s.name,
+];
+
 /// Hobby -> generation, and the workbooks open as tabs.
 class DataBar extends StatelessWidget {
   const DataBar({super.key, required this.onClose});
@@ -47,8 +53,17 @@ class DataBar extends StatelessWidget {
                             .read<DataWorkspaceCubit>()
                             .selectHobby(h);
                         context.read<SheetCubit>().setGeneration(null);
-                        if (path != null)
+                        if (path != null) {
                           context.read<WorkbookCubit>().switchTo(path);
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                '$h has no workbook yet - add its file on the Data home page (Edit hobbies).',
+                              ),
+                            ),
+                          );
+                        }
                       },
                       items: [
                         for (final h in ws.workspace!.hobbies)
@@ -63,7 +78,10 @@ class DataBar extends StatelessWidget {
                         context.read<DataWorkspaceCubit>().selectGeneration(
                           null,
                         );
-                        context.read<SheetCubit>().setGeneration(null);
+                        context.read<SheetCubit>().setGeneration(
+                          null,
+                          tabs: tabsOf(wb, null),
+                        );
                       },
                     ),
                     for (final g in hobby?.generations ?? const <String>[])
@@ -76,7 +94,10 @@ class DataBar extends StatelessWidget {
                             context.read<DataWorkspaceCubit>().selectGeneration(
                               g,
                             );
-                            context.read<SheetCubit>().setGeneration(g);
+                            context.read<SheetCubit>().setGeneration(
+                              g,
+                              tabs: tabsOf(wb, g),
+                            );
                           },
                         ),
                       ),

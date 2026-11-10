@@ -293,14 +293,20 @@ def stream(job, line, cmd, cwd=None, env=None, ok_codes=(0,)):
     except FileNotFoundError:
         raise RuntimeError(f"{cmd[0]} isn't installed (or not on PATH)")
     job["proc"] = proc
+    last = last_err = ""
     for out in proc.stdout:
         line(out)
+        t = out.strip()
+        if t:
+            last = t
+            if re.match(r"(fatal|error)\b", t, re.I):
+                last_err = t
     code = proc.wait()
     job["proc"] = None
     if job["stop"].is_set() and code not in ok_codes:
         raise RuntimeError("Stopped")
     if code not in ok_codes:
-        raise RuntimeError(f"{_show(cmd[0])} exited with code {code}")
+        raise RuntimeError(f"{_show(Path(str(cmd[0])).name)} exited with code {code}" + (f": {(last_err or last)[:300]}" if last_err or last else ""))
     return code
 
 
@@ -353,8 +359,23 @@ def git_status(repo, paths=("data",)):
     if code == 0 and len(ab.split()) == 2:
         ahead, behind = (int(x) for x in ab.split())
     images = sum(1 for c in changed if "/images/" in c.replace("\\", "/"))
+    _, name = run_quiet(["git", "-C", str(repo), "config", "user.name"])
+    _, email = run_quiet(["git", "-C", str(repo), "config", "user.email"])
     return {"isRepo": True, "branch": branch, "remote": remote.strip(), "changed": len(changed),
-            "changedImages": images, "sample": changed[:40], "ahead": ahead, "behind": behind}
+            "changedImages": images, "sample": changed[:40], "ahead": ahead, "behind": behind,
+            "userName": name.strip(), "userEmail": email.strip()}
+
+
+def set_git_identity(repo, name, email):
+    """Who commits in this repository (repo-local git config, like "git config user.name" without --global)."""
+    name, email = (name or "").strip(), (email or "").strip()
+    if not name or not email or "@" not in email or "\n" in name + email:
+        raise ValueError("A name and an email address (name@host) are needed")
+    for k, v in (("user.name", name), ("user.email", email)):
+        code, out = run_quiet(["git", "-C", str(repo), "config", k, v])
+        if code != 0:
+            raise RuntimeError(out.strip() or f"git config {k} failed")
+    return git_status(repo)
 
 
 def job_package(job, line, books, out_dir, owner, repo, branch):
@@ -396,7 +417,12 @@ def job_commit_push(job, line, repo, paths, message, push):
     code, out = run_quiet(["git", "-C", str(repo), "diff", "--cached", "--quiet", "--", *paths])
     committed = False
     if code == 1:
-        stream(job, line, ["git", "-C", str(repo), "commit", "-m", message, "--", *paths])
+        try:
+            stream(job, line, ["git", "-C", str(repo), "commit", "-m", message, "--", *paths])
+        except RuntimeError:
+            run_quiet(["git", "-C", str(repo), "reset", "-q", "--", *paths])  # leave the repo as it was
+            line("Unstaged again - nothing was committed.")
+            raise
         committed = True
     else:
         line("Nothing new to commit in " + ", ".join(paths))
@@ -722,6 +748,7 @@ def serve(stdin=None, stdout=None):
         "setProfile": lambda a: set_profile(a["sheet"], a["columns"]),
         "tools": lambda a: tools_check(),
         "gitStatus": lambda a: git_status(a["repo"], a.get("paths") or ["data"]),
+        "setGitIdentity": lambda a: set_git_identity(a["repo"], a.get("name"), a.get("email")),
         "releases": lambda a: releases(a["slug"], a.get("limit", 30)),
         "releaseAssets": lambda a: release_assets(a["slug"], a["tag"]),
         "releaseExists": lambda a: {"exists": release_exists(a["slug"], a["tag"])},

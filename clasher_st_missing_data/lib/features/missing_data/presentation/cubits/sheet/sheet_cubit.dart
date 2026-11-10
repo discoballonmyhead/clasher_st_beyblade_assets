@@ -103,8 +103,20 @@ class SheetCubit extends Cubit<SheetState> {
   }
 
   /// Shared tabs (Products, Accessories ...) list only this generation's rows; null = all.
-  Future<void> setGeneration(String? generation) async {
-    if (generation == state.generation) return;
+  /// Shows [generation] only. [tabs] are the workbook's tabs of that generation: when the open tab isn't one of
+  /// them, the first one opens (or none, when the workbook has no tab of that generation).
+  Future<void> setGeneration(String? generation, {List<String>? tabs}) async {
+    final keep = tabs == null || (state.sheet != null && tabs.contains(state.sheet));
+    if (generation == state.generation && keep) return;
+    if (!keep) {
+      if (tabs.isEmpty) {
+        emit(SheetState(sort: state.sort, includeOptional: state.includeOptional, generation: generation));
+        return;
+      }
+      emit(state.copyWith(generation: () => generation, selected: const {}));
+      await selectSheet(tabs.first);
+      return;
+    }
     emit(state.copyWith(generation: () => generation, selected: const {}));
     await refresh();
   }

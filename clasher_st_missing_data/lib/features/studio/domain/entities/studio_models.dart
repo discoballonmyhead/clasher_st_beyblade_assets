@@ -106,6 +106,8 @@ class GitStatus extends Equatable {
     this.ahead,
     this.behind,
     this.detail = '',
+    this.userName = '',
+    this.userEmail = '',
   });
 
   final bool isRepo;
@@ -118,8 +120,13 @@ class GitStatus extends Equatable {
   final int? behind;
   final String detail;
 
+  /// Who commits here (git config user.name / user.email); git refuses to commit without them.
+  final String userName;
+  final String userEmail;
+  bool get hasIdentity => userName.isNotEmpty && userEmail.isNotEmpty;
+
   @override
-  List<Object?> get props => [isRepo, branch, remote, changed, changedImages, sample, ahead, behind, detail];
+  List<Object?> get props => [isRepo, branch, remote, changed, changedImages, sample, ahead, behind, detail, userName, userEmail];
 }
 
 /// One problem from the catalog check (what the app would reject).

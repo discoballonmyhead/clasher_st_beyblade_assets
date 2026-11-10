@@ -65,6 +65,11 @@ void main() {
     expect(find.descendant(of: doc('beyblade_products.xlsx'), matching: find.text('● beyblade_products.xlsx')), findsOneWidget);
     expect(find.descendant(of: doc('beyblade_parts.xlsx'), matching: find.text('beyblade_parts.xlsx')), findsOneWidget);
     expect(find.text('Hells Scythe'), findsOneWidget, reason: 'the rows of the workbook switched to');
+    expect(
+      [for (final c in tester.widgetList<InputChip>(find.byType(InputChip))) (c.key! as ValueKey<String>).value],
+      ['doc-/tmp/beyblade_parts.xlsx', 'doc-/tmp/beyblade_products.xlsx'],
+      reason: 'tabs keep their place when switching',
+    );
 
     // close products: asks; Cancel keeps it
     final close = find.descendant(of: doc('beyblade_products.xlsx'), matching: find.byTooltip('Close'));

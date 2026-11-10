@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+/// A real monospace font on each OS. ('monospace' alone can resolve to a CJK font that draws \ as a yen sign.)
+const monoFamily = 'Consolas';
+const monoFallback = ['Menlo', 'SF Mono', 'DejaVu Sans Mono', 'Liberation Mono', 'Noto Sans Mono', 'Courier New', 'monospace'];
+
 abstract final class AppTheme {
   static const _seed = Color(0xFF2F6FED);
 

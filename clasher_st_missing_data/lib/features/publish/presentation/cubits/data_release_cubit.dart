@@ -137,6 +137,15 @@ class DataReleaseCubit extends Cubit<DataReleaseState> {
     if (git != null) emit(state.copyWith(git: git));
   }
 
+  /// Tells git who commits in the data repo (repo-local) -> an error message, or null.
+  Future<String?> setGitIdentity(String name, String email) async {
+    final res = await _repo.setGitIdentity(repoDir, name: name, email: email);
+    return res.fold((f) => f.message, (g) {
+      emit(state.copyWith(git: g));
+      return null;
+    });
+  }
+
   void toggleBook(String path) {
     final b = {...state.books};
     b.contains(path) ? b.remove(path) : b.add(path);

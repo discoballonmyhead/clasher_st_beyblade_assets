@@ -12,6 +12,9 @@ abstract class StudioRepository {
 
   Future<Result<ToolsStatus>> tools();
   Future<Result<GitStatus>> gitStatus(String repo, {List<String> paths = const ['data']});
+
+  /// Sets user.name / user.email in [repo] only (not globally) -> the new status.
+  Future<Result<GitStatus>> setGitIdentity(String repo, {required String name, required String email});
   Future<Result<List<ReleaseInfo>>> releases(String slug);
   Future<Result<List<ReleaseAsset>>> releaseAssets(String slug, String tag);
 

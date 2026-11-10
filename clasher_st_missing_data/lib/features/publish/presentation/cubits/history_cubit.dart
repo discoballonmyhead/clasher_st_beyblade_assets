@@ -51,7 +51,7 @@ class HistoryCubit extends Cubit<HistoryState> {
   final AppSettings _settings;
 
   Future<void> load() async {
-    emit(state.copyWith(loading: true, error: () => null));
+    emit(state.copyWith(loading: true, error: () => null, assets: const {})); // files of a tag may have changed
     final pub = _settings.publishing;
     final d = await _repo.releases(pub.dataRepoSlug);
     final t = await _repo.releases(pub.translationsRepoSlug);

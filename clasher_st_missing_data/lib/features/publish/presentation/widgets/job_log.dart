@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../../../core/theme/app_theme.dart';
 
 /// Live output of background jobs, scrolled to the end.
 class JobLog extends StatefulWidget {
@@ -84,7 +85,7 @@ class _JobLogState extends State<JobLog> {
                       : l.startsWith('──') || l.startsWith(r'$ ')
                           ? const Color(0xFF82B1FF)
                           : const Color(0xFFE0E0E0);
-              return Text(l, style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: color));
+              return Text(l, style: TextStyle(fontFamily: monoFamily, fontFamilyFallback: monoFallback, fontSize: 12, color: color));
             },
           ),
         ),

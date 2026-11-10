@@ -61,6 +61,20 @@ SheetProfile profileFromJson(Json j) => SheetProfile(
   ],
 );
 
+GitStatus gitStatusFromJson(Json j) => GitStatus(
+  isRepo: j['isRepo'] == true,
+  branch: _s(j['branch']),
+  remote: _s(j['remote']),
+  changed: _i(j['changed']),
+  changedImages: _i(j['changedImages']),
+  sample: _list(j['sample']),
+  ahead: j['ahead'] == null ? null : _i(j['ahead']),
+  behind: j['behind'] == null ? null : _i(j['behind']),
+  detail: _s(j['detail']),
+  userName: _s(j['userName']),
+  userEmail: _s(j['userEmail']),
+);
+
 /// studio_tool.py over its own bridge.
 class StudioRepositoryImpl implements StudioRepository {
   StudioRepositoryImpl(this._bridge, this._settings);
@@ -137,20 +151,12 @@ class StudioRepositoryImpl implements StudioRepository {
   });
 
   @override
-  Future<Result<GitStatus>> gitStatus(String repo, {List<String> paths = const ['data']}) => _guard(() async {
-    final j = await _map('gitStatus', {'repo': repo, 'paths': paths});
-    return GitStatus(
-      isRepo: j['isRepo'] == true,
-      branch: _s(j['branch']),
-      remote: _s(j['remote']),
-      changed: _i(j['changed']),
-      changedImages: _i(j['changedImages']),
-      sample: _list(j['sample']),
-      ahead: j['ahead'] == null ? null : _i(j['ahead']),
-      behind: j['behind'] == null ? null : _i(j['behind']),
-      detail: _s(j['detail']),
-    );
-  });
+  Future<Result<GitStatus>> gitStatus(String repo, {List<String> paths = const ['data']}) =>
+      _guard(() async => gitStatusFromJson(await _map('gitStatus', {'repo': repo, 'paths': paths})));
+
+  @override
+  Future<Result<GitStatus>> setGitIdentity(String repo, {required String name, required String email}) =>
+      _guard(() async => gitStatusFromJson(await _map('setGitIdentity', {'repo': repo, 'name': name, 'email': email})));
 
   @override
   Future<Result<List<ReleaseInfo>>> releases(String slug) => _guard(() async => [

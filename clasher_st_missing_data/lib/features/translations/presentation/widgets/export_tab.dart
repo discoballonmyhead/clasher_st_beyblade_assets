@@ -9,6 +9,7 @@ import '../../domain/entities/translation_models.dart';
 import '../cubits/translation_cubit.dart';
 import '../cubits/translation_state.dart';
 import 'common.dart';
+import '../../../../core/theme/app_theme.dart';
 
 /// The app's constants (TrTokens, default English, the language registry) generated into the export folder with
 /// a diff against the project's files, and the language packs with the command to publish them.
@@ -320,7 +321,7 @@ class _Command extends StatelessWidget {
           Expanded(
             child: SelectableText(
               text,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+              style: const TextStyle(fontFamily: monoFamily, fontFamilyFallback: monoFallback, fontSize: 13),
             ),
           ),
           IconButton(
@@ -368,7 +369,7 @@ class _ExportFileCard extends StatelessWidget {
                         TextSpan(
                           text: '$l\n',
                           style: TextStyle(
-                            fontFamily: 'monospace',
+                            fontFamily: monoFamily, fontFamilyFallback: monoFallback,
                             fontSize: 12,
                             color: l.startsWith('+') && !l.startsWith('+++')
                                 ? Colors.green.shade700

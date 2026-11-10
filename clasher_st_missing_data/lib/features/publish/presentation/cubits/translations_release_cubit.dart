@@ -17,9 +17,18 @@ class TranslationsReleaseState extends Equatable {
     this.uploading = false,
     this.published,
     this.error,
+    this.uploaded = const {},
+    this.uploadedFrom,
   });
 
   final ToolsStatus? tools;
+
+  /// Files uploaded from the pack build [uploadedFrom]; a new build starts over.
+  final Set<String> uploaded;
+  final PackReport? uploadedFrom;
+
+  /// The files of [report] already uploaded.
+  Set<String> uploadedOf(PackReport? report) => report != null && identical(report, uploadedFrom) ? uploaded : const {};
 
   /// Whether the translations repo already has the release tag (created on the first upload otherwise).
   final bool? releaseExists;
@@ -35,7 +44,11 @@ class TranslationsReleaseState extends Equatable {
     bool? uploading,
     PublishResult? Function()? published,
     String? Function()? error,
+    Set<String>? uploaded,
+    PackReport? Function()? uploadedFrom,
   }) => TranslationsReleaseState(
+    uploaded: uploaded ?? this.uploaded,
+    uploadedFrom: uploadedFrom != null ? uploadedFrom() : this.uploadedFrom,
     tools: tools ?? this.tools,
     releaseExists: releaseExists != null ? releaseExists() : this.releaseExists,
     log: log ?? this.log,
@@ -45,7 +58,7 @@ class TranslationsReleaseState extends Equatable {
   );
 
   @override
-  List<Object?> get props => [tools, releaseExists, log, uploading, published, error];
+  List<Object?> get props => [tools, releaseExists, log, uploading, published, error, uploaded, uploadedFrom];
 }
 
 /// Uploads language packs to the translations repo's release (Settings -> Publishing: repo + tag). Packs are
@@ -72,8 +85,8 @@ class TranslationsReleaseCubit extends Cubit<TranslationsReleaseState> {
     }
   }
 
-  /// [packs] the files to upload (full paths).
-  Future<PublishResult?> upload(List<String> packs) async {
+  /// [packs] the files to upload (full paths) from the build [from].
+  Future<PublishResult?> upload(List<String> packs, {PackReport? from}) async {
     if (packs.isEmpty || state.uploading) return null;
     emit(state.copyWith(uploading: true, log: [...state.log, '', '── Upload ${packs.length} pack(s) ──']));
     final lines = <String>[];
@@ -99,7 +112,14 @@ class TranslationsReleaseCubit extends Cubit<TranslationsReleaseState> {
           return null;
         }
         final r = DataReleaseCubit.publishFrom(e.result);
-        emit(state.copyWith(uploading: false, log: log, published: () => r, releaseExists: () => true));
+        emit(state.copyWith(
+          uploading: false,
+          log: log,
+          published: () => r,
+          releaseExists: () => true,
+          uploaded: {if (identical(from, state.uploadedFrom)) ...state.uploaded, ...packs},
+          uploadedFrom: () => from,
+        ));
         return r;
     }
   }

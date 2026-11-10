@@ -125,7 +125,7 @@ class _RunTab extends StatelessWidget {
     final cubit = context.read<ScrapersCubit>();
     final o = s.options;
     Widget number(String label, String? value, void Function(String) set) => SizedBox(
-      width: 150,
+      width: 220,
       child: TextFormField(
         initialValue: value ?? '',
         enabled: !s.running,

@@ -42,7 +42,15 @@ class FakeStudioRepository implements StudioRepository {
   var _n = 0;
 
   ToolsStatus tools_ = const ToolsStatus(git: true, gh: true, ghSignedIn: true, ghUser: 'tester');
-  GitStatus git_ = const GitStatus(isRepo: true, branch: 'main', remote: 'origin', changed: 3, sample: ['data/blades.json']);
+  GitStatus git_ = const GitStatus(
+    isRepo: true,
+    branch: 'main',
+    remote: 'origin',
+    changed: 3,
+    sample: ['data/blades.json'],
+    userName: 'Tester',
+    userEmail: 'tester@example.invalid',
+  );
 
   List<SheetProfile> profiles_ = [
     const SheetProfile(sheet: 'blades', tab: 'Parts_X_Blades', workbook: 'beyblade_parts.xlsx', generation: 'X', source: 'workbook', columns: [
@@ -130,6 +138,14 @@ class FakeStudioRepository implements StudioRepository {
 
   @override
   Future<Result<GitStatus>> gitStatus(String repo, {List<String> paths = const ['data']}) async => Ok(git_);
+
+  @override
+  Future<Result<GitStatus>> setGitIdentity(String repo, {required String name, required String email}) async {
+    _call('setGitIdentity', {'name': name, 'email': email});
+    if (!email.contains('@')) return const Err(Failure('A name and an email address (name@host) are needed'));
+    git_ = GitStatus(isRepo: true, branch: git_.branch, remote: git_.remote, changed: git_.changed, userName: name, userEmail: email);
+    return Ok(git_);
+  }
 
   @override
   Future<Result<List<ReleaseInfo>>> releases(String slug) async {

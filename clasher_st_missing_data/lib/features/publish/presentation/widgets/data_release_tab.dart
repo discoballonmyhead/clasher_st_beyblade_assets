@@ -10,6 +10,7 @@ import '../../../../core/settings/app_settings.dart';
 import '../../../studio/domain/entities/studio_models.dart';
 import '../cubits/data_release_cubit.dart';
 import 'job_log.dart';
+import '../../../../core/theme/app_theme.dart';
 
 /// Package -> commit + push data/ -> build release files -> create the GitHub release, then the values for the
 /// Supabase manifest. Each step can be run on its own; each says what it needs.
@@ -24,6 +25,9 @@ class _DataReleaseTabState extends State<DataReleaseTab> {
   late final _message = TextEditingController(text: 'Data update ${_today()}');
   late final _tag = TextEditingController(text: sl<AppSettings>().publishing.catalogTag(DateTime.now()));
   final _assets = TextEditingController();
+  final _gitName = TextEditingController();
+  final _gitEmail = TextEditingController();
+  String? _identityError;
   bool _push = true;
   bool _dropInvalid = false;
   bool _latest = true;
@@ -35,6 +39,8 @@ class _DataReleaseTabState extends State<DataReleaseTab> {
     _message.dispose();
     _tag.dispose();
     _assets.dispose();
+    _gitName.dispose();
+    _gitEmail.dispose();
     super.dispose();
   }
 
@@ -101,8 +107,17 @@ class _DataReleaseTabState extends State<DataReleaseTab> {
                   if (pr != null) ...[
                     const SizedBox(height: 8),
                     Wrap(spacing: 8, runSpacing: 4, children: [
-                      for (final e in pr.rowsPerSheet.entries) Chip(label: Text('${e.key} ${e.value}')),
+                      for (final e in pr.rowsPerSheet.entries)
+                        if (e.value > 0) Chip(label: Text('${e.key} ${e.value}')),
                     ]),
+                    if (pr.rowsPerSheet.values.any((v) => v == 0))
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          'Empty (written as []): ${[for (final e in pr.rowsPerSheet.entries) if (e.value == 0) e.key].join(', ')}',
+                          style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                        ),
+                      ),
                     for (final e in pr.errors.take(12))
                       Text('!  ${e.sheet}${e.id != null ? ' #${e.id}' : ''}: ${e.message}', style: TextStyle(color: cs.error, fontSize: 12)),
                     if (pr.errorCount > 12) Text('... and ${pr.errorCount - 12} more (in the log)', style: TextStyle(color: cs.error, fontSize: 12)),
@@ -119,10 +134,32 @@ class _DataReleaseTabState extends State<DataReleaseTab> {
                     : !s.git!.isRepo
                         ? 'The tools folder isn\'t a git repository'
                         : '${s.git!.changed} changed file(s) in data/ (${s.git!.changedImages} images) on ${s.git!.branch}'
+                              '${(s.git!.ahead ?? 0) > 0 ? ' - ${s.git!.ahead} commit(s) not pushed yet' : ''}'
                               '${(s.git!.behind ?? 0) > 0 ? ' - ${s.git!.behind} commit(s) behind: pull first' : ''}',
                 children: [
                   Text('Images are served from the CDN off ${pub.dataBranch}, so they must be pushed before the app gets the release.',
                       style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant)),
+                  if (s.git != null && s.git!.isRepo && !s.git!.hasIdentity) ...[
+                    const SizedBox(height: 8),
+                    Text('git doesn\'t know who you are yet, so it can\'t commit. Saved for this repository only.',
+                        style: TextStyle(color: cs.error)),
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      Expanded(child: TextField(controller: _gitName, decoration: const InputDecoration(labelText: 'Your name', isDense: true))),
+                      const SizedBox(width: 8),
+                      Expanded(child: TextField(controller: _gitEmail, decoration: const InputDecoration(labelText: 'Email (e.g. your GitHub email)', isDense: true))),
+                      const SizedBox(width: 8),
+                      OutlinedButton(
+                        onPressed: () async {
+                          final err = await cubit.setGitIdentity(_gitName.text, _gitEmail.text);
+                          if (mounted) setState(() => _identityError = err);
+                        },
+                        child: const Text('Save'),
+                      ),
+                    ]),
+                    if (_identityError != null) Text(_identityError!, style: TextStyle(color: cs.error, fontSize: 12)),
+                  ],
+                  const SizedBox(height: 12),
                   TextField(controller: _message, decoration: const InputDecoration(labelText: 'Commit message', isDense: true)),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
@@ -133,7 +170,11 @@ class _DataReleaseTabState extends State<DataReleaseTab> {
                   ),
                   Row(children: [
                     FilledButton.icon(
-                      onPressed: s.busy || !(s.git?.isRepo ?? false) || !(tools?.git ?? false)
+                      onPressed: s.busy ||
+                              !(s.git?.isRepo ?? false) ||
+                              !(tools?.git ?? false) ||
+                              !s.git!.hasIdentity ||
+                              (s.git!.changed == 0 && !(_push && (s.git!.ahead ?? 0) > 0))
                           ? null
                           : () async {
                               final g = s.git!;
@@ -211,7 +252,7 @@ class _DataReleaseTabState extends State<DataReleaseTab> {
                   if (s.release != null)
                     for (final p in s.release!.packs)
                       Text('  ${p['file']}  ${((p['bytes'] as num? ?? 0) / 1024 / 1024).toStringAsFixed(2)} MB',
-                          style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                          style: const TextStyle(fontFamily: monoFamily, fontFamilyFallback: monoFallback, fontSize: 12)),
                 ],
               ),
               // 4
@@ -358,7 +399,7 @@ class _CopyBox extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(color: cs.surfaceContainerHighest, borderRadius: BorderRadius.circular(8)),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Expanded(child: SelectableText(text, style: const TextStyle(fontFamily: 'monospace', fontSize: 12))),
+        Expanded(child: SelectableText(text, style: const TextStyle(fontFamily: monoFamily, fontFamilyFallback: monoFallback, fontSize: 12))),
         IconButton(
           tooltip: 'Copy',
           icon: const Icon(Icons.copy, size: 18),

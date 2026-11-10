@@ -69,7 +69,7 @@ class WorkbookCubit extends Cubit<WorkbookState> {
             status: WorkbookStatus.ready,
             summary: summary,
             recent: _settings.recentWorkbooks,
-            docs: [...state.docs.where((d) => _same(d, path) == false), path],
+            docs: state.docs.any((d) => _same(d, path)) ? state.docs : [...state.docs, path], // tabs keep their place
             dirtyDocs: _dirtyWith(summary),
           ),
         );

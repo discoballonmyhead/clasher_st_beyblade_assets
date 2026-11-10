@@ -22,6 +22,15 @@ class SheetSidebar extends StatelessWidget {
           buildWhen: (a, b) => a.sheet != b.sheet || a.generation != b.generation,
           builder: (context, st) => Flexible(
             child: ListView(shrinkWrap: true, children: [
+              if (st.generation != null && !(wb.summary?.sheets ?? const []).any((s) => s.belongsTo(st.generation)))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  child: Text(
+                    'No ${st.generation} tabs in this workbook. Pick another generation, All, or another workbook of '
+                    'this hobby above.',
+                    style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                  ),
+                ),
               for (final s in wb.summary?.sheets ?? const [])
                 if (s.belongsTo(st.generation))
                 ListTile(

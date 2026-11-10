@@ -132,4 +132,26 @@ void main() {
     expect(find.textContaining('v8'), findsWidgets);
     expect(studio.calls['releases'], isNotEmpty);
   });
+
+  testWidgets('git without a name/email: commit waits until it is set for the repository', (tester) async {
+    studio.git_ = const GitStatus(isRepo: true, branch: 'main', remote: 'origin', changed: 2);
+    await openPublish(tester);
+    FilledButton commit() => tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Commit and push'));
+    expect(find.textContaining("git doesn't know who you are"), findsOneWidget);
+    expect(commit().onPressed, isNull);
+
+    await tester.enterText(find.widgetWithText(TextField, 'Your name'), 'Sam');
+    await tester.enterText(find.widgetWithText(TextField, 'Email (e.g. your GitHub email)'), 'sam@example.invalid');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(studio.calls['setGitIdentity']!.single, {'name': 'Sam', 'email': 'sam@example.invalid'});
+    expect(find.textContaining("git doesn't know who you are"), findsNothing);
+    expect(commit().onPressed, isNotNull);
+  });
+
+  testWidgets('nothing changed and nothing to push: commit is off', (tester) async {
+    studio.git_ = const GitStatus(isRepo: true, branch: 'main', changed: 0, ahead: 0, userName: 'a', userEmail: 'a@b.c');
+    await openPublish(tester);
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Commit and push')).onPressed, isNull);
+  });
 }
