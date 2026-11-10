@@ -4,9 +4,14 @@ One desktop app for the data behind clasher_st and for any app's translations. W
 
 Sections (left rail; each keeps its state while you're in another):
 
-* **Data**: the missing data tool. Works on the three Beyblade workbooks (`beyblade_parts.xlsx`,
-  `beyblade_products.xlsx`, `beyblade_tcg.xlsx`); see *What the Data section does* below.
+* **Data**: the missing data tool, by hobby (Beyblade, Beyblade TCG, and any you add) and generation, with every
+  workbook you open as a tab. See *What the Data section does* below.
 * **Translations**: the strings of any Flutter app and their translation sheet. See *Translations* below.
+* **Publish**: everything that leaves the Studio. The data release (package -> commit + push -> release files ->
+  GitHub release, in the data repo), the language packs (the translations repo's release), what the packager writes
+  per JSON sheet, and the releases so far. See *Publish* below.
+* **Scrapers**: the wiki scraper per hobby and generation: run targets with a live log and a safe stop, edit each
+  target's settings and the generation's own scraper code. See *Scrapers* below.
 * **Settings**: Python and the tools folder, the publishing names (repos, branch, release tags) and a settings backup
   file.
 
@@ -16,8 +21,12 @@ open offers it back.
 
 ## How it works
 
-Flutter can't run Python code itself. This app starts `missing_data_tool.py serve` (data) and `translation_tool.py serve` (translations) when they're first needed and keeps them running, each in its own process. The
-engine holds the workbook in memory, and the app sends it JSON lines over stdin/stdout. Only
+Flutter can't run Python code itself. This app starts `missing_data_tool.py serve` (data), `translation_tool.py serve`
+(translations) and `studio_tool.py serve` (hobbies, packaging profiles, publishing, scrapers) when they're first needed
+and keeps them running, each in its own process. Each open workbook gets its own data engine, which holds it in memory
+(with its own recovery file), so switching tabs never reloads or loses anything. The app sends JSON lines over
+stdin/stdout; long steps (packaging, git, releases, scraping) run as background jobs whose output streams into the
+page's log and that can be stopped. If an engine stops (crash, killed), the next call starts it again. Only
 `lib/core/bridge/engine_bridge.dart` and the data source know Python is involved. When the data moves to your admin
 app's backend (Supabase, an API ...), you write a new `MissingDataRepository` implementation and register it in
 `service_locator.dart`. The domain, the cubits and the UI stay as they are.
@@ -52,6 +61,12 @@ everything else) to a JSON file you can keep or import on another computer.
 
 ## What the Data section does
 
+* **Hobby and generation** (bar above the tabs): pick a hobby, then **All** or one generation; the tab list shows
+  that generation's tabs (and shared tabs that have its rows). New columns can be added to just that generation's
+  tabs. **Edit hobbies** (Data home page) adds hobbies (Yu-Gi-Oh!, Pokemon ... ) with their generations (series, or
+  years for card games) and workbook files; Beyblade and Beyblade TCG are the ones the packager and scraper know.
+* **Workbook tabs**: every workbook you open stays open as a tab (the hobby's other workbooks are one click away).
+  A dot marks unsaved changes; closing a changed one asks to save first. Each keeps its own undo and recovery file.
 * **Tabs**: shows the number of rows with gaps in each tab.
 * **Missing per field**: shows how many rows miss each field. Click a field to list only those rows. **optional**
   also shows the optional columns.
@@ -114,6 +129,45 @@ Tabs:
 The engine is `translation_tool.py` (repo root). It isn't tied to Beyblade and also runs on its own:
 `translation_tool.py check|export|packs --project APP --sheet sheet.xlsx [--out dist]`.
 
+## Publish
+
+Names (owner, repos, branch, tag format) come from Settings -> Publishing. Every step that leaves your computer (git
+push, creating or uploading to a release) shows exactly what it will do and waits for you to confirm.
+
+**Data release** (the data repo), each step can be run on its own:
+1. **Package**: the ticked workbooks -> `data/` (JSON per sheet + WebP images), checked against what the app accepts.
+   Rows the app would reject are listed.
+2. **Commit and push data/**: only `data/` is staged. If git doesn't know your name/email yet, the page asks for them
+   and saves them for that repository only. A failed commit is unstaged again, and the error says why.
+3. **Build the release files**: `catalog.zip`, `catalog_manifest.json` and the packs in `_release/<tag>/`; optionally
+   leave out the rows the app can't read instead of stopping.
+4. **Create the GitHub release** with `gh` (sign in once with `gh auth login`). Existing files with the same names
+   are replaced. The page then shows the values for the Supabase manifest function, ready to copy.
+
+**Translations release** (the translations repo): build the language packs from the Translations section's sheet
+(strict mode leaves out packs with broken placeholders) and upload the ones that changed. Uploaded packs are marked
+and aren't offered again until you build again.
+
+**Packaging**: per JSON sheet, which columns go into the JSON and how critical each is: *required* (an empty cell
+blocks the release), *recommended* (counted as missing in Data) or *optional* (never counted). Ids, images and the
+fields the app reads as required are locked. Saved to `packaging_profiles.json`; the packager, the release check and
+the Data section all follow it.
+
+**History**: the releases on both repos and their files (refreshes each time you open it).
+
+## Scrapers
+
+* **Run**: pick a hobby and generation, tick targets (parts per type, products, cards) and run. Options: pages per
+  target, request budget, delay, skip images, overwrite filled cells (asks first), relist, refetch, list only. The
+  log is live; **Stop** finishes the current step and saves, and running again continues.
+* **Target settings**: the wiki categories, title prefixes, exclusions, aliases and extra pages of a target, as JSON.
+  Invalid JSON can't be saved; the previous file is kept in `scrapers/backups/`.
+* **Code**: `scrapers/<hobby>/<generation>.py` with `adjust_row(target, title, fields, row)`, which runs after the
+  built-in mapping for every page of that hobby and generation. Saving checks the syntax first (the error line is
+  highlighted) and keeps the previous version; a file that fails to load is skipped by the scraper, so a mistake
+  can't stop a run. **Scraper source (advanced)** opens `fandom_scraper.py` itself.
+* **Scraper settings**: the user agent (put a way to contact you in it) and how polite the scraper is.
+
 ## Structure (clean architecture + service locator)
 
 ```
@@ -122,6 +176,7 @@ lib/
   app.dart                      MaterialApp.router + app-wide cubits
   core/
     bridge/engine_bridge.dart   Python process, JSON-line RPC (writes are queued)
+    bridge/engine_pool.dart     one data engine per open workbook
     di/service_locator.dart     get_it: `sl` registers settings, bridge, data source, repository, use cases, cubits
     error/failure.dart          Failure + Result (Ok / Err)
     router/app_router.dart      go_router shell with one branch per section: / and /workbook, /translations, /settings
@@ -137,11 +192,16 @@ lib/
       presentation/             cubits (workbook, sheet, row_editor, autofill, wiki), pages, widgets
     settings/                   settings cubit + page (engine, publishing names, backup)
     translations/               domain / data / presentation for the Translations section
+    studio/                     studio_tool.py: workspace (hobbies), profiles, tools/git status, jobs (JobCenter)
+    publish/                    the Publish section: data release, translations release, packaging, history
+    scrapers/                   the Scrapers section and its code editor
 test/
   core/engine_integration_test.dart   against the real Python engine (copy of samples/beyblade_parts.xlsx)
   core/translation_engine_test.dart   translation_tool.py on a throwaway app + sheet; the project must stay byte-identical
   core/engine_bridge_test.dart        engines started by several callers at once share one process
-  features/                           bloc_test cubit tests + an open -> edit -> save widget flow on a fake repository
+  features/                           bloc_test cubit tests + widget flows on fake repositories: open -> edit -> save,
+                                      workbook tabs and hobbies, every Publish step (confirmations, failures, git
+                                      identity), packaging profiles, scrapers (run, JSON settings, code check/save)
 ```
 
 Run the tests with `flutter test`. The integration test uses `python3`, or the interpreter in `MDT_PYTHON`, and is

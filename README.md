@@ -17,7 +17,8 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
 | `translation_tool.py` | translations for any Flutter app: reads its TrTokens / default English / language registry (never writes the project), keeps the sheet in step, checks placeholders, exports the constants and builds `lang_<code>.zip` packs. Used by Clasher Studio's Translations section |
-| `clasher_st_missing_data/` | Flutter desktop version of the missing data tool (get_it, go_router, cubits, clean architecture) – see its README |
+| `studio_tool.py` | engine behind Clasher Studio's Publish and Scrapers sections: hobbies/generations (`studio_workspace.json`), packaging profiles (`packaging_profiles.json`), package → commit + push → release files → GitHub release (git + gh), scraper targets, settings and per-generation code (`scrapers/<hobby>/<generation>.py`) |
+| `clasher_st_missing_data/` | **Clasher Studio**, the Flutter desktop app that does all of the above from one window: Data (missing data, by hobby and generation, workbooks as tabs), Translations, Publish (data release, language packs, packaging profiles, history), Scrapers – see its README |
 | `tk_ui.py` | shared look and helpers for the Python GUIs (theme, remembered settings, background jobs, status bar) |
 
 **Speed and convenience (all tools):** image encoding uses every CPU core (the packager went from 23.6 s to 7.4 s on

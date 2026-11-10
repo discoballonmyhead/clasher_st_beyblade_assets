@@ -37,6 +37,12 @@ flowchart LR
 9. **App**: on its next launch the app sees the new version, downloads `catalog.zip`, checks it and switches over.
    Nothing to do on the phone.
 
+**All of it from one app:** Clasher Studio (`clasher_st_missing_data/`) runs every step above from its sections:
+**Scrapers** (step 2, with each generation's own scraper code), **Data** (step 4), **Publish -> Data release**
+(steps 5 to 8, one button per step, each confirmed before anything is pushed or uploaded) and **Publish ->
+Packaging** (which columns each JSON gets and which ones block the release). Language packs go to a different repo:
+**Publish -> Translations release**. The command lines below still work the same.
+
 **Assets folder:** only when you build a new version of the app. Add `--app-assets <folder>` in step 7 and it writes
 the copy of the data that ships inside the app (used on first launch and offline). Images are never put in assets.
 
