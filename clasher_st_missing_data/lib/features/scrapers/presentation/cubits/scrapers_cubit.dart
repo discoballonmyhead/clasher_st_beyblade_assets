@@ -214,6 +214,10 @@ class ScrapersCubit extends Cubit<ScrapersState> {
   }
 
   Future<void> selectHobby(String hobby) async {
+    if (state.codeDirty) {
+      emit(state.copyWith(error: () => 'Save or discard the code changes first'));
+      return;
+    }
     final gens = state.generationsOf(hobby);
     emit(state.copyWith(hobby: () => hobby, generation: () => gens.isEmpty ? null : gens.last, picked: const {}, focused: () => null));
     await loadCode();

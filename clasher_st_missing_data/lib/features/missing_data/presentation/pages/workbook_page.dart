@@ -44,6 +44,7 @@ class _WorkbookPageState extends State<WorkbookPage> {
   final _searchFocus = FocusNode();
 
   StreamSubscription<DataChange>? _changesSub;
+  StreamSubscription<DataChange>? _openedSub;
   bool _askingIds = false;
   bool _checkAgain = false;
 
@@ -111,6 +112,13 @@ class _WorkbookPageState extends State<WorkbookPage> {
           (c) => c == DataChange.structureChanged || c == DataChange.idsChanged,
         )
         .listen((_) => _checkIds());
+    // Another workbook became current (a tab, a hobby). Listened to here, after the sheet cubit (read above) has
+    // reset itself for the same event, so the tab picked below isn't wiped by that reset.
+    _openedSub = sl<DataChangeNotifier>().stream
+        .where((c) => c == DataChange.workbookOpened)
+        .listen((_) {
+          if (mounted) _onWorkbookChanged(context.read<WorkbookCubit>().state);
+        });
     final added = summary?.addedColumns ?? const [];
     if (added.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -162,6 +170,7 @@ class _WorkbookPageState extends State<WorkbookPage> {
   @override
   void dispose() {
     _changesSub?.cancel();
+    _openedSub?.cancel();
     _searchFocus.dispose();
     super.dispose();
   }
@@ -316,9 +325,11 @@ class _WorkbookPageState extends State<WorkbookPage> {
     final visible = [for (final x in summary.sheets) if (x.belongsTo(gen)) x.name];
     final pick = _lastSheet[summary.path] ?? visible.firstOrNull ?? summary.sheets.firstOrNull?.name;
     if (pick != null) context.read<SheetCubit>().selectSheet(pick);
-    if (summary.unsavedEntries > 0) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _offerRecovery(summary));
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (summary.unsavedEntries > 0) await _offerRecovery(summary);
+      await _checkIds(); // each workbook has its own ids
+    });
   }
 
   @override
@@ -336,10 +347,6 @@ class _WorkbookPageState extends State<WorkbookPage> {
               a.focusedId != b.focusedId && b.focusedId != null,
           listener: (context, s) =>
               context.read<RowEditorCubit>().load(s.sheet!, s.focusedId!),
-        ),
-        BlocListener<WorkbookCubit, WorkbookState>(
-          listenWhen: (a, b) => b.summary != null && a.summary?.path != b.summary?.path && a.summary != null,
-          listener: (_, s) => _onWorkbookChanged(s),
         ),
         BlocListener<SheetCubit, SheetState>(
           listenWhen: (a, b) => b.sheet != null && a.sheet != b.sheet,

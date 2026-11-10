@@ -252,4 +252,29 @@ void main() {
         x.id,
     ], containsAll(['65', '72']));
   }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
+
+  test('two workbooks open at once: each engine keeps its own unsaved edits', () async {
+    final tmp = await Directory.systemTemp.createTemp('mdt-multi');
+    final parts = '${tmp.path}/beyblade_parts.xlsx';
+    final products = '${tmp.path}/beyblade_products.xlsx';
+    await File('$toolsDir/samples/beyblade_parts.xlsx').copy(parts);
+    await File('$toolsDir/samples/beyblade_products.xlsx').copy(products);
+
+    await repo.open(parts);
+    final id = (await repo.addRow('Parts_X_Blades', values: {'name': 'Only in parts'})).valueOrNull!;
+    expect((await repo.summary()).valueOrNull!.dirty, isTrue);
+
+    final p = (await repo.open(products)).valueOrNull!;
+    expect(p.path.replaceAll('\\', '/'), endsWith('beyblade_products.xlsx'));
+    expect(p.dirty, isFalse, reason: 'the other workbook has its own engine');
+    expect(engines.paths.length, greaterThanOrEqualTo(2));
+
+    final back = (await repo.open(parts)).valueOrNull!;
+    expect(back.dirty, isTrue, reason: 'switching back keeps the edit in memory, no reload');
+    expect((await repo.row('Parts_X_Blades', id)).valueOrNull!.values['name'], 'Only in parts');
+
+    await repo.close(products);
+    expect(engines.isOpen(products), isFalse);
+    await repo.save();
+  }, skip: hasTools ? false : 'missing_data_tool.py not found next to the app');
 }

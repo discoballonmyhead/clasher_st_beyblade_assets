@@ -198,6 +198,7 @@ class FakeStudioRepository implements StudioRepository {
     userAgent: 'Studio/1.0 (contact: CHANGE_ME)',
     politeness: {'delay': 1.0},
     targets: [
+      ScraperTarget(target: 'parts:Burst:blades', kind: 'parts', generation: 'Burst', hobby: 'Beyblade', key: 'blades'),
       ScraperTarget(target: 'parts:X:blades', kind: 'parts', generation: 'X', hobby: 'Beyblade', key: 'blades', categories: ['Category:Blades']),
       ScraperTarget(target: 'products:X', kind: 'products', generation: 'X', hobby: 'Beyblade'),
       ScraperTarget(target: 'tcg:Original:cards', kind: 'tcg', generation: 'Original', hobby: 'Beyblade TCG', key: 'cards'),
