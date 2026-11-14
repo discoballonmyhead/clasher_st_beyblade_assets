@@ -35,6 +35,10 @@ class FakeRepository implements MissingDataRepository {
   int undoSteps = 0;
   final _log = StreamController<String>.broadcast();
 
+  /// Extra editable columns every row shows (e.g. model3d) and extra picture kinds (e.g. fullBodyImage).
+  List<String> extraFields = const [];
+  List<String> extraImageFields = const [];
+
   /// Columns added through [addColumn] (counted as missing like the others).
   final customColumns = <String>[];
 
@@ -184,10 +188,12 @@ class FakeRepository implements MissingDataRepository {
         'type',
         'mass',
         ...customColumns,
+        ...extraFields,
       ],
       values: rowsData[id]!,
       missing: _missing(id),
       image: null,
+      extraImages: {for (final f in extraImageFields) f: null},
       parentId: rowsData[id]!['parentPartId'] == null
           ? null
           : '${rowsData[id]!['parentPartId']}',
@@ -249,14 +255,22 @@ class FakeRepository implements MissingDataRepository {
   Future<Result<void>> setImage(
     String sheet,
     String id,
-    Uint8List bytes,
-  ) async => const Ok(null);
+    Uint8List bytes, {
+    String? field,
+  }) async {
+    imagesPut.add((id, field));
+    return const Ok(null);
+  }
+
+  /// (row id, picture field) of every setImage call.
+  final imagesPut = <(String, String?)>[];
   @override
   Future<Result<void>> setImageFromUrl(
     String sheet,
     String id,
-    String url,
-  ) async => const Ok(null);
+    String url, {
+    String? field,
+  }) async => const Ok(null);
   @override
   Future<Result<Uint8List?>> parentImage(String sheet, String id) async =>
       const Ok(null);

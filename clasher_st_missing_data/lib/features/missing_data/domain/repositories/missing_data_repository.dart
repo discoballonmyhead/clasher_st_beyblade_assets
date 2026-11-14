@@ -41,8 +41,9 @@ abstract class MissingDataRepository {
     bool derive = true,
   });
   Future<Result<int>> applyProposals(String sheet, List<FillProposal> items);
-  Future<Result<void>> setImage(String sheet, String id, Uint8List bytes);
-  Future<Result<void>> setImageFromUrl(String sheet, String id, String url);
+  /// [field]: which picture (a full-size picture column such as fullBodyImage); null = the main one.
+  Future<Result<void>> setImage(String sheet, String id, Uint8List bytes, {String? field});
+  Future<Result<void>> setImageFromUrl(String sheet, String id, String url, {String? field});
   Future<Result<Uint8List?>> parentImage(String sheet, String id);
   Future<Result<String?>> undo();
   Future<Result<void>> save();

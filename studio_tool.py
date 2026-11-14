@@ -152,7 +152,7 @@ def profiles(data_root=None, only=None):
     books = {w["role"]: Path(w["path"]) for h in ws["hobbies"] for w in h["workbooks"]}
     schema_cols = {S.part_json_prefix(g, k): p["columns"] + list(S.PART_IMAGE_COLS) for g, k, p in S.all_part_targets()}
     for name, cfg in S.SHEETS.items():
-        schema_cols[cfg["json"]] = list(cfg["columns"]) + list(cfg["images"] or [])
+        schema_cols[cfg["json"]] = list(cfg["columns"]) + [c for pair in S.image_pairs(name) for c in pair]
     header_cache = {}
     out = []
     for js, (tab, role, gen) in sorted(sheet_json_names().items(), key=lambda kv: (kv[1][1], kv[1][2] or "", kv[0])):
@@ -169,10 +169,11 @@ def profiles(data_root=None, only=None):
         cols = cols or schema_cols.get(js, [])
         rules = S.column_rules(js)
         req = set(S.app_required(js))
+        pictures = {c for pair in S.image_pairs(tab) for c in pair}  # pictures always go in (as URLs)
         columns = []
         for c in cols:
             r = rules.get(c, {})
-            locked = c in req or c in ID_AND_IMAGE
+            locked = c in req or c in ID_AND_IMAGE or c in pictures
             default = "required" if c in req else "optional" if c in OPTIONAL_DEFAULT else "recommended"
             crit = r.get("criticality") or default
             if c in req:
@@ -188,7 +189,8 @@ def profiles(data_root=None, only=None):
 OPTIONAL_DEFAULT = {"parentPartId", "variantLabel", "updated_at", "deleted", "incompleteData", "integratedRatchet",
                     "twoStat", "parentProductId", "parentCardId", "parentSetId", "linkedPartType",
                     "linkedPartDataID", "illustrator", "legality", "description", "subType", "simpleRatchet",
-                    "requiresSimpleRatchet"}
+                    "requiresSimpleRatchet", S.MODEL_3D, S.BLADER_IDS,
+                    *[c for c in S.STOCK_COMBO_PART_COLUMNS if c != "bitDataID"]}
 
 
 def set_profile(sheet, columns):

@@ -67,7 +67,10 @@ FULL_SIZE, MIN_SIZE, WEBP_QUALITY = 600, 128, 85
 # Columns that are fine to leave empty (bookkeeping, optional links, game-specific extras)
 OPTIONAL = {"parentPartId", "variantLabel", "updated_at", "deleted", "incompleteData", "integratedRatchet",
             "twoStat", "parentProductId", "parentCardId", "parentSetId", "linkedPartType", "linkedPartDataID",
-            "illustrator", "legality", "description", "subType", "productID", "lastKnownCode"}
+            "illustrator", "legality", "description", "subType", "productID", "lastKnownCode",
+            # optional extras: 3D models, who uses a part in the show, the parts a stock combo may not have
+            S.MODEL_3D, S.BLADER_IDS, "bladeDataID", "ratchetDataID", "lockChipDataID", "overBladeDataID",
+            "metalBladeDataID", "mainBladeDataID", "assistBladeDataID"}
 # Fields a variant shares with its parent
 INHERIT = {"name", "type", "spinDir", "attack", "defense", "stamina", "mass", "wbolegality", "system",
            S.SIMPLE_RATCHET, S.REQUIRES_SIMPLE_RATCHET,
@@ -109,6 +112,29 @@ def sheet_info(sheet):
     return None
 
 
+def all_image_cols(sheet):
+    """Every picture column of a tab (main pair + extra pairs such as Bladers' full-body picture)."""
+    return {c for pair in S.image_pairs(sheet) for c in pair}
+
+
+def images_optional(sheet):
+    """Tabs whose pictures are extras: a row without one isn't counted as missing (unless optional is on)."""
+    return bool((S.SHEETS.get(sheet) or {}).get("images_optional"))
+
+
+def image_pair(sheet, field=None):
+    """(full, minified) picture columns for field (the full column's name); the main pair when field is None."""
+    pairs = S.image_pairs(sheet)
+    if not pairs:
+        return None, None
+    if field in (None, "", pairs[0][0]):
+        return pairs[0]
+    for full, mini in pairs:
+        if field in (full, mini):
+            return full, mini
+    raise ValueError(f"{sheet} has no picture column {field!r}")
+
+
 def data_sheets(book):
     return [n for n in book.wb.sheetnames if sheet_info(n)]
 
@@ -120,7 +146,8 @@ def custom_columns(book, sheet):
 
 def expected_fields(book, sheet, include_optional=False):
     idc, img, mini = sheet_info(sheet)
-    cols = [c for c in book.headers(book.wb[sheet]) if c not in (idc, img, mini)]
+    pics = all_image_cols(sheet)
+    cols = [c for c in book.headers(book.wb[sheet]) if c not in (idc, img, mini) and c not in pics]
     optional = OPTIONAL | {c for c, m in custom_columns(book, sheet).items() if m["optional"]}
     # the packaging profile decides when it says something (Studio -> Publish -> Packaging)
     for c, rule in S.column_rules(json_name(sheet) or "").items():
@@ -199,7 +226,7 @@ def analyze(book, sheet, include_optional=False):
         for f in fields:
             if blank(x.get(f)):
                 fields[f].append(x.get(idc))
-    if img:
+    if img and (include_optional or not images_optional(sheet)):
         full, small = image_rows(book, sheet)
         fields[img] = [x.get(idc) for r, x in rows if r not in full]
         fields[mini] = [x.get(idc) for r, x in rows if r not in small]
@@ -209,7 +236,7 @@ def analyze(book, sheet, include_optional=False):
 def row_missing(book, sheet, r, row, include_optional=False):
     idc, img, mini = sheet_info(sheet)
     miss = [f for f in expected_fields(book, sheet, include_optional) if blank(row.get(f))]
-    if img:
+    if img and (include_optional or not images_optional(sheet)):
         full, _ = image_rows(book, sheet)
         if r not in full:
             miss.append(img)
@@ -586,8 +613,9 @@ def normalize_image(data, full=FULL_SIZE, mini=MIN_SIZE):
     return fit(im, full), fit(im, mini)
 
 
-def set_row_image(book, sheet, row_id, data):
-    idc, img, mini = sheet_info(sheet)
+def set_row_image(book, sheet, row_id, data, field=None):
+    idc = sheet_info(sheet)[0]
+    img, mini = image_pair(sheet, field)
     if not img:
         raise ValueError(f"{sheet} has no image columns")
     r = find_row(book, sheet, row_id)
@@ -600,8 +628,8 @@ def set_row_image(book, sheet, row_id, data):
     return r, full, small
 
 
-def current_image(book, sheet, r):
-    idc, img, _ = sheet_info(sheet)
+def current_image(book, sheet, r, field=None):
+    img, _ = image_pair(sheet, field)
     if not img:
         return None
     ws = book.wb[sheet]
@@ -857,7 +885,7 @@ class Engine:
         return {"sheet": sheet, "idColumn": idc, "columns": [
             {"name": c, "custom": c in custom, "optional": c in OPTIONAL or custom.get(c, {}).get("optional", False),
              "inherit": c in INHERIT or custom.get(c, {}).get("inherit", False),
-             "note": custom.get(c, {}).get("note", ""), "image": c in (img, mini), "id": c == idc}
+             "note": custom.get(c, {}).get("note", ""), "image": c in all_image_cols(sheet), "id": c == idc}
             for c in self.book.headers(self.book.wb[sheet])]}
 
     # ---- structure: new columns / rows -----------------------------------------
@@ -979,12 +1007,15 @@ class Engine:
                 "key": secrets.token_hex(5), "deletedAt": stamp, "source": self.source, "sheet": sheet,
                 "rowId": rid, "name": label,
                 "values": json.dumps({k: v for k, v in row.items() if not blank(v)}, default=str)}])[0]
+            # the tab's picture columns -> the cache's (main pair -> image/minifiedImage, a second kind -> *2)
+            slots = {}
+            for k, (full_c, mini_c) in enumerate(S.image_pairs(sheet)[:2]):
+                slots[full_c] = (S.DELETED_IMAGE_COLS[2 * k], "full")
+                slots[mini_c] = (S.DELETED_IMAGE_COLS[2 * k + 1], "min")
             for col, data in snap["pictures"].items():
-                n = names.get(col)
-                target = chdr[S.DELETED_IMAGE_COLS[1]] if n == mini else chdr[S.DELETED_IMAGE_COLS[0]] \
-                    if n == img else None
-                if target:
-                    self.book.put_picture(cache, crow, target, data, "min" if n == mini else "full")
+                slot = slots.get(names.get(col))
+                if slot and chdr.get(slot[0]):
+                    self.book.put_picture(cache, crow, chdr[slot[0]], data, slot[1])
             changes.append(("cacherow", S.DELETED_SHEET, crow, None, None))
             entries.append({"action": "delete_row", "sheet": sheet, "rowId": rid, "note": str(label)[:80]})
             done.append(rid)
@@ -1045,10 +1076,12 @@ class Engine:
                 vals[idc] = numeric_id(old_id) if numeric_id(old_id) is not None else old_id
             r, rid, _ = self.book.write(ws, vals, id_col=idc)
             pics = {}
-            for ccol, col, size in ((S.DELETED_IMAGE_COLS[0], img, "full"), (S.DELETED_IMAGE_COLS[1], mini, "min")):
-                p = cidx.get((cr, chdr.get(ccol)))
-                if p is not None and col:
-                    pics[col] = (p._data(), size)
+            for k, (full_c, mini_c) in enumerate(S.image_pairs(sheet)[:2]):
+                for ccol, col, size in ((S.DELETED_IMAGE_COLS[2 * k], full_c, "full"),
+                                        (S.DELETED_IMAGE_COLS[2 * k + 1], mini_c, "min")):
+                    p = cidx.get((cr, chdr.get(ccol)))
+                    if p is not None and col and col in self.book.headers(ws):
+                        pics[col] = (p._data(), size)
             for col, (data, size) in pics.items():
                 self.book.set_image(ws, r, col, data, size, replace=True)
             self.book.touch(ws, r)
@@ -1420,7 +1453,7 @@ class Engine:
         if c is None or c["opt"] != include_optional:
             ws = self.book.wb[sheet]
             exp = expected_fields(self.book, sheet, include_optional)
-            img = sheet_info(sheet)[1]
+            img = self._counted_image(sheet, include_optional)
             full, _ = image_rows(self.book, sheet)
             rows, missing = {}, {}
             for r, x in self.book.rows(ws):
@@ -1440,18 +1473,25 @@ class Engine:
             c["rows"].pop(r, None)
             c["missing"].pop(r, None)
             return
-        img = sheet_info(sheet)[1]
+        img = self._counted_image(sheet, c["opt"])
         has = img and self.book.has_image(self.book.wb[sheet], r, img)
         c["rows"][r] = x
         c["missing"][r] = [f for f in c["exp"] if blank(x.get(f))] + ([img] if img and not has else [])
+
+    @staticmethod
+    def _counted_image(sheet, include_optional):
+        """The picture column that counts as missing when empty (none for tabs whose pictures are extras)."""
+        img = sheet_info(sheet)[1]
+        return img if img and (include_optional or not images_optional(sheet)) else None
 
     def analyze(self, sheet, include_optional=False):
         c = self._index(sheet, include_optional)
         idc = sheet_info(sheet)[0]
         counts = OrderedDict()
-        for f in c["exp"] + [x for x in sheet_info(sheet)[1:] if x]:
+        counted = self._counted_image(sheet, include_optional)
+        for f in c["exp"] + ([counted, sheet_info(sheet)[2]] if counted else []):
             counts[f] = [c["rows"][r].get(idc) for r, m in c["missing"].items() if f in m]
-        if sheet_info(sheet)[2]:  # minified image
+        if counted and sheet_info(sheet)[2]:  # minified image
             _, small = image_rows(self.book, sheet)
             counts[sheet_info(sheet)[2]] = [x.get(idc) for r, x in c["rows"].items() if r not in small]
         total = len(c["rows"])
@@ -1469,7 +1509,8 @@ class Engine:
                 "code": x.get("code") or x.get("sku") or x.get("cardNumber") or x.get("setCode") or "",
                 "edition": x.get("variantLabel") or x.get("edition") or "",
                 "updatedAt": str(x.get("updated_at") or ""), "missing": c["missing"][r],
-                "hasImage": bool(img) and img not in c["missing"][r]}
+                "hasImage": bool(img) and (img not in c["missing"][r] if self._counted_image(sheet, c["opt"])
+                                           else self.book.has_image(self.book.wb[sheet], r, img))}
 
     def rows(self, sheet, field=None, query="", sort="sheet", include_optional=False, offset=0, limit=None,
              generation=None):
@@ -1507,7 +1548,11 @@ class Engine:
                 "customFields": sorted(custom_columns(self.book, sheet)),
                 "values": {k: (v if isinstance(v, (int, float, str, bool)) or v is None else str(v)) for k, v in x.items()},
                 "missing": self._cache[sheet]["missing"].get(r, []),
-                "image": base64.b64encode(data).decode() if data else None}
+                "image": base64.b64encode(data).decode() if data else None,
+                # more pictures of this row (Bladers' full-body picture): [{field, image}]
+                "extraImages": [{"field": full, "image": (lambda b: base64.b64encode(b).decode() if b else None)(
+                    current_image(self.book, sheet, r, full) if with_image else None)}
+                    for full, _ in S.image_pairs(sheet)[1:]]}
 
     # ---- edits (in memory, undoable) ------------------------------------------
     def _push(self, label, changes):
@@ -1571,8 +1616,9 @@ class Engine:
         return {"filled": len([c for c in changes if c[3] != hdr.get("updated_at")]), "rows": len(rows)}
 
     @_journaled
-    def set_image(self, sheet, row_id, data):
-        idc, img, mini = sheet_info(sheet)
+    def set_image(self, sheet, row_id, data, field=None):
+        idc = sheet_info(sheet)[0]
+        img, mini = image_pair(sheet, field)
         r = find_row(self.book, sheet, row_id)
         ws = self.book.wb[sheet]
         hdr = self.book.headers(ws)
@@ -1581,7 +1627,7 @@ class Engine:
         if hdr.get("updated_at"):
             old.append(("cell", sheet, r, hdr["updated_at"], ws.cell(r, hdr["updated_at"]).value))
         had = any(o[4] for o in old if o[0] == "image")
-        set_row_image(self.book, sheet, row_id, data)
+        set_row_image(self.book, sheet, row_id, data, img)
         self._logged(f"image {sheet} #{row_id}", old, [{"action": "image", "sheet": sheet, "rowId": row_id,
                                                          "field": img, "oldValue": "image" if had else None,
                                                          "newValue": f"image ({len(data) // 1024} KB source)"}])
@@ -1702,7 +1748,8 @@ def serve(stdin=None, stdout=None):
                                              a.get("derive", True)),
         "apply": lambda a: eng.apply(a["sheet"], a["items"]),
         "image": lambda a: eng.set_image(a["sheet"], a["id"], base64.b64decode(a["base64"]) if a.get("base64")
-                                         else fetch_url(a["url"]) if a.get("url") else open(a["path"], "rb").read()),
+                                         else fetch_url(a["url"]) if a.get("url") else open(a["path"], "rb").read(),
+                                         a.get("field")),
         "parentImage": lambda a: {"image": eng.parent_image(a["sheet"], a["id"])},
         "undo": lambda a: eng.undo(),
         "save": lambda a: eng.save(),

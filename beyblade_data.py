@@ -137,7 +137,10 @@ def drop_deleted(rows):
 
 # Id columns are text in the app (requiredString / String? fields); Excel hands back 65 or 65.0 for them.
 ID_FIELDS = {"dataID", "parentPartId", "productID", "parentProductId", "partDataID", "setID", "parentSetId",
-             "parentCardId", "linkedPartDataID", "productId"}
+             "parentCardId", "linkedPartDataID", "productId", "stockComboID", "bladerID",
+             *S.STOCK_COMBO_PART_COLUMNS}
+# Columns holding several ids ("BL1, BL2"): a JSON list of text ids in the package (empty -> null)
+ID_LIST_FIELDS = {S.BLADER_IDS}
 
 
 def flags_01(row):
@@ -165,6 +168,94 @@ def text_ids(row):
     return row
 
 
+def split_ids(value):
+    """'BL1, BL2' / 'BL1;BL2' / 3.0 -> ['BL1', 'BL2'] / ['3'] (order kept, duplicates dropped)."""
+    if value is None:
+        return []
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    out = []
+    for part in re.split(r"[,;\n]+", str(value)):
+        t = part.strip()
+        if t.endswith(".0") and t[:-2].isdigit():
+            t = t[:-2]
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def id_lists(row):
+    for k in ID_LIST_FIELDS & row.keys():
+        row[k] = split_ids(row[k]) or None
+    return row
+
+
+def _is_link(v):
+    return isinstance(v, str) and re.match(r"^https?://", v.strip(), re.I) is not None
+
+
+def package_models(rows, prefix, id_field, book_dir, out_dir, base_url, log, title=None):
+    """Turns the optional model3d column into model3dUrl + model3dHash. A link (https://...) is kept as it is;
+    a .glb file (path relative to the workbook's folder, or absolute) is copied to data/models/<prefix>-<id>.glb
+    and served from the CDN like the pictures. -> number of rows with a model. Only for tabs that have the column."""
+    if not any(S.MODEL_3D in r for r in rows):
+        return 0
+    models_dir = Path(out_dir) / "models"
+    keep, n, problems = set(), 0, []
+    for r in rows:
+        v = r.pop(S.MODEL_3D, None)
+        r["model3dUrl"] = r["model3dHash"] = None
+        if v is None or (isinstance(v, str) and not v.strip()):
+            continue
+        v = str(v).strip()
+        rid = r.get(id_field)
+        if _is_link(v):
+            if v.lower().startswith("http://"):
+                problems.append(f"{id_field} {rid}: http link (the app needs https) - {v}")
+                continue
+            r["model3dUrl"] = v
+            n += 1
+            continue
+        src = Path(v).expanduser()
+        if not src.is_absolute() and book_dir:
+            src = Path(book_dir) / src
+        if src.suffix.lower() not in S.MODEL_3D_EXTS:
+            problems.append(f"{id_field} {rid}: {src.name} isn't a .glb file (export the model as glTF binary)")
+            continue
+        if not src.is_file():
+            problems.append(f"{id_field} {rid}: file not found: {src}")
+            continue
+        size = src.stat().st_size
+        if size > S.MODEL_3D_MAX_BYTES:
+            problems.append(f"{id_field} {rid}: {src.name} is {size / 1048576:.1f} MB - the CDN serves files up to "
+                            f"{S.MODEL_3D_MAX_BYTES // 1048576} MB (compress it, e.g. with Draco or gltf-transform)")
+            continue
+        data = src.read_bytes()
+        if data[:4] != b"glTF":
+            problems.append(f"{id_field} {rid}: {src.name} isn't a valid .glb (it doesn't start with 'glTF')")
+            continue
+        safe_id = re.sub(r"[^A-Za-z0-9_.]+", "_", str(rid))
+        name = f"{prefix}-{safe_id}.glb"
+        models_dir.mkdir(parents=True, exist_ok=True)
+        dest = models_dir / name
+        if not dest.exists() or dest.read_bytes() != data:
+            dest.write_bytes(data)
+        keep.add(name)
+        r["model3dUrl"] = f"{base_url}models/{name}"
+        r["model3dHash"] = hashlib.sha1(data).hexdigest()[:12]
+        n += 1
+    if models_dir.is_dir():  # models of ids this tab no longer has
+        own = re.compile(rf"{re.escape(prefix)}-[^-]+\.glb")
+        for f in models_dir.iterdir():
+            if own.fullmatch(f.name) and f.name not in keep:
+                f.unlink()
+    for msg in problems[:20]:
+        log(f"  WARNING {title or prefix}: 3D model skipped - {msg}")
+    if len(problems) > 20:
+        log(f"  ... and {len(problems) - 20} more 3D model problem(s)")
+    return n
+
+
 def app_part_type(value):
     """ProductContents.partType as the app looks it up: the JSON sheet key, e.g. 'Parts_X_Blades' -> 'blades',
     'Parts_Burst_Layers' -> 'burstLayers', 'Accessories' -> 'accessories'. Already-short keys pass through."""
@@ -178,17 +269,22 @@ def app_part_type(value):
 
 
 def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, base_url,
-                        images_by_generation, manifest, log, images_by_hobby=None):
+                        images_by_generation, manifest, log, images_by_hobby=None, extra_images=(),
+                        image_packs=True, book_dir=None):
+    """extra_images: more (full, minified) picture pairs (Bladers' full-body picture). They're written as
+    <full>Url / <full>Hash / <minified>Url / <minified>Hash and files <prefix>-<id>-<full>[-min].webp, and aren't
+    put in the image packs (the app loads them from the CDN). image_packs=False keeps the main pair out too."""
     headers = [str(c.value) if c.value else "" for c in ws[1]]
     missing = [f for f in (id_field, img_field, min_field) if f not in headers]
     if missing:
         log(f"  SKIP {ws.title}: missing columns {missing}")
         return
-    img_col, min_col = headers.index(img_field) + 1, headers.index(min_field) + 1
+    pairs = [(img_field, min_field, "")] + [(f, m, f"-{f}") for f, m in extra_images if f in headers and m in headers]
     numbered = read_sheet_rows_numbered(ws)  # images are matched by the real sheet row, gaps or not
     raw_rows = [row for _, row in numbered]
     row_no = [r for r, _ in numbered]
-    images_by_row = extract_embedded_images(ws, img_col, min_col)
+    images_by_row = {tag: extract_embedded_images(ws, headers.index(f) + 1, headers.index(m) + 1)
+                     for f, m, tag in pairs}
     out_images_dir = out_dir / "images"
     out_images_dir.mkdir(parents=True, exist_ok=True)
 
@@ -196,10 +292,11 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
     jobs = {}
     for i, row in enumerate(raw_rows):
         data_id = row.get(id_field)
-        for kind, suffix in (("full", ""), ("min", "-min")):
-            data = images_by_row.get(row_no[i], {}).get(kind)
-            if data_id not in (None, "") and data and not is_deleted(row):
-                jobs[(i, kind)] = (f"{prefix}-{data_id}{suffix}.webp", data)
+        for _, _, tag in pairs:
+            for kind, suffix in (("full", ""), ("min", "-min")):
+                data = images_by_row[tag].get(row_no[i], {}).get(kind)
+                if data_id not in (None, "") and data and not is_deleted(row):
+                    jobs[(i, tag + kind)] = (f"{prefix}-{data_id}{tag}{suffix}.webp", data)
 
     def encode(item):
         key, (name, data) = item
@@ -213,7 +310,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             encoded = dict(ex.map(encode, jobs.items()))
     # pictures of ids this tab no longer has (deleted or renumbered rows) would linger in the image packs
     keep = {name for name, _ in jobs.values()}
-    own = re.compile(rf"{re.escape(prefix)}-[^-]+(-min)?\.webp")
+    own = re.compile(rf"{re.escape(prefix)}-[^-]+(-[A-Za-z]+Image)?(-min)?\.webp")
     stale = [f for f in out_images_dir.iterdir() if own.fullmatch(f.name) and f.name not in keep]
     for f in stale:
         f.unlink()
@@ -233,10 +330,17 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         if str(data_id) in seen_ids:
             log(f"  WARNING {ws.title}: duplicate {id_field} {data_id!r} (row {row_no[i]})")
         seen_ids.add(str(data_id))
-        row.pop(img_field, None)
-        row.pop(min_field, None)
+        for f, m, _ in pairs:
+            row.pop(f, None)
+            row.pop(m, None)
         text_ids(row)
+        id_lists(row)
         flags_01(row)
+        for f, m, tag in pairs[1:]:
+            for col, kind in ((f, "full"), (m, "min")):
+                hit = encoded.get((i, tag + kind))
+                row[f"{col}Url"] = f"{base_url}images/{hit[0]}" if hit else None
+                row[f"{col}Hash"] = hit[1] if hit else None
 
         if (i, "full") in encoded:
             name, digest = encoded[(i, "full")]
@@ -244,8 +348,9 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             row["imageHash"] = digest
             with_image += 1
             gen = row.get("hobbyGeneration") or "unknown"
-            images_by_generation.setdefault(gen, {}).setdefault(prefix, []).append(str(data_id))
-            if images_by_hobby is not None:
+            if image_packs:
+                images_by_generation.setdefault(gen, {}).setdefault(prefix, []).append(str(data_id))
+            if images_by_hobby is not None and image_packs:
                 hobby = row.get("hobbyName") or "unknown"
                 images_by_hobby.setdefault(hobby, {}).setdefault(gen, {}).setdefault(prefix, []).append(str(data_id))
         else:
@@ -262,13 +367,20 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
             row["minifiedImageHash"] = None
         rows.append(row)
 
+    with_model = package_models(rows, prefix, id_field, book_dir, out_dir, base_url, log, ws.title)
     apply_profile(prefix, rows, log)
     _dump(out_dir / f"{prefix}.json", rows)
     check_required(prefix, rows, log)
     manifest["sheets"][prefix] = {"rowCount": len(rows), "withImage": with_image, "withoutImage": without_image}
+    if with_model:
+        manifest["sheets"][prefix]["with3dModel"] = with_model
+        extra_note = f", {with_model} with a 3D model"
+    else:
+        extra_note = ""
     extra = f", {no_id} rows without {id_field} skipped" if no_id else ""
     extra += f", {n_deleted} deleted rows left out" if n_deleted else ""
-    log(f"  {ws.title} -> {prefix}.json: {len(rows)} rows ({with_image} with image, {without_image} without{extra})")
+    log(f"  {ws.title} -> {prefix}.json: {len(rows)} rows ({with_image} with image, {without_image} without"
+        f"{extra_note}{extra})")
 
 
 # ── what changed: vs the previous package, and what the missing data tool did ──
@@ -376,16 +488,23 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
             if part:
                 gen, key, _ = part
                 process_image_sheet(ws, S.part_json_prefix(gen, key), "dataID", *S.PART_IMAGE_COLS,
-                                    out_dir, base_url, images_by_generation, manifest, log, images_by_hobby)
+                                    out_dir, base_url, images_by_generation, manifest, log, images_by_hobby,
+                                    book_dir=path.parent)
             elif name in S.SHEETS and S.SHEETS[name]["images"]:
                 cfg = S.SHEETS[name]
                 process_image_sheet(ws, cfg["json"], cfg["id"], *cfg["images"],
-                                    out_dir, base_url, images_by_generation, manifest, log, images_by_hobby)
+                                    out_dir, base_url, images_by_generation, manifest, log, images_by_hobby,
+                                    extra_images=cfg.get("extra_images", ()),
+                                    image_packs=cfg.get("image_packs", True), book_dir=path.parent)
             elif name in NO_IMAGE_SHEETS:
                 rows, _ = drop_deleted(read_sheet_rows(ws))
                 for r in rows:
                     text_ids(r)
+                    id_lists(r)
                     flags_01(r)
+                cfg = S.SHEETS[name]
+                package_models(rows, NO_IMAGE_SHEETS[name], cfg.get("id") or "row", path.parent, out_dir,
+                               base_url, log, name)
                 if NO_IMAGE_SHEETS[name] == "productContents":  # the app resolves contents by JSON sheet key
                     for r in rows:
                         r["partType"] = app_part_type(r.get("partType"))

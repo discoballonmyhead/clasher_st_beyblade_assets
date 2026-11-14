@@ -13,7 +13,7 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `beyblade_data.py` | packager: workbooks → `data/` (PNG in the sheet → WebP) |
 | `build_release.py` | release builder: `data/` → `catalog.zip` + manifest, image packs and data packs per hobby/generation |
 | `catalog_check.py` | the release gate: checks `data/` against what the app accepts (required sheets and fields, duplicate ids, ProductContents keys) |
-| `flutter_integration/` | drop-in changes for the clasher_st app: real parts picker for ban/approve lists, lists page, optional tournament stadium, card game (TCG) – changed files + `patches/` + SQL, see its README |
+| `beyblade_feature/` | the app's beyblade feature (`lib/features/beyblade`), kept here in step with the data: reads 3D models, stock combos and bladers – see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
 | `translation_tool.py` | translations for any Flutter app: reads its TrTokens / default English / language registry (never writes the project), keeps the sheet in step, checks placeholders, exports the constants and builds `lang_<code>.zip` packs. Used by Clasher Studio's Translations section |
@@ -52,8 +52,20 @@ by hand in the missing data tool.
 * A recolor copies the value from its base part (auto-fill and "Duplicate as variant").
 * The packager writes 1 / 0, and blank stays blank (the app reads blank as 0).
 * In the app, a blade (single-blade build) or assist blade (lock chip build) with `requiresSimpleRatchet = 1` is only
-  offered simple ratchets: in the builder, its ratchet picker and the randomizer. See
-  `flutter_integration/README.md`.
+  offered simple ratchets: in the builder, its ratchet picker and the randomizer.
+
+**3D models, stock combos and bladers (all optional):**
+* `model3d` on every part tab and on `StockCombos`: a `.glb` file (path relative to the workbook's folder, e.g.
+  `models/dran-sword.glb`) or an https link. The packager copies files to `data/models/<sheet>-<id>.glb` (served from the
+  CDN like the pictures, max 20 MB each) and writes `model3dUrl` + `model3dHash`. Pick the file in Clasher Studio's row
+  editor (the cube button next to `model3d`).
+* `StockCombos` (products workbook): the combos that come out of each box, one row per bey. The part columns are the
+  app's `BeybladeLoadout` (`bladeDataID`, or `lockChipDataID` + `mainBladeDataID` / `overBladeDataID` +
+  `metalBladeDataID` + `assistBladeDataID`, plus `ratchetDataID` and `bitDataID`). The release check stops a combo the app
+  couldn't build, and warns when a combo part isn't in that product's `ProductContents`.
+* `Bladers` (parts workbook): the characters who use parts in the show, with two optional pictures (portrait =
+  `image`, and `fullBodyImage`). Blades and lock chips list them in `bladerIDs` (`BL1, BL4`); the package has a list.
+  Blader pictures aren't counted as missing and aren't put in the image packs (the app loads them from the CDN).
 
 ## Start a store
 ```bash
