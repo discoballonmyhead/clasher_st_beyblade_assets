@@ -1007,12 +1007,15 @@ class Engine:
                 "key": secrets.token_hex(5), "deletedAt": stamp, "source": self.source, "sheet": sheet,
                 "rowId": rid, "name": label,
                 "values": json.dumps({k: v for k, v in row.items() if not blank(v)}, default=str)}])[0]
+            # the tab's picture columns -> the cache's (main pair -> image/minifiedImage, a second kind -> *2)
+            slots = {}
+            for k, (full_c, mini_c) in enumerate(S.image_pairs(sheet)[:2]):
+                slots[full_c] = (S.DELETED_IMAGE_COLS[2 * k], "full")
+                slots[mini_c] = (S.DELETED_IMAGE_COLS[2 * k + 1], "min")
             for col, data in snap["pictures"].items():
-                n = names.get(col)
-                target = chdr[S.DELETED_IMAGE_COLS[1]] if n == mini else chdr[S.DELETED_IMAGE_COLS[0]] \
-                    if n == img else None
-                if target:
-                    self.book.put_picture(cache, crow, target, data, "min" if n == mini else "full")
+                slot = slots.get(names.get(col))
+                if slot and chdr.get(slot[0]):
+                    self.book.put_picture(cache, crow, chdr[slot[0]], data, slot[1])
             changes.append(("cacherow", S.DELETED_SHEET, crow, None, None))
             entries.append({"action": "delete_row", "sheet": sheet, "rowId": rid, "note": str(label)[:80]})
             done.append(rid)
@@ -1073,10 +1076,12 @@ class Engine:
                 vals[idc] = numeric_id(old_id) if numeric_id(old_id) is not None else old_id
             r, rid, _ = self.book.write(ws, vals, id_col=idc)
             pics = {}
-            for ccol, col, size in ((S.DELETED_IMAGE_COLS[0], img, "full"), (S.DELETED_IMAGE_COLS[1], mini, "min")):
-                p = cidx.get((cr, chdr.get(ccol)))
-                if p is not None and col:
-                    pics[col] = (p._data(), size)
+            for k, (full_c, mini_c) in enumerate(S.image_pairs(sheet)[:2]):
+                for ccol, col, size in ((S.DELETED_IMAGE_COLS[2 * k], full_c, "full"),
+                                        (S.DELETED_IMAGE_COLS[2 * k + 1], mini_c, "min")):
+                    p = cidx.get((cr, chdr.get(ccol)))
+                    if p is not None and col and col in self.book.headers(ws):
+                        pics[col] = (p._data(), size)
             for col, (data, size) in pics.items():
                 self.book.set_image(ws, r, col, data, size, replace=True)
             self.book.touch(ws, r)

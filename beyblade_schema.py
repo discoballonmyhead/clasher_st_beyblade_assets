@@ -38,7 +38,7 @@ EDIT_LOG_COLUMNS = ["at", "source", "action", "sheet", "rowId", "field", "oldVal
 # _deleted  rows deleted with the tool (values as JSON + their pictures), until restored or emptied
 DELETED_SHEET = "_deleted"
 DELETED_COLUMNS = ["key", "deletedAt", "source", "sheet", "rowId", "name", "values"]
-DELETED_IMAGE_COLS = ("image", "minifiedImage")
+DELETED_IMAGE_COLS = ("image", "minifiedImage", "image2", "minifiedImage2")  # main pair + a second kind (Bladers)
 CUSTOM_COLUMNS_SHEET = "_columns"
 CUSTOM_COLUMNS_COLUMNS = ["sheet", "column", "optional", "inherit", "note", "addedAt", "source"]
 # The card game is its own hobby in the app (separate catalog, separate image/data packs),
