@@ -166,6 +166,9 @@ abstract class BeybladePart extends Equatable {
     this.imageHash,
     this.minifiedImageUrl,
     this.minifiedImageHash,
+    this.model3dUrl,
+    this.model3dHash,
+    this.bladerIds = const [],
     required this.mass,
     required this.legality,
     required this.isIncomplete,
@@ -210,6 +213,18 @@ abstract class BeybladePart extends Equatable {
   final String? minifiedImageUrl;
   final String? minifiedImageHash;
 
+  /// Optional 3D model of the part: an https URL to a .glb file (served from the CDN like the images, or any
+  /// https link the data team entered). Null when there's no model. [model3dHash] changes when the file
+  /// changes, for cache decisions -- null for an external link.
+  final String? model3dUrl;
+  final String? model3dHash;
+  bool get has3dModel => model3dUrl != null;
+
+  /// The bladers (characters) who use this part in the show, as ids into the bladers sheet (see [Blader]).
+  /// Mostly blades and lock chips; empty when nobody is linked. Resolve them with
+  /// BeybladeDataRepo.getBladersForPart.
+  final List<String> bladerIds;
+
   final double mass;
   final WboLegality legality;
 
@@ -234,6 +249,9 @@ abstract class BeybladePart extends Equatable {
         imageHash,
         minifiedImageUrl,
         minifiedImageHash,
+        model3dUrl,
+        model3dHash,
+        bladerIds,
         mass,
         legality,
         isIncomplete,
@@ -256,6 +274,9 @@ class Blade extends BeybladePart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -303,6 +324,9 @@ class Ratchet extends BeybladePart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -343,6 +367,9 @@ class Bit extends BeybladePart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -388,6 +415,9 @@ class LockChip extends BeybladePart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -419,6 +449,9 @@ abstract class _TypedStatPart extends BeybladePart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -453,6 +486,9 @@ class OverBlade extends _TypedStatPart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -481,6 +517,9 @@ class MetalBlade extends _TypedStatPart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -511,6 +550,9 @@ class MainBlade extends _TypedStatPart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -541,6 +583,9 @@ class AssistBlade extends _TypedStatPart {
     super.imageHash,
     super.minifiedImageUrl,
     super.minifiedImageHash,
+    super.model3dUrl,
+    super.model3dHash,
+    super.bladerIds,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -1036,6 +1081,134 @@ class ProductContent extends Equatable {
 
   @override
   List<Object?> get props => [productId, partType, partDataId, quantity];
+}
+
+// ── STOCK COMBO ───────────────────────────────────────────────────────
+/// A combo exactly as it comes out of the box: one row per bey in a product (a set with two beys has two).
+/// The parts are a [BeybladeLoadout], so a stock combo resolves, saves and shares like any user build
+/// (ResolveBeybladeUseCase, BeybladeLoadout.toShareCode). Sheet `stockCombos`.
+class StockCombo extends Equatable {
+  const StockCombo({
+    required this.stockComboId,
+    required this.productId,
+    required this.name,
+    required this.loadout,
+    this.hobbyName,
+    this.hobbyGeneration,
+    this.model3dUrl,
+    this.model3dHash,
+    this.description,
+    this.isIncomplete = false,
+  });
+
+  final String stockComboId;
+  final String productId;
+
+  /// e.g. "Dran Sword 3-60F".
+  final String name;
+  final BeybladeLoadout loadout;
+  final String? hobbyName;
+  final String? hobbyGeneration;
+
+  /// Optional 3D model of the assembled combo (.glb over https), like [BeybladePart.model3dUrl].
+  final String? model3dUrl;
+  final String? model3dHash;
+  bool get has3dModel => model3dUrl != null;
+  final String? description;
+  final bool isIncomplete;
+
+  /// (part sheet key, dataId) of every part in the combo, top to bottom.
+  List<(String, String)> get partRefs => [
+        if (loadout.bladeDataId != null) ('blades', loadout.bladeDataId!),
+        if (loadout.lockChipDataId != null) ('lockChips', loadout.lockChipDataId!),
+        if (loadout.overBladeDataId != null) ('overBlades', loadout.overBladeDataId!),
+        if (loadout.metalBladeDataId != null) ('metalBlades', loadout.metalBladeDataId!),
+        if (loadout.mainBladeDataId != null) ('mainBlades', loadout.mainBladeDataId!),
+        if (loadout.assistBladeDataId != null) ('assistBlades', loadout.assistBladeDataId!),
+        if (loadout.ratchetDataId != null) ('ratchets', loadout.ratchetDataId!),
+        ('bits', loadout.bitDataId),
+      ];
+
+  /// True when the part [dataId] of sheet [partTypeKey] is in this combo.
+  bool usesPart(String partTypeKey, String dataId) =>
+      partRefs.any((r) => r.$1 == partTypeKey && r.$2 == dataId);
+
+  @override
+  List<Object?> get props => [
+        stockComboId,
+        productId,
+        name,
+        loadout,
+        hobbyName,
+        hobbyGeneration,
+        model3dUrl,
+        model3dHash,
+        description,
+        isIncomplete,
+      ];
+}
+
+// ── BLADER ────────────────────────────────────────────────────────────
+/// A character who uses parts in the show. Parts point at bladers with [BeybladePart.bladerIds]. Two
+/// optional pictures, each with a smaller copy for lists: a portrait ([imageUrl]) and a full-body picture
+/// ([fullBodyImageUrl]). URLs are https (CDN); the hashes change when a picture changes. Sheet `bladers`.
+class Blader extends Equatable {
+  const Blader({
+    required this.bladerId,
+    required this.name,
+    this.hobbyName,
+    this.hobbyGeneration,
+    this.description,
+    this.imageUrl,
+    this.imageHash,
+    this.minifiedImageUrl,
+    this.minifiedImageHash,
+    this.fullBodyImageUrl,
+    this.fullBodyImageHash,
+    this.minifiedFullBodyImageUrl,
+    this.minifiedFullBodyImageHash,
+    this.isIncomplete = false,
+  });
+
+  final String bladerId;
+  final String name;
+  final String? hobbyName;
+  final String? hobbyGeneration;
+  final String? description;
+
+  /// Portrait.
+  final String? imageUrl;
+  final String? imageHash;
+  final String? minifiedImageUrl;
+  final String? minifiedImageHash;
+
+  /// Full-body picture.
+  final String? fullBodyImageUrl;
+  final String? fullBodyImageHash;
+  final String? minifiedFullBodyImageUrl;
+  final String? minifiedFullBodyImageHash;
+  final bool isIncomplete;
+
+  /// Best picture for a small avatar: the small portrait, then the portrait, then the full body.
+  String? get avatarUrl => minifiedImageUrl ?? imageUrl ?? minifiedFullBodyImageUrl ?? fullBodyImageUrl;
+
+  @override
+  List<Object?> get props => [
+        bladerId,
+        name,
+        hobbyName,
+        hobbyGeneration,
+        description,
+        imageUrl,
+        imageHash,
+        minifiedImageUrl,
+        minifiedImageHash,
+        fullBodyImageUrl,
+        fullBodyImageHash,
+        minifiedFullBodyImageUrl,
+        minifiedFullBodyImageHash,
+        isIncomplete,
+      ];
 }
 
 // ── ACCESSORY ─────────────────────────────────────────────────────────

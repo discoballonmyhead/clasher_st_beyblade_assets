@@ -2,6 +2,7 @@ import 'dart:developer' as dev;
 import 'package:clasher_st/core/constants/app_constants.dart';
 import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/core/utils/sheet_row_parsing.dart';
+import 'package:clasher_st/features/beyblade/data/isolates/parsed_results.dart';
 import 'package:clasher_st/features/beyblade/data/models/models.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:hive_ce/hive.dart';
@@ -140,6 +141,17 @@ class BeybladeDataLocalDatasourceImpl implements BeybladeDataLocalDatasource {
           rethrow;
         }
       }));
+
+      // Stock combos and bladers ship in the bundle when the catalog has them; an app bundled before they
+      // existed simply has none.
+      for (final sheet in kBeybladeExtraSheets) {
+        try {
+          final text = await rootBundle.loadString('$assetBasePath/$sheet.json');
+          sheetResults.add(MapEntry(sheet, text));
+        } catch (_) {
+          dev.log('No bundled $sheet.json (optional)', name: _logName);
+        }
+      }
 
       dev.log('Loading manifest.json...', name: _logName);
       final manifestJson =

@@ -13,6 +13,19 @@ import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 // and extracted the actual files, so these models parse packaged JSON,
 // not spreadsheet cells directly.
 
+/// A list of ids from the packaged JSON: a list (["BL1", "BL2"], what the packager writes) or, for hand-made
+/// data, a comma/semicolon separated string ("BL1, BL2"). Blank -> empty.
+List<String> parseIdList(dynamic raw) {
+  if (raw == null) return const [];
+  final items = raw is List ? raw : '$raw'.split(RegExp(r'[,;\n]'));
+  final out = <String>[];
+  for (final item in items) {
+    final s = nullableString(item);
+    if (s != null && !out.contains(s)) out.add(s);
+  }
+  return List.unmodifiable(out);
+}
+
 /// Parses the fields every part row shares (the identity/variant/
 /// manufacturer/hobby columns plus both image pairs) -- composed into
 /// every part model below rather than duplicated eight times. Mirrors
@@ -32,6 +45,9 @@ class _SharedPartFieldsModel {
         imageHash = nullableString(ciGet(row, 'imageHash')),
         minifiedImageUrl = nullableString(ciGet(row, 'minifiedImageUrl')),
         minifiedImageHash = nullableString(ciGet(row, 'minifiedImageHash')),
+        model3dUrl = nullableString(ciGet(row, 'model3dUrl')),
+        model3dHash = nullableString(ciGet(row, 'model3dHash')),
+        bladerIds = parseIdList(ciGet(row, 'bladerIDs')),
         mass = parseDouble(ciGet(row, 'mass')) ?? 0,
         legalityRaw = requiredString(row, 'wbolegality'),
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
@@ -49,6 +65,9 @@ class _SharedPartFieldsModel {
   final String? imageHash;
   final String? minifiedImageUrl;
   final String? minifiedImageHash;
+  final String? model3dUrl;
+  final String? model3dHash;
+  final List<String> bladerIds;
   final double mass;
   final String legalityRaw;
   final bool isIncomplete;
@@ -87,6 +106,9 @@ class BladeModel {
         imageHash: _shared.imageHash,
         minifiedImageUrl: _shared.minifiedImageUrl,
         minifiedImageHash: _shared.minifiedImageHash,
+        model3dUrl: _shared.model3dUrl,
+        model3dHash: _shared.model3dHash,
+        bladerIds: _shared.bladerIds,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -132,6 +154,9 @@ class RatchetModel {
         imageHash: _shared.imageHash,
         minifiedImageUrl: _shared.minifiedImageUrl,
         minifiedImageHash: _shared.minifiedImageHash,
+        model3dUrl: _shared.model3dUrl,
+        model3dHash: _shared.model3dHash,
+        bladerIds: _shared.bladerIds,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -181,6 +206,9 @@ class BitModel {
         imageHash: _shared.imageHash,
         minifiedImageUrl: _shared.minifiedImageUrl,
         minifiedImageHash: _shared.minifiedImageHash,
+        model3dUrl: _shared.model3dUrl,
+        model3dHash: _shared.model3dHash,
+        bladerIds: _shared.bladerIds,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -219,6 +247,9 @@ class LockChipModel {
         imageHash: _shared.imageHash,
         minifiedImageUrl: _shared.minifiedImageUrl,
         minifiedImageHash: _shared.minifiedImageHash,
+        model3dUrl: _shared.model3dUrl,
+        model3dHash: _shared.model3dHash,
+        bladerIds: _shared.bladerIds,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -268,6 +299,9 @@ class OverBladeModel {
         imageHash: _p.shared.imageHash,
         minifiedImageUrl: _p.shared.minifiedImageUrl,
         minifiedImageHash: _p.shared.minifiedImageHash,
+        model3dUrl: _p.shared.model3dUrl,
+        model3dHash: _p.shared.model3dHash,
+        bladerIds: _p.shared.bladerIds,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -297,6 +331,9 @@ class MetalBladeModel {
         imageHash: _p.shared.imageHash,
         minifiedImageUrl: _p.shared.minifiedImageUrl,
         minifiedImageHash: _p.shared.minifiedImageHash,
+        model3dUrl: _p.shared.model3dUrl,
+        model3dHash: _p.shared.model3dHash,
+        bladerIds: _p.shared.bladerIds,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -326,6 +363,9 @@ class MainBladeModel {
         imageHash: _p.shared.imageHash,
         minifiedImageUrl: _p.shared.minifiedImageUrl,
         minifiedImageHash: _p.shared.minifiedImageHash,
+        model3dUrl: _p.shared.model3dUrl,
+        model3dHash: _p.shared.model3dHash,
+        bladerIds: _p.shared.bladerIds,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -357,6 +397,9 @@ class AssistBladeModel {
         imageHash: _p.shared.imageHash,
         minifiedImageUrl: _p.shared.minifiedImageUrl,
         minifiedImageHash: _p.shared.minifiedImageHash,
+        model3dUrl: _p.shared.model3dUrl,
+        model3dHash: _p.shared.model3dHash,
+        bladerIds: _p.shared.bladerIds,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -436,6 +479,104 @@ class ProductContentModel {
         partType: partType,
         partDataId: partDataId,
         quantity: quantity,
+      );
+}
+
+// ── STOCK COMBO MODEL ───────────────────────────────────────────
+/// One `stockCombos` row: the combo a product ships with. The part columns mirror BeybladeLoadout
+/// (bladeDataID or lockChipDataID + core + assistBladeDataID, ratchetDataID, bitDataID).
+class StockComboModel {
+  StockComboModel.fromSheetJson(Map<String, dynamic> row)
+      : stockComboId = requiredString(row, 'stockComboID'),
+        productId = requiredString(row, 'productID'),
+        name = requiredString(row, 'name'),
+        hobbyName = nullableString(ciGet(row, 'hobbyName')),
+        hobbyGeneration = nullableString(ciGet(row, 'hobbyGeneration')),
+        loadout = BeybladeLoadout(
+          bladeDataId: nullableString(ciGet(row, 'bladeDataID')),
+          ratchetDataId: nullableString(ciGet(row, 'ratchetDataID')),
+          bitDataId: requiredString(row, 'bitDataID'),
+          lockChipDataId: nullableString(ciGet(row, 'lockChipDataID')),
+          overBladeDataId: nullableString(ciGet(row, 'overBladeDataID')),
+          metalBladeDataId: nullableString(ciGet(row, 'metalBladeDataID')),
+          mainBladeDataId: nullableString(ciGet(row, 'mainBladeDataID')),
+          assistBladeDataId: nullableString(ciGet(row, 'assistBladeDataID')),
+        ),
+        model3dUrl = nullableString(ciGet(row, 'model3dUrl')),
+        model3dHash = nullableString(ciGet(row, 'model3dHash')),
+        description = nullableString(ciGet(row, 'description')),
+        isIncomplete = parseBool(ciGet(row, 'incompleteData'));
+
+  final String stockComboId, productId, name;
+  final String? hobbyName, hobbyGeneration, model3dUrl, model3dHash, description;
+  final BeybladeLoadout loadout;
+  final bool isIncomplete;
+
+  StockCombo toEntity() => StockCombo(
+        stockComboId: stockComboId,
+        productId: productId,
+        name: name,
+        loadout: loadout,
+        hobbyName: hobbyName,
+        hobbyGeneration: hobbyGeneration,
+        model3dUrl: model3dUrl,
+        model3dHash: model3dHash,
+        description: description,
+        isIncomplete: isIncomplete,
+      );
+}
+
+// ── BLADER MODEL ────────────────────────────────────────────────
+/// One `bladers` row: a character and its two optional pictures (portrait = image*, full body =
+/// fullBodyImage*), named the way the packager writes them.
+class BladerModel {
+  BladerModel.fromSheetJson(Map<String, dynamic> row)
+      : bladerId = requiredString(row, 'bladerID'),
+        name = requiredString(row, 'name'),
+        hobbyName = nullableString(ciGet(row, 'hobbyName')),
+        hobbyGeneration = nullableString(ciGet(row, 'hobbyGeneration')),
+        description = nullableString(ciGet(row, 'description')),
+        imageUrl = nullableString(ciGet(row, 'imageUrl')),
+        imageHash = nullableString(ciGet(row, 'imageHash')),
+        minifiedImageUrl = nullableString(ciGet(row, 'minifiedImageUrl')),
+        minifiedImageHash = nullableString(ciGet(row, 'minifiedImageHash')),
+        fullBodyImageUrl = nullableString(ciGet(row, 'fullBodyImageUrl')),
+        fullBodyImageHash = nullableString(ciGet(row, 'fullBodyImageHash')),
+        minifiedFullBodyImageUrl =
+            nullableString(ciGet(row, 'minifiedFullBodyImageUrl')),
+        minifiedFullBodyImageHash =
+            nullableString(ciGet(row, 'minifiedFullBodyImageHash')),
+        isIncomplete = parseBool(ciGet(row, 'incompleteData'));
+
+  final String bladerId, name;
+  final String? hobbyName,
+      hobbyGeneration,
+      description,
+      imageUrl,
+      imageHash,
+      minifiedImageUrl,
+      minifiedImageHash,
+      fullBodyImageUrl,
+      fullBodyImageHash,
+      minifiedFullBodyImageUrl,
+      minifiedFullBodyImageHash;
+  final bool isIncomplete;
+
+  Blader toEntity() => Blader(
+        bladerId: bladerId,
+        name: name,
+        hobbyName: hobbyName,
+        hobbyGeneration: hobbyGeneration,
+        description: description,
+        imageUrl: imageUrl,
+        imageHash: imageHash,
+        minifiedImageUrl: minifiedImageUrl,
+        minifiedImageHash: minifiedImageHash,
+        fullBodyImageUrl: fullBodyImageUrl,
+        fullBodyImageHash: fullBodyImageHash,
+        minifiedFullBodyImageUrl: minifiedFullBodyImageUrl,
+        minifiedFullBodyImageHash: minifiedFullBodyImageHash,
+        isIncomplete: isIncomplete,
       );
 }
 

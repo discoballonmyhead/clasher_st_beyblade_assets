@@ -1,3 +1,7 @@
+/// Catalog sheets this feature reads when the catalog has them (never required, so older releases and
+/// bundles still apply): the stock combos of each product and the bladers who use parts in the show.
+const kBeybladeExtraSheets = <String>['stockCombos', 'bladers'];
+
 class ParsedFullBundle {
   const ParsedFullBundle({
     required this.blades,
@@ -11,6 +15,8 @@ class ParsedFullBundle {
     required this.products,
     required this.accessories,
     required this.productContents,
+    this.stockCombos = const [],
+    this.bladers = const [],
   });
 
   final List<Map<String, dynamic>> blades;
@@ -28,6 +34,11 @@ class ParsedFullBundle {
   /// catalog entries of their own, so counting them alongside real parts
   /// would inflate the number without meaning the same thing.
   final List<Map<String, dynamic>> productContents;
+
+  /// Optional sheets ([kBeybladeExtraSheets]); empty when the catalog doesn't have them. Like
+  /// productContents, not counted in totalRecords.
+  final List<Map<String, dynamic>> stockCombos;
+  final List<Map<String, dynamic>> bladers;
 
   int get totalRecords =>
       blades.length +

@@ -53,13 +53,16 @@ ParsedFullBundle parseMetadataSheets(Map<String, String> rawJsonBySheet) {
     products: rowsFor('products'),
     accessories: rowsFor('accessories'),
     productContents: rowsFor('productContents'),
+    stockCombos: rowsFor('stockCombos'),
+    bladers: rowsFor('bladers'),
   );
 
   dev.log(
     'parseMetadataSheets done: blades=${result.blades.length} ratchets=${result.ratchets.length} bits=${result.bits.length} '
     'lockChips=${result.lockChips.length} overBlades=${result.overBlades.length} metalBlades=${result.metalBlades.length} '
     'mainBlades=${result.mainBlades.length} assistBlades=${result.assistBlades.length} products=${result.products.length} '
-    'accessories=${result.accessories.length} productContents=${result.productContents.length}',
+    'accessories=${result.accessories.length} productContents=${result.productContents.length} '
+    'stockCombos=${result.stockCombos.length} bladers=${result.bladers.length}',
     name: _logName,
   );
   return result;

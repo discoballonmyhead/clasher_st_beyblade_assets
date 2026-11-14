@@ -1,6 +1,7 @@
 import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/core/security/app_env.dart';
 import 'package:clasher_st/features/beyblade/data/dsrces/beyblade_cat_remdsrc.dart';
+import 'package:clasher_st/features/beyblade/data/dsrces/beyblade_extras_ldsrc.dart';
 import 'package:clasher_st/features/beyblade/data/dsrces/beyblade_ldsrc.dart';
 import 'package:clasher_st/features/beyblade/data/dsrces/combo_decks_remote.dart';
 import 'package:clasher_st/features/beyblade/data/repositories/bey_data_repo_impl.dart';
@@ -34,8 +35,13 @@ class BeybladeDependencies {
       () => BeybladeDataLocalDatasourceImpl(),
     );
 
+    // Stock combos and bladers: their own Hive box, opened on first use.
+    sl.registerLazySingleton<BeybladeExtrasLocalDataSource>(
+      () => HiveBeybladeExtrasLocalDataSource(),
+    );
+
     sl.registerLazySingleton<BeybladeDataRepo>(
-      () => BeyDataRepoImpl(sl()),
+      () => BeyDataRepoImpl(sl(), sl()),
     );
 
     // Combos & Decks page and the combo picker: paged reads (SQL 82).
@@ -92,6 +98,9 @@ class BeybladeDependencies {
     );
     sl.registerLazySingleton<GetPartDetailsUseCase>(
       () => GetPartDetailsUseCase(sl()),
+    );
+    sl.registerLazySingleton<GetBladersUseCase>(
+      () => GetBladersUseCase(sl()),
     );
     // Random builds from the catalog. Holds no part data itself (each
     // screen opens its own session), so it never serves a stale catalog.

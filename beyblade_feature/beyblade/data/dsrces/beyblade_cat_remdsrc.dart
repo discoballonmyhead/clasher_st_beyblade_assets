@@ -3,6 +3,7 @@ import 'dart:developer' as dev;
 
 import 'package:archive/archive.dart';
 import 'package:clasher_st/core/constants/app_constants.dart';
+import 'package:clasher_st/features/beyblade/data/isolates/parsed_results.dart';
 import 'package:clasher_st/features/beyblade_tcg/beyblade_tcg.dart';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
@@ -48,7 +49,7 @@ abstract class BeybladeCatalogRemoteDataSource {
   /// Downloads catalog.zip, verifies its SHA-256 against the release,
   /// and returns sheet name -> raw JSON text: the same shape the bundled
   /// loader produces, so both feed one parser. Optional sheets
-  /// ([kOptionalCatalogSheets]) are included when the release has them.
+  /// ([kOptionalCatalogSheets], [kBeybladeExtraSheets]) are included when the release has them.
   Future<Map<String, String>> downloadCatalogSheets(CatalogRelease release);
 }
 
@@ -112,7 +113,7 @@ class BeybladeCatalogRemoteDataSourceImpl
     final tracked = AppConstants.trackedBeyBladeData.toSet();
     // Extra sheets (TCG cards/sets, code series) are kept when present but
     // never required, so older releases still apply.
-    final optional = kOptionalCatalogSheets.toSet();
+    final optional = {...kOptionalCatalogSheets, ...kBeybladeExtraSheets};
     final sheets = <String, String>{};
 
     for (final file in archive) {

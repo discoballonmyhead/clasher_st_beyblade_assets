@@ -2,6 +2,7 @@ import 'dart:developer' as dev;
 
 import 'package:clasher_st/core/constants/app_constants.dart';
 import 'package:clasher_st/core/init_injection/injection.dart';
+import 'package:clasher_st/features/beyblade/data/dsrces/beyblade_extras_ldsrc.dart';
 import 'package:clasher_st/features/beyblade/data/dsrces/beyblade_ldsrc.dart';
 import 'package:clasher_st/features/beyblade/data/isolates/beyblade_bundle_parser.dart';
 import 'package:clasher_st/features/beyblade/data/models/models.dart';
@@ -10,9 +11,13 @@ import 'package:clasher_st/features/beyblade/domain/repositories/beyblade_data_r
 import 'package:flutter/foundation.dart';
 
 class BeyDataRepoImpl implements BeybladeDataRepo {
-  BeyDataRepoImpl(this._ldsrc);
+  BeyDataRepoImpl(this._ldsrc, [BeybladeExtrasLocalDataSource? extras])
+      : _extras = extras ?? HiveBeybladeExtrasLocalDataSource();
 
   final BeybladeDataLocalDatasource _ldsrc;
+
+  /// Stock combos and bladers (optional sheets, own box).
+  final BeybladeExtrasLocalDataSource _extras;
 
   /// Combos, decks and deck slots are saved on the phone first, then
   /// queued for the account. Looked up per call: the collection feature
@@ -112,6 +117,12 @@ class BeyDataRepoImpl implements BeybladeDataRepo {
         _ldsrc.putAccessories(parsed.accessories),
         _ldsrc.putProductContents(parsed.productContents),
       ]);
+
+      // Stock combos and bladers: replaced with the catalog too (an older catalog without them leaves none).
+      await _extras.replaceAll(
+        stockCombos: parsed.stockCombos,
+        bladers: parsed.bladers,
+      );
 
       await _ldsrc.putSyncMeta(
         SyncMetadataModel(
@@ -493,5 +504,66 @@ class BeyDataRepoImpl implements BeybladeDataRepo {
     return all
         .where((p) => p.dataId == rootId || p.parentPartId == rootId)
         .toList();
+  }
+
+  // ── Stock combos & bladers ────────────────────────────────────────────────
+
+  @override
+  Future<List<StockCombo>> getAllStockCombos() async =>
+      (await _extras.getAllStockCombos()).map((m) => m.toEntity()).toList();
+
+  @override
+  Future<List<StockCombo>> getStockCombosForProduct(String productId) async =>
+      (await getAllStockCombos())
+          .where((c) => c.productId == productId)
+          .toList();
+
+  @override
+  Future<List<StockCombo>> getStockCombosForPart(
+          String partTypeKey, String dataId) async =>
+      (await getAllStockCombos())
+          .where((c) => c.usesPart(partTypeKey, dataId))
+          .toList();
+
+  @override
+  Future<List<Blader>> getAllBladers() async =>
+      (await _extras.getAllBladers()).map((m) => m.toEntity()).toList();
+
+  @override
+  Future<Blader?> getBladerById(String bladerId) async {
+    for (final b in await getAllBladers()) {
+      if (b.bladerId == bladerId) return b;
+    }
+    return null;
+  }
+
+  @override
+  Future<List<Blader>> getBladersForPart(BeybladePart part) async {
+    if (part.bladerIds.isEmpty) return const [];
+    final byId = {for (final b in await getAllBladers()) b.bladerId: b};
+    return [
+      for (final id in part.bladerIds)
+        if (byId[id] != null) byId[id]!
+    ];
+  }
+
+  @override
+  Future<List<(String, BeybladePart)>> getPartsForBlader(
+      String bladerId) async {
+    const keys = [
+      'blades',
+      'lockChips',
+      'ratchets',
+      'bits',
+      'overBlades',
+      'metalBlades',
+      'mainBlades',
+      'assistBlades',
+    ];
+    return [
+      for (final key in keys)
+        for (final p in await _getAllForType(key))
+          if (p.bladerIds.contains(bladerId)) (key, p)
+    ];
   }
 }

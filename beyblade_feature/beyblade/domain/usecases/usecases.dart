@@ -205,6 +205,10 @@ class GetProductDetailsUseCase {
 
   Future<List<ProductContent>> getProductContents(String productId) =>
       _repository.getContentsForProduct(productId);
+
+  /// The combos that come out of the box.
+  Future<List<StockCombo>> getStockCombos(String productId) =>
+      _repository.getStockCombosForProduct(productId);
 }
 
 class GetPartDetailsUseCase {
@@ -221,6 +225,26 @@ class GetPartDetailsUseCase {
   Future<List<ProductContent>> getIncludedInProducts(
           String partTypeKey, String dataId) =>
       _repository.getProductContentsForItem(partTypeKey, dataId);
+
+  /// The out-of-the-box combos this part is in.
+  Future<List<StockCombo>> getStockCombos(String partTypeKey, String dataId) =>
+      _repository.getStockCombosForPart(partTypeKey, dataId);
+
+  /// Who uses the part in the show.
+  Future<List<Blader>> getBladers(BeybladePart part) =>
+      _repository.getBladersForPart(part);
+}
+
+/// Bladers (characters) and the parts they use.
+class GetBladersUseCase {
+  const GetBladersUseCase(this._repository);
+
+  final BeybladeDataRepo _repository;
+
+  Future<List<Blader>> all() => _repository.getAllBladers();
+  Future<Blader?> byId(String bladerId) => _repository.getBladerById(bladerId);
+  Future<List<(String, BeybladePart)>> partsOf(String bladerId) =>
+      _repository.getPartsForBlader(bladerId);
 }
 
 class DownloadGenerationAssetsUseCase {

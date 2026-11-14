@@ -164,4 +164,25 @@ abstract class BeybladeDataRepo {
   /// regardless of which one [dataId] itself refers to.
 
   Future<List<BeybladePart>> getVariantGroup(String partTypeKey, String dataId);
+
+  // ── Stock combos & bladers (optional catalog sheets; empty when the catalog has none) ──
+
+  Future<List<StockCombo>> getAllStockCombos();
+
+  /// The combos that come out of this product's box (a set with several beys has several).
+  Future<List<StockCombo>> getStockCombosForProduct(String productId);
+
+  /// Every stock combo the part [dataId] of sheet [partTypeKey] ("blades", "bits" ...) is in.
+  Future<List<StockCombo>> getStockCombosForPart(
+      String partTypeKey, String dataId);
+
+  Future<List<Blader>> getAllBladers();
+
+  Future<Blader?> getBladerById(String bladerId);
+
+  /// The bladers who use [part] in the show, in the order the data lists them. Unknown ids are skipped.
+  Future<List<Blader>> getBladersForPart(BeybladePart part);
+
+  /// Every part [bladerId] uses, as (part sheet key, part).
+  Future<List<(String, BeybladePart)>> getPartsForBlader(String bladerId);
 }
