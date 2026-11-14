@@ -1,6 +1,7 @@
 import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/core/router/route_kit.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
+import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/bey_builder_page.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/beyblade_home.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/combo_decks_page.dart';
@@ -43,7 +44,12 @@ class BeybladeRoutes {
         GoRoute(
           path: builder,
           name: builderName,
-          builder: (_, __) => const BeyBuilderPage(),
+          // extra: a BeybladeLoadout to start from (e.g. a stock combo's "Open in builder")
+          builder: (_, state) => BeyBuilderPage(
+            initialLoadout: state.extra is BeybladeLoadout
+                ? state.extra as BeybladeLoadout
+                : null,
+          ),
         ),
         GoRoute(
           path: assets,

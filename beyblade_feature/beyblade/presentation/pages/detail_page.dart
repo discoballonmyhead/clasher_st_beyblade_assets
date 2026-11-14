@@ -6,6 +6,7 @@ import 'package:clasher_st/core/widgets/holow_components.dart';
 import 'package:clasher_st/features/beyblade/b_routes/beyblade_routes.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/domain/repositories/beyblade_data_repo.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/catalog_extras.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/loyalty_badge.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/stat_bar_row.dart';
@@ -67,14 +68,26 @@ DetailSubject? detailSubjectFor({
   return null;
 }
 
-/// One product this part shipped in, plus everything else in that same
-/// box — the "stock combo": the specific ratchet and bit this exact part
-/// was originally packaged with, as distinct from the flat list of every
-/// product that happens to contain it.
-class StockCombo {
-  const StockCombo({required this.product, required this.siblingItems});
+/// One product this part shipped in, and what it came with. When the catalog declares the box's stock
+/// combo ([combo], sheet stockCombos), [siblingItems] are that combo's other parts -- exactly the ratchet
+/// and bit (or lock chip, assist blade ...) this part is assembled with out of the box, even in a set with
+/// several beys. Without a declared combo it falls back to everything else in the box.
+class ShippedIn {
+  const ShippedIn({
+    required this.product,
+    required this.siblingItems,
+    this.combo,
+  });
   final Product product;
   final List<ResolvedContentItem> siblingItems;
+  final StockCombo? combo;
+}
+
+/// A product's declared stock combo with its parts resolved, for the product page.
+class ResolvedStockCombo {
+  const ResolvedStockCombo({required this.combo, required this.parts});
+  final StockCombo combo;
+  final List<ResolvedContentItem> parts;
 }
 
 /// One resolved row of a product's contents: either a part (with the
@@ -155,10 +168,27 @@ class _DetailPageState extends State<DetailPage> {
         final variants = await repo.getVariantGroup(partTypeKey, part.dataId);
         final links =
             await repo.getProductContentsForItem(partTypeKey, part.dataId);
-        final stockCombos = <StockCombo>[];
+        final declared =
+            await repo.getStockCombosForPart(partTypeKey, part.dataId);
+        final stockCombos = <ShippedIn>[];
+        final productIds = <String>{};
         for (final link in links) {
+          if (!productIds.add(link.productId)) continue;
           final product = await repo.getProductByProductId(link.productId);
           if (product == null) continue;
+          final combos =
+              declared.where((c) => c.productId == product.productId);
+          if (combos.isNotEmpty) {
+            for (final c in combos) {
+              stockCombos.add(ShippedIn(
+                product: product,
+                combo: c,
+                siblingItems: await _comboParts(repo, c,
+                    skip: (partTypeKey, part.dataId)),
+              ));
+            }
+            continue;
+          }
           final allContents =
               await repo.getContentsForProduct(product.productId);
           final siblings = <ResolvedContentItem>[];
@@ -169,9 +199,25 @@ class _DetailPageState extends State<DetailPage> {
             siblings.add(await _resolveContent(repo, siblingLink));
           }
           siblings.removeWhere((s) => s.part == null && s.accessory == null);
-          stockCombos.add(StockCombo(product: product, siblingItems: siblings));
+          stockCombos.add(ShippedIn(product: product, siblingItems: siblings));
         }
-        return _ResolvedDetail(variants: variants, stockCombos: stockCombos);
+        // declared combos of products whose contents don't list this part
+        for (final c in declared) {
+          if (productIds.contains(c.productId)) continue;
+          final product = await repo.getProductByProductId(c.productId);
+          if (product == null) continue;
+          stockCombos.add(ShippedIn(
+            product: product,
+            combo: c,
+            siblingItems:
+                await _comboParts(repo, c, skip: (partTypeKey, part.dataId)),
+          ));
+        }
+        return _ResolvedDetail(
+          variants: variants,
+          stockCombos: stockCombos,
+          bladers: await repo.getBladersForPart(part),
+        );
 
       case AccessoryDetailSubject(:final accessory):
         final links = await repo.getProductContentsForItem(
@@ -193,8 +239,31 @@ class _DetailPageState extends State<DetailPage> {
             contents.add(resolved);
           }
         }
-        return _ResolvedDetail(variants: const [], productContents: contents);
+        final combos = <ResolvedStockCombo>[
+          for (final c in await repo.getStockCombosForProduct(product.productId))
+            ResolvedStockCombo(combo: c, parts: await _comboParts(repo, c)),
+        ];
+        return _ResolvedDetail(
+          variants: const [],
+          productContents: contents,
+          productStockCombos: combos,
+        );
     }
+  }
+
+  /// The parts of a declared stock combo, top to bottom (minus [skip], the part whose page this is).
+  Future<List<ResolvedContentItem>> _comboParts(
+      BeybladeDataRepo repo, StockCombo combo,
+      {(String, String)? skip}) async {
+    final out = <ResolvedContentItem>[];
+    for (final (type, id) in combo.partRefs) {
+      if (skip != null && skip.$1 == type && skip.$2 == id) continue;
+      final p = await repo.getPartByTypeAndDataId(type, id);
+      if (p != null) {
+        out.add(ResolvedContentItem(part: p, partTypeKey: type, quantity: 1));
+      }
+    }
+    return out;
   }
 
   Future<ResolvedContentItem> _resolveContent(
@@ -308,12 +377,20 @@ class _ResolvedDetail {
     this.includedInProducts = const [],
     this.productContents = const [],
     this.stockCombos = const [],
+    this.bladers = const [],
+    this.productStockCombos = const [],
   });
 
   final List<BeybladePart> variants;
   final List<Product> includedInProducts;
   final List<ResolvedContentItem> productContents;
-  final List<StockCombo> stockCombos;
+  final List<ShippedIn> stockCombos;
+
+  /// Who uses this part in the show.
+  final List<Blader> bladers;
+
+  /// A product page's declared stock combos.
+  final List<ResolvedStockCombo> productStockCombos;
 }
 
 // ── LAYOUTS ──────────────────────────────────────────────────────────────────
@@ -399,6 +476,7 @@ List<Widget> _detailSections(
           partTypeKey: partTypeKey,
           variants: resolved.variants,
           stockCombos: resolved.stockCombos,
+          bladers: resolved.bladers,
         ),
       AccessoryDetailSubject(:final accessory) => _AccessorySections(
           accessory: accessory,
@@ -407,6 +485,7 @@ List<Widget> _detailSections(
       ProductDetailSubject(:final product) => _ProductSections(
           product: product,
           contents: resolved.productContents,
+          stockCombos: resolved.productStockCombos,
         ),
     },
     if (history.isNotEmpty) ...[
@@ -635,12 +714,14 @@ class _PartSections extends StatelessWidget {
     required this.partTypeKey,
     required this.variants,
     required this.stockCombos,
+    this.bladers = const [],
   });
 
   final BeybladePart part;
   final String partTypeKey;
   final List<BeybladePart> variants;
-  final List<StockCombo> stockCombos;
+  final List<ShippedIn> stockCombos;
+  final List<Blader> bladers;
 
   @override
   Widget build(BuildContext context) {
@@ -783,6 +864,19 @@ class _PartSections extends StatelessWidget {
             current: part,
             partTypeKey: partTypeKey,
           ),
+        ],
+
+        if (part.has3dModel) ...[
+          SizedBox(height: rc.md),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Model3dButton(url: part.model3dUrl, title: part.name),
+          ),
+        ],
+
+        if (bladers.isNotEmpty) ...[
+          SizedBox(height: rc.lg),
+          BladersSection(bladers: bladers),
         ],
 
         if (stockCombos.isNotEmpty) ...[
@@ -932,7 +1026,7 @@ class _VariantsStrip extends StatelessWidget {
 /// several screens long before History even started (Hick's law).
 class _StockCombosSection extends StatelessWidget {
   const _StockCombosSection({required this.combos});
-  final List<StockCombo> combos;
+  final List<ShippedIn> combos;
 
   static const int _visible = 3;
 
@@ -973,7 +1067,7 @@ class _StockCombosSection extends StatelessWidget {
 
 class _StockComboCard extends StatelessWidget {
   const _StockComboCard({required this.combo});
-  final StockCombo combo;
+  final ShippedIn combo;
 
   @override
   Widget build(BuildContext context) {
@@ -1009,7 +1103,9 @@ class _StockComboCard extends StatelessWidget {
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       Text(
-                        combo.product.manufacturer,
+                        combo.combo == null
+                            ? combo.product.manufacturer
+                            : '${combo.combo!.name} · ${combo.product.manufacturer}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style:
@@ -1026,7 +1122,7 @@ class _StockComboCard extends StatelessWidget {
             SizedBox(height: rc.sm),
             Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.4)),
             SizedBox(height: rc.sm),
-            Text('Packed with',
+            Text(combo.combo == null ? 'Packed with' : 'Assembled with',
                 style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
             SizedBox(height: rc.xs),
             Wrap(
@@ -1037,6 +1133,11 @@ class _StockComboCard extends StatelessWidget {
                   _SiblingChip(item: sibling),
               ],
             ),
+          ],
+          if (combo.combo != null) ...[
+            SizedBox(height: rc.sm),
+            StockComboActions(
+                combo: combo.combo!, builderRoute: BeybladeRoutes.builder),
           ],
         ],
       ),
@@ -1151,9 +1252,16 @@ class _AccessorySections extends StatelessWidget {
 }
 
 class _ProductSections extends StatelessWidget {
-  const _ProductSections({required this.product, required this.contents});
+  const _ProductSections({
+    required this.product,
+    required this.contents,
+    this.stockCombos = const [],
+  });
   final Product product;
   final List<ResolvedContentItem> contents;
+
+  /// The combos that come out of this box (declared in the catalog).
+  final List<ResolvedStockCombo> stockCombos;
 
   @override
   Widget build(BuildContext context) {
@@ -1206,6 +1314,17 @@ class _ProductSections extends StatelessWidget {
             ),
           ],
         ),
+        if (stockCombos.isNotEmpty) ...[
+          SizedBox(height: rc.lg),
+          HoloSectionLabel(
+            title: 'Stock combos',
+            subtitle: stockCombos.length == 1
+                ? 'The combo out of the box'
+                : '${stockCombos.length} combos out of the box',
+          ),
+          SizedBox(height: rc.sm),
+          for (final c in stockCombos) _DeclaredComboCard(combo: c),
+        ],
         SizedBox(height: rc.lg),
         HoloSectionLabel(
           title: 'Contents',
@@ -1266,6 +1385,38 @@ class _ProductSections extends StatelessWidget {
               ),
             ),
       ],
+    );
+  }
+}
+
+/// One declared stock combo on a product page: its name, its parts (tap one to open it) and its 3D model.
+class _DeclaredComboCard extends StatelessWidget {
+  const _DeclaredComboCard({required this.combo});
+  final ResolvedStockCombo combo;
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final rc = ResponsiveProvider.config(context);
+    return HoloCard(
+      margin: EdgeInsets.only(bottom: rc.sm),
+      padding: EdgeInsets.all(rc.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(combo.combo.name,
+              style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+          SizedBox(height: rc.sm),
+          Wrap(
+            spacing: rc.sm,
+            runSpacing: rc.sm,
+            children: [for (final p in combo.parts) _SiblingChip(item: p)],
+          ),
+          SizedBox(height: rc.sm),
+          StockComboActions(
+              combo: combo.combo, builderRoute: BeybladeRoutes.builder),
+        ],
+      ),
     );
   }
 }
