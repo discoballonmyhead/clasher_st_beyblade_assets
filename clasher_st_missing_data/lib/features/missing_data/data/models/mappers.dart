@@ -98,6 +98,10 @@ RowDetail rowDetailFromJson(Json j) => RowDetail(
   values: Map<String, Object?>.from(j['values'] as Map? ?? const {}),
   missing: [for (final m in (j['missing'] as List? ?? const [])) _s(m)],
   image: bytesFromBase64(j['image']),
+  extraImages: {
+    for (final e in (j['extraImages'] as List? ?? const []))
+      if (e is Map) '${e['field']}': bytesFromBase64(e['image']),
+  },
   customFields: [
     for (final f in (j['customFields'] as List? ?? const [])) _s(f),
   ],

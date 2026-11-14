@@ -108,12 +108,12 @@ class MissingDataRepositoryImpl implements MissingDataRepository {
       );
 
   @override
-  Future<Result<void>> setImage(String sheet, String id, Uint8List bytes) =>
-      _guard(() => _ds.image(sheet, id, bytes));
+  Future<Result<void>> setImage(String sheet, String id, Uint8List bytes, {String? field}) =>
+      _guard(() => _ds.image(sheet, id, bytes, field: field));
 
   @override
-  Future<Result<void>> setImageFromUrl(String sheet, String id, String url) =>
-      _guard(() => _ds.imageUrl(sheet, id, url));
+  Future<Result<void>> setImageFromUrl(String sheet, String id, String url, {String? field}) =>
+      _guard(() => _ds.imageUrl(sheet, id, url, field: field));
 
   @override
   Future<Result<Uint8List?>> parentImage(String sheet, String id) => _guard(

@@ -244,6 +244,7 @@ class Book:
                 cell.fill = PatternFill("solid", fgColor=HEAD_FILL[group])
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
                 width = {"image": 16, "minifiedImage": 8, "minifiedBoxImage": 8, "boxImageUrl": 16,
+                         "fullBodyImage": 16, "minifiedFullBodyImage": 8, "model3d": 24, "bladerIDs": 14,
                          "imageUrl": 16, "name": 22, "productName": 34, "description": 40, "edition": 26,
                          "effectText": 50, "setName": 28}.get(col, 13)
                 ws.column_dimensions[get_column_letter(i)].width = width
@@ -285,7 +286,7 @@ class Book:
 
     def named_sheet(self, name):
         cfg = S.SHEETS[name]
-        return self.sheet(name, cfg["columns"], cfg["images"])
+        return self.sheet(name, cfg["columns"], [c for pair in S.image_pairs(name) for c in pair])
 
     # ---- reading --------------------------------------------------------------------
     def headers(self, ws):

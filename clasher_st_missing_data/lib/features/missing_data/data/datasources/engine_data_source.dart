@@ -73,10 +73,10 @@ class EngineDataSource {
   ];
   Future<Json> apply(String sheet, List<Json> items) =>
       _map('apply', {'sheet': sheet, 'items': items});
-  Future<Json> image(String sheet, String id, Uint8List bytes) =>
-      _map('image', {'sheet': sheet, 'id': id, 'base64': base64Encode(bytes)});
-  Future<Json> imageUrl(String sheet, String id, String url) =>
-      _map('image', {'sheet': sheet, 'id': id, 'url': url});
+  Future<Json> image(String sheet, String id, Uint8List bytes, {String? field}) =>
+      _map('image', {'sheet': sheet, 'id': id, 'base64': base64Encode(bytes), 'field': field});
+  Future<Json> imageUrl(String sheet, String id, String url, {String? field}) =>
+      _map('image', {'sheet': sheet, 'id': id, 'url': url, 'field': field});
   Future<Json> parentImage(String sheet, String id) =>
       _map('parentImage', {'sheet': sheet, 'id': id});
   Future<Json> undo() => _map('undo');

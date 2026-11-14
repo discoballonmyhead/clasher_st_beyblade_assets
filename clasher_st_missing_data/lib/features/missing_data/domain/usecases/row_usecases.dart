@@ -22,8 +22,10 @@ class UpdateRow {
 class SetRowImage {
   const SetRowImage(this._repo);
   final MissingDataRepository _repo;
-  Future<Result<void>> call(String sheet, String id, Uint8List bytes) => _repo.setImage(sheet, id, bytes);
-  Future<Result<void>> fromUrl(String sheet, String id, String url) => _repo.setImageFromUrl(sheet, id, url);
+  Future<Result<void>> call(String sheet, String id, Uint8List bytes, {String? field}) =>
+      _repo.setImage(sheet, id, bytes, field: field);
+  Future<Result<void>> fromUrl(String sheet, String id, String url, {String? field}) =>
+      _repo.setImageFromUrl(sheet, id, url, field: field);
 }
 
 class GetParentImage {

@@ -12,7 +12,9 @@ Why it matters - how the app treats the catalog:
   * rows are parsed when a screen reads them, and one row without a required field (requiredString) makes the
     whole part type unreadable (getAllBlades() throws) - after the update has already been applied;
   * rows are stored by dataID, so a duplicate silently replaces the other row;
-  * ProductContents are resolved by JSON sheet key ('blades', 'accessories', ...).
+  * ProductContents are resolved by JSON sheet key ('blades', 'accessories', ...);
+  * stockCombos are resolved into a BeybladeLoadout: one top (a blade, or lock chip + core + assist blade), a bit,
+    and parts that exist; bladers and 3D models are optional extras.
 
 Errors block a release; warnings are printed. `drop_invalid()` removes the rows with errors instead.
 """
@@ -28,7 +30,9 @@ APP_PART_SHEETS = ["blades", "ratchets", "bits", "lockChips", "overBlades", "met
                    "assistBlades"]
 APP_SHEETS = APP_PART_SHEETS + ["products", "accessories", "productContents"]
 # Read when present, never required (kOptionalCatalogSheets in the app).
-OPTIONAL_SHEETS = ["tcgCards", "tcgSets", "codeSeries"]
+OPTIONAL_SHEETS = ["tcgCards", "tcgSets", "codeSeries", "stockCombos", "bladers"]
+# Optional sheets the beyblade feature parses with requiredString(): an empty required field breaks the sheet.
+STRICT_OPTIONAL = {"stockCombos", "bladers"}
 # Part types a ProductContents row may point at, as the app resolves them.
 CONTENT_TYPES = set(APP_PART_SHEETS) | {"accessories"}
 # Every other generation's part sheet key (burstLayers, metalFightFusionWheels ...): valid in the workbook, not
@@ -45,8 +49,8 @@ def required_fields(sheet):
 
 
 def id_field(sheet):
-    return {"products": "productID", "productContents": None, "tcgSets": "setID", "codeSeries": None}.get(
-        sheet, "dataID")
+    return {"products": "productID", "productContents": None, "tcgSets": "setID", "codeSeries": None,
+            "stockCombos": "stockComboID", "bladers": "bladerID"}.get(sheet, "dataID")
 
 
 def _blank(v):
@@ -104,7 +108,8 @@ def check(sheets):
         for i, row in enumerate(rows):
             rid = row.get(idf) if idf else None
             missing = [f for f in req if _blank(row.get(f))]
-            if missing and (name in APP_SHEETS or set(missing) & set(S.profile_required(name))):
+            if missing and (name in APP_SHEETS or name in STRICT_OPTIONAL
+                            or set(missing) & set(S.profile_required(name))):
                 r.error(name, i, rid, f"empty required {', '.join(missing)}")
             elif name in ("tcgCards", "tcgSets") and (_blank(row.get(idf)) or _blank(row.get("name" if name == "tcgCards" else "setName"))):
                 r.warn(name, rid, "no id or name - the app skips this row")
@@ -139,6 +144,84 @@ def _check_references(sheets, r):
             r.warn("productContents", pid, "product not in products")
         if did not in ids.get(pt, set()):
             r.warn("productContents", pid, f"{pt} #{did} not found")
+    _check_stock_combos(sheets, ids, products, r)
+    _check_bladers(sheets, r)
+    _check_models(sheets, r)
+
+
+def _check_stock_combos(sheets, ids, products, r):
+    """Each stock combo must resolve into a build the app can show (BeybladeLoadout + ResolveBeybladeUseCase)."""
+    contents = {}
+    for row in sheets.get("productContents", []):
+        contents.setdefault(str(row.get("productID")), set()).add((row.get("partType"), str(row.get("partDataID"))))
+    by_id = {n: {str(x.get("dataID")): x for x in sheets.get(n, []) if isinstance(x, dict)} for n in APP_PART_SHEETS}
+    for i, row in enumerate(sheets.get("stockCombos", [])):
+        rid, pid = row.get("stockComboID"), str(row.get("productID"))
+        have = {c: str(row[c]).strip() for c in S.STOCK_COMBO_PART_COLUMNS if not _blank(row.get(c))}
+        bad = []
+        for col, sheet in S.STOCK_COMBO_PART_COLUMNS.items():
+            if col in have and have[col] not in ids.get(sheet, set()):
+                bad.append(f"{col} {have[col]} is not in {sheet}")
+        unibody = "bladeDataID" in have
+        custom = [c for c in ("lockChipDataID", "overBladeDataID", "metalBladeDataID", "mainBladeDataID",
+                              "assistBladeDataID") if c in have]
+        if unibody and custom:
+            bad.append("has a blade AND custom line parts - use one or the other")
+        elif not unibody:
+            core_main, core_om = "mainBladeDataID" in have, {"overBladeDataID", "metalBladeDataID"} <= have.keys()
+            if not custom:
+                bad.append("no blade - set bladeDataID, or lockChipDataID + mainBladeDataID (or over + metal blade)"
+                           " + assistBladeDataID")
+            elif "lockChipDataID" not in have or "assistBladeDataID" not in have or core_main == core_om:
+                bad.append("a custom line combo needs lockChipDataID, assistBladeDataID and either mainBladeDataID "
+                           "or overBladeDataID + metalBladeDataID")
+        for msg in bad:
+            r.error("stockCombos", i, rid, msg + " - the app can't build this combo")
+        if bad:
+            continue
+        if "ratchetDataID" not in have:
+            blade = by_id["blades"].get(have.get("bladeDataID", ""), {})
+            bit = by_id["bits"].get(have.get("bitDataID", ""), {})
+            if not (blade.get("integratedRatchet") or bit.get("integratedRatchet")):
+                r.warn("stockCombos", rid, "no ratchetDataID and neither the blade nor the bit has an integrated "
+                                           "ratchet")
+        if pid not in products:
+            r.warn("stockCombos", rid, f"product {pid} not in products")
+        elif pid in contents:
+            missing = [f"{S.STOCK_COMBO_PART_COLUMNS[c]} #{v}" for c, v in have.items()
+                       if (S.STOCK_COMBO_PART_COLUMNS[c], v) not in contents[pid]]
+            if missing:
+                r.warn("stockCombos", rid, f"not in product {pid}'s ProductContents: {', '.join(missing)}")
+
+
+def _check_bladers(sheets, r):
+    known = {str(x.get("bladerID")) for x in sheets.get("bladers", []) if isinstance(x, dict)}
+    for n in APP_PART_SHEETS:
+        for row in sheets.get(n, []):
+            v = row.get(S.BLADER_IDS)
+            if _blank(v):
+                continue
+            if not isinstance(v, list):
+                r.warn(n, row.get("dataID"), f"{S.BLADER_IDS} should be a list (package with beyblade_data.py)")
+                continue
+            unknown = [b for b in v if str(b) not in known]
+            if unknown:
+                r.warn(n, row.get("dataID"), f"blader(s) {', '.join(map(str, unknown))} not in bladers")
+
+
+def _check_models(sheets, r):
+    for n, rows in sheets.items():
+        if not isinstance(rows, list):
+            continue
+        idf = id_field(n)
+        for row in rows:
+            url = row.get("model3dUrl") if isinstance(row, dict) else None
+            if _blank(url):
+                continue
+            if not str(url).lower().startswith("https://"):
+                r.warn(n, row.get(idf) if idf else None, f"model3dUrl isn't https: {url}")
+            elif not str(url).lower().split("?")[0].endswith(S.MODEL_3D_EXTS):
+                r.warn(n, row.get(idf) if idf else None, f"model3dUrl doesn't end in .glb: {url}")
 
 
 def drop_invalid(sheets, report):

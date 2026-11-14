@@ -13,6 +13,7 @@ import argparse
 import io
 import json
 import os
+import struct
 
 from PIL import Image
 
@@ -28,6 +29,9 @@ EXAMPLE_PART_IDS = {
     "mainBlades": [1, 2], "assistBlades": [1, 2], "metalBlades": [1], "overBlades": [1],
 }
 VARIANTS = {("blades", 66): (65, "Katsushika City Collaboration Ver."), ("blades", 72): (65, "Special Ver.")}
+# who uses a part in the show (Bladers tab) and an example 3D model (path relative to the workbook's folder)
+EXAMPLE_EXTRAS = {("blades", 65): {"bladerIDs": "BL1, BL2", "model3d": "models/example-triangle.glb"},
+                  ("lockChips", 1): {"bladerIDs": "BL1"}}
 
 
 def png_from_webp(path, width):
@@ -41,8 +45,52 @@ def png_from_webp(path, width):
     return b.getvalue()
 
 
+def placeholder_png(text, size, color):
+    """A plain picture standing in for a real blader picture in the samples."""
+    from PIL import ImageDraw
+    im = Image.new("RGB", size, color)
+    ImageDraw.Draw(im).text((8, 8), text, fill="white")
+    b = io.BytesIO()
+    im.save(b, "PNG")
+    return b.getvalue()
+
+
+def example_glb(path):
+    """Writes the smallest useful glTF binary (.glb): one triangle. Stands in for a real 3D model in the samples."""
+    positions = struct.pack("<9f", 0, 0, 0, 1, 0, 0, 0, 1, 0)
+    gltf = {"asset": {"version": "2.0", "generator": "make_sample_workbooks.py (EXAMPLE)"},
+            "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+            "buffers": [{"byteLength": len(positions)}],
+            "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": len(positions)}],
+            "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                           "min": [0, 0, 0], "max": [1, 1, 0]}]}
+    js = json.dumps(gltf, separators=(",", ":")).encode()
+    js += b" " * (-len(js) % 4)
+    body = struct.pack("<II", len(js), 0x4E4F534A) + js + struct.pack("<II", len(positions), 0x004E4942) + positions
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(struct.pack("<III", 0x46546C67, 2, 12 + len(body)) + body)
+
+
 def build_parts(path, examples):
     book = Book(path, "parts")
+    bladers = book.named_sheet("Bladers")
+    if examples:
+        model = os.path.join(os.path.dirname(path), "models", "example-triangle.glb")
+        example_glb(model)
+        for r, color in [({"bladerID": "BL1", "name": "EXAMPLE Blader One", "hobbyName": "Beyblade",
+                           "hobbyGeneration": "X", "description": "EXAMPLE: uses blade 65 and lock chip 1"},
+                          (40, 70, 160)),
+                         ({"bladerID": "BL2", "name": "EXAMPLE Blader Two", "hobbyName": "Beyblade",
+                           "hobbyGeneration": "X", "description": "EXAMPLE: also uses blade 65 (no pictures yet)"},
+                          None)]:
+            row, _, _ = book.write(bladers, dict(r, incompleteData=1), "bladerID")
+            if color:
+                book.set_image(bladers, row, "image", placeholder_png(r["name"], (220, 220), color))
+                book.set_image(bladers, row, "minifiedImage", placeholder_png("", (96, 96), color), "min")
+                book.set_image(bladers, row, "fullBodyImage", placeholder_png(r["name"], (220, 400), color))
+                book.set_image(bladers, row, "minifiedFullBodyImage", placeholder_png("", (96, 174), color), "min")
     for gen, key, _ in S.all_part_targets():
         ws = book.part_sheet(gen, key)
         if not examples or gen != "X":
@@ -57,6 +105,8 @@ def build_parts(path, examples):
             vals["dataID"] = int(did)
             if (key, did) in VARIANTS:
                 vals["parentPartId"], vals["variantLabel"] = VARIANTS[(key, did)]
+            if (key, did) in EXAMPLE_EXTRAS:
+                vals.update(EXAMPLE_EXTRAS[(key, did)])
             row, _, _ = book.write(ws, vals, "dataID")
             book.set_image(ws, row, "image", png_from_webp(os.path.join(DATA, "images", f"{key}-{did}.webp"), 220))
             book.set_image(ws, row, "minifiedImage",
@@ -68,6 +118,7 @@ def build_products(path, examples):
     book = Book(path, "products")
     prods, acc = book.named_sheet("Products"), book.named_sheet("Accessories")
     pc, cs = book.named_sheet("ProductContents"), book.named_sheet("CodeSeries")
+    sc = book.named_sheet("StockCombos")
     for s in S.CODE_SERIES:
         book.write(cs, dict(zip(S.CODE_SERIES_COLUMNS, s)))
     if examples:
@@ -95,8 +146,17 @@ def build_products(path, examples):
         for r in [("P1", "Parts_X_Blades", 65, 1), ("P1", "Parts_X_Ratchets", 13, 1), ("P1", "Parts_X_Bits", 13, 1),
                   ("P2", "Accessories", 1, 1),
                   ("P4", "Parts_X_MainBlades", 1, 1), ("P4", "Parts_X_AssistBlades", 2, 1),
-                  ("P4", "Parts_X_LockChips", 2, 1)]:
+                  ("P4", "Parts_X_LockChips", 2, 1), ("P4", "Parts_X_Ratchets", 1, 1), ("P4", "Parts_X_Bits", 1, 1)]:
             book.write(pc, dict(zip(S.PRODUCT_CONTENTS_COLUMNS, r)))
+        # the combos that come out of each box: P1 = a one-piece blade, P4 = a custom line build
+        example_glb(os.path.join(os.path.dirname(path), "models", "example-triangle.glb"))
+        for r in [dict(base, stockComboID="SC1", productID="P1", name="Dran Sword 3-60F", bladeDataID=65,
+                       ratchetDataID=13, bitDataID=13, model3d="models/example-triangle.glb",
+                       description="EXAMPLE stock combo of the starter"),
+                  dict(base, stockComboID="SC2", productID="P4", name="EXAMPLE custom line combo", lockChipDataID=2,
+                       mainBladeDataID=1, assistBladeDataID=2, ratchetDataID=1, bitDataID=1,
+                       description="EXAMPLE lock chip + main blade + assist blade build")]:
+            book.write(sc, r, "stockComboID")
     book.save()
 
 
