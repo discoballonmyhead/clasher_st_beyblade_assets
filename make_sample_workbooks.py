@@ -103,6 +103,8 @@ def build_parts(path, examples):
                 continue
             vals = {k: v for k, v in r.items() if not k.lower().endswith(("url", "hash"))}
             vals["dataID"] = int(did)
+            if str(vals.get("parentPartId") or "") not in {str(i) for i in EXAMPLE_PART_IDS[key]}:
+                vals["parentPartId"] = vals["variantLabel"] = None  # its parent isn't in the samples
             if (key, did) in VARIANTS:
                 vals["parentPartId"], vals["variantLabel"] = VARIANTS[(key, did)]
             if (key, did) in EXAMPLE_EXTRAS:
