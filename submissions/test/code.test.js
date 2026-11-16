@@ -46,7 +46,7 @@ test('wrong submit key, missing username, bad target, no consent and fake pictur
   const send = (s, key = 'sk') => h.post({action: 'submit', submitKey: key, submission: s});
   assert.strictEqual(send(submission(), 'nope').code, 'forbidden');
   assert.strictEqual(send(submission({username: '  '})).code, 'invalid');
-  assert.strictEqual(send(submission({targetType: 'secrets'})).code, 'invalid');
+  assert.strictEqual(send(submission({targetType: '../etc'})).code, 'invalid');
   assert.strictEqual(send(submission({targetId: ''})).code, 'invalid');
   assert.strictEqual(send(submission({consent: false})).code, 'invalid');
   assert.strictEqual(send(submission({kind: 'fullBodyImage'})).code, 'invalid', 'full body only for bladers');
@@ -119,4 +119,51 @@ test('a GET is a health check; junk is refused politely', () => {
   assert.deepStrictEqual(JSON.parse(h.ctx.doGet().text), {ok: true, service: 'clasher-submissions'});
   assert.strictEqual(JSON.parse(h.ctx.doPost({postData: {contents: 'not json'}}).text).code, 'bad_request');
   assert.strictEqual(h.post({action: 'drop tables'}).code, 'bad_request');
+});
+
+test('field values: one row per field, with or without a picture', () => {
+  const h = harness({ADMIN_KEY: 'admin', FOLDER_ID: 'f'});
+  const res = h.post({action: 'submit', submission: submission({
+    image: undefined, values: {mass: '34.6', type: 'attack', spinDir: ''}, credit: '@kai'})});
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.ids.length, 2, 'the empty spinDir is ignored');
+  const items = h.post({action: 'list', adminKey: 'admin'}).items;
+  const byField = Object.fromEntries(items.map((i) => [i.field, i]));
+  assert.strictEqual(byField.mass.value, '34.6');
+  assert.strictEqual(byField.mass.kind, 'value');
+  assert.strictEqual(byField.type.value, 'attack');
+  assert.strictEqual(byField.mass.batch, byField.type.batch, 'sent together');
+  assert.strictEqual(byField.mass.credit, '@kai');
+  assert.strictEqual(h.post({action: 'image', adminKey: 'admin', id: byField.mass.id}).code, 'not_found');
+
+  // a picture and values together
+  const both = h.post({action: 'submit', submission: submission({values: {itemCost: '1500'}, targetType: 'products',
+    targetId: 'P2'})});
+  assert.strictEqual(both.ids.length, 2);
+});
+
+test('values are refused for ids, bookkeeping, other targets, or when nothing is sent', () => {
+  const h = harness({ADMIN_KEY: 'a', FOLDER_ID: 'f'});
+  const send = (s) => h.post({action: 'submit', submission: submission({image: undefined, ...s})});
+  assert.strictEqual(send({values: {dataID: '9'}}).code, 'invalid');
+  assert.strictEqual(send({values: {'bad field': '1'}}).code, 'invalid');
+  assert.strictEqual(send({targetType: 'other', targetId: '', note: 'x', values: {mass: '3'}}).code, 'invalid');
+  assert.strictEqual(send({values: {}}).code, 'invalid');
+  const many = Object.fromEntries(Array.from({length: 21}, (_, i) => ['f' + i, 'v']));
+  assert.strictEqual(send({values: many}).code, 'invalid');
+});
+
+test('an older sheet without the new columns gets them, and rows still line up', () => {
+  const h = harness({ADMIN_KEY: 'admin', FOLDER_ID: 'f'});
+  h.ctx.setup();
+  const sh = h.sheets.Submissions;
+  sh.rows[0] = ['id', 'submittedAt', 'status', 'kind', 'targetType', 'targetId', 'targetName', 'username', 'userId',
+    'credit', 'note', 'fileId', 'fileName', 'mimeType', 'bytes', 'appVersion', 'platform', 'reviewedAt', 'reviewNote'];
+  const res = h.post({action: 'submit', submitKey: h.store.SUBMIT_KEY, submission: submission({values: {mass: '30'}})});
+  assert.strictEqual(res.ok, true);
+  const head = sh.rows[0];
+  assert.ok(head.includes('field') && head.includes('value') && head.includes('batch'));
+  const items = h.post({action: 'list', adminKey: 'admin'}).items;
+  assert.strictEqual(items.find((i) => i.kind === 'value').value, '30');
+  assert.strictEqual(items.find((i) => i.kind === 'image').username, 'kai');
 });
