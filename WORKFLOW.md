@@ -43,6 +43,10 @@ flowchart LR
 Packaging** (which columns each JSON gets and which ones block the release). Language packs go to a different repo:
 **Publish -> Translations release**. The command lines below still work the same.
 
+**Pictures from the app:** people can send pictures from the app (Settings → Send pictures). They land in a Google
+Sheet (`submissions/`); Clasher Studio's Data → Submissions puts them on their rows with the sender's credit, and they
+ship with the next package like any other picture.
+
 **Assets folder:** only when you build a new version of the app. Add `--app-assets <folder>` in step 7 and it writes
 the copy of the data that ships inside the app (used on first launch and offline). Images are never put in assets.
 
@@ -199,7 +203,7 @@ flowchart TD
   * loads the bundled assets the way `loadPartsDataBundle()` does.
 
   It passed at the time (that test lived in the old `flutter_integration/` folder, since replaced by
-  `beyblade_feature/`). The current feature is checked by `beyblade_feature/test/catalog_extras_test.dart`: the
+  `app_features/`). The current feature is checked by `app_features/test/catalog_extras_test.dart`: the
   packaged samples through the parser, models and repository, including 3D models, stock combos and bladers.
 * The `data/` currently in the repo, made by the old packager, is refused by the gate: 71 incomplete blades have no
   `type`, and ProductContents use sheet names. Forced through anyway, the app's models fail on it.

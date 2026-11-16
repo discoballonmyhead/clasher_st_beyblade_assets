@@ -13,7 +13,8 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `beyblade_data.py` | packager: workbooks → `data/` (PNG in the sheet → WebP) |
 | `build_release.py` | release builder: `data/` → `catalog.zip` + manifest, image packs and data packs per hobby/generation |
 | `catalog_check.py` | the release gate: checks `data/` against what the app accepts (required sheets and fields, duplicate ids, ProductContents keys) |
-| `beyblade_feature/` | the app's beyblade feature (`lib/features/beyblade`), kept here in step with the data: reads 3D models, stock combos and bladers – see its README |
+| `app_features/` | app features kept in step with the data: `beyblade/` (reads 3D models, stock combos, bladers, credits) and `contributions/` (Settings → Send pictures) – see its README |
+| `submissions/` | the Google Apps Script web app that stores pictures people send from the app in a Google Sheet + Drive; Clasher Studio reviews and applies them – see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
 | `translation_tool.py` | translations for any Flutter app: reads its TrTokens / default English / language registry (never writes the project), keeps the sheet in step, checks placeholders, exports the constants and builds `lang_<code>.zip` packs. Used by Clasher Studio's Translations section |
@@ -63,6 +64,11 @@ by hand in the missing data tool.
   app's `BeybladeLoadout` (`bladeDataID`, or `lockChipDataID` + `mainBladeDataID` / `overBladeDataID` +
   `metalBladeDataID` + `assistBladeDataID`, plus `ratchetDataID` and `bitDataID`). The release check stops a combo the app
   couldn't build, and warns when a combo part isn't in that product's `ProductContents`.
+* `credits` on every data tab: who contributed a row's data or pictures, shown on the app's detail pages. Pictures
+  people send from the app (Settings → Send pictures → `submissions/`) come with their username and an optional
+  credit; Clasher Studio's Data → Submissions puts the picture on the row and adds the credit.
+* Opening an older workbook in the tools adds the new columns (`model3d`, `credits` ...) and the new tabs
+  (`Bladers`, `StockCombos`); save to keep them.
 * `Bladers` (parts workbook): the characters who use parts in the show, with two optional pictures (portrait =
   `image`, and `fullBodyImage`). Blades and lock chips list them in `bladerIDs` (`BL1, BL4`); the package has a list.
   Blader pictures aren't counted as missing and aren't put in the image packs (the app loads them from the CDN).
