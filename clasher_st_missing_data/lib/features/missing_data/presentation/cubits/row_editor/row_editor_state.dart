@@ -12,6 +12,8 @@ class RowEditorState extends Equatable {
     this.loading = false,
     this.saving = false,
     this.newImage,
+    this.imageField,
+    this.pickTick = 0,
     this.message,
     this.error,
   });
@@ -26,6 +28,12 @@ class RowEditorState extends Equatable {
 
   /// Image picked/pasted but not put on the row yet.
   final Uint8List? newImage;
+
+  /// Which picture [newImage] is for (a full-size picture column such as fullBodyImage); null = the main one.
+  final String? imageField;
+
+  /// Bumped when a field is filled by a picker (3D model file), so the editor shows the new text.
+  final int pickTick;
   final String? message;
   final String? error;
 
@@ -40,6 +48,8 @@ class RowEditorState extends Equatable {
     bool? loading,
     bool? saving,
     Uint8List? Function()? newImage,
+    String? Function()? imageField,
+    int? pickTick,
     String? message,
     String? error,
   }) =>
@@ -50,10 +60,12 @@ class RowEditorState extends Equatable {
         loading: loading ?? this.loading,
         saving: saving ?? this.saving,
         newImage: newImage != null ? newImage() : this.newImage,
+        imageField: imageField != null ? imageField() : this.imageField,
+        pickTick: pickTick ?? this.pickTick,
         message: message,
         error: error,
       );
 
   @override
-  List<Object?> get props => [sheet, detail, drafts, loading, saving, newImage?.length, message, error];
+  List<Object?> get props => [sheet, detail, drafts, loading, saving, newImage?.length, imageField, pickTick, message, error];
 }

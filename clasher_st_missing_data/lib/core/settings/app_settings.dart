@@ -125,6 +125,8 @@ class PublishingConstants {
     this.imagePacksTag = '',
     this.translationsRepo = 'clasher_st_translations',
     this.translationsTag = 'latest',
+    this.submissionsUrl = '',
+    this.submissionsAdminKey = '',
   });
 
   /// GitHub user or organisation that owns the repos.
@@ -141,6 +143,16 @@ class PublishingConstants {
 
   /// The release the language packs are uploaded to.
   final String translationsTag;
+
+  /// Pictures people send from the app: the Apps Script web app URL (submissions/Code.gs) and its
+  /// ADMIN_KEY (from setup()). Data -> Submissions reads and marks them.
+  final String submissionsUrl;
+  final String submissionsAdminKey;
+  bool get hasSubmissions =>
+      (submissionsUrl.startsWith('https://') ||
+          submissionsUrl.startsWith('http://127.0.0.1') || // local test server (submissions/test/local_server.js)
+          submissionsUrl.startsWith('http://localhost')) &&
+      submissionsAdminKey.isNotEmpty;
 
   String catalogTag(DateTime d) => catalogTagFormat
       .replaceAll('yyyy', d.year.toString().padLeft(4, '0'))
@@ -160,6 +172,8 @@ class PublishingConstants {
     String? imagePacksTag,
     String? translationsRepo,
     String? translationsTag,
+    String? submissionsUrl,
+    String? submissionsAdminKey,
   }) => PublishingConstants(
     owner: owner ?? this.owner,
     dataRepo: dataRepo ?? this.dataRepo,
@@ -168,6 +182,8 @@ class PublishingConstants {
     imagePacksTag: imagePacksTag ?? this.imagePacksTag,
     translationsRepo: translationsRepo ?? this.translationsRepo,
     translationsTag: translationsTag ?? this.translationsTag,
+    submissionsUrl: submissionsUrl ?? this.submissionsUrl,
+    submissionsAdminKey: submissionsAdminKey ?? this.submissionsAdminKey,
   );
 
   Map<String, String> toJson() => {
@@ -178,6 +194,8 @@ class PublishingConstants {
     'imagePacksTag': imagePacksTag,
     'translationsRepo': translationsRepo,
     'translationsTag': translationsTag,
+    'submissionsUrl': submissionsUrl,
+    'submissionsAdminKey': submissionsAdminKey,
   };
 
   factory PublishingConstants.fromJson(Map<String, dynamic> j) {
@@ -196,6 +214,8 @@ class PublishingConstants {
           : d.imagePacksTag,
       translationsRepo: s('translationsRepo', d.translationsRepo),
       translationsTag: s('translationsTag', d.translationsTag),
+      submissionsUrl: s('submissionsUrl', ''),
+      submissionsAdminKey: s('submissionsAdminKey', ''),
     );
   }
 }

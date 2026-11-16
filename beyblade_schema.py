@@ -38,7 +38,7 @@ EDIT_LOG_COLUMNS = ["at", "source", "action", "sheet", "rowId", "field", "oldVal
 # _deleted  rows deleted with the tool (values as JSON + their pictures), until restored or emptied
 DELETED_SHEET = "_deleted"
 DELETED_COLUMNS = ["key", "deletedAt", "source", "sheet", "rowId", "name", "values"]
-DELETED_IMAGE_COLS = ("image", "minifiedImage")
+DELETED_IMAGE_COLS = ("image", "minifiedImage", "image2", "minifiedImage2")  # main pair + a second kind (Bladers)
 CUSTOM_COLUMNS_SHEET = "_columns"
 CUSTOM_COLUMNS_COLUMNS = ["sheet", "column", "optional", "inherit", "note", "addedAt", "source"]
 # The card game is its own hobby in the app (separate catalog, separate image/data packs),
@@ -68,6 +68,16 @@ PART_TAIL = ["mass", "wbolegality", "incompleteData", "updated_at", "deleted"]
 STATS = ["attack", "defense", "stamina"]
 BLADE_LIKE = ["type", "spinDir"] + STATS
 PART_IMAGE_COLS = ("image", "minifiedImage")
+# Optional 3D model of a part / stock combo: a .glb file (path relative to the workbook's folder, or an absolute
+# path) or an https link. The packager copies files to data/models/ and writes model3dUrl + model3dHash.
+MODEL_3D = "model3d"
+MODEL_3D_EXTS = (".glb",)                 # one self-contained file; .gltf with side files can't be served as one
+MODEL_3D_MAX_BYTES = 20 * 1024 * 1024     # jsDelivr serves files up to 20 MB from GitHub
+# Who contributed a row's data or pictures (free text, e.g. "@kai_photos (picture)"). Optional, on every data
+# tab; the app shows it on the detail page. Clasher Studio fills it when it applies a picture sent from the app.
+CREDITS = "credits"
+# The bladers (characters) who use a part in the show: comma-separated bladerIDs from the Bladers tab.
+BLADER_IDS = "bladerIDs"
 
 
 def _pt(sheet, label, extra, words, categories=None):
@@ -138,8 +148,8 @@ GENERATIONS = OrderedDict([
         "parts": OrderedDict([  # column orders mirror the existing data/*.json exactly
             ("blades",       {"sheet": "Blades", "label": "Blade", "words": ["blade"],
                               "categories": ["Beyblade X Blades", "Blades (Beyblade X)"],
-                              "columns": PART_HEAD + BLADE_LIKE + ["integratedRatchet", "requiresSimpleRatchet"]
-                              + PART_TAIL}),
+                              "columns": PART_HEAD + BLADE_LIKE + ["integratedRatchet", "requiresSimpleRatchet",
+                                                                   BLADER_IDS] + PART_TAIL}),
             ("ratchets",     {"sheet": "Ratchets", "label": "Ratchet", "words": ["ratchet"],
                               "categories": ["Ratchets"],
                               "columns": PART_HEAD + ["protrusions", "heightMm", "simpleRatchet"] + STATS + PART_TAIL}),
@@ -147,7 +157,7 @@ GENERATIONS = OrderedDict([
                               "columns": PART_HEAD + ["baseName", "movementStyle"] + STATS +
                               ["dash", "burstRes", "twoStat", "integratedRatchet"] + PART_TAIL}),
             ("lockChips",    {"sheet": "LockChips", "label": "Lock Chip", "words": ["lock chip"],
-                              "categories": ["Lock Chips"], "columns": PART_HEAD + PART_TAIL}),
+                              "categories": ["Lock Chips"], "columns": PART_HEAD + [BLADER_IDS] + PART_TAIL}),
             ("overBlades",   {"sheet": "OverBlades", "label": "Over Blade", "words": ["over blade"],
                               "categories": ["Over Blades"], "columns": PART_HEAD + BLADE_LIKE + PART_TAIL}),
             ("metalBlades",  {"sheet": "MetalBlades", "label": "Metal Blade", "words": ["metal blade"],
@@ -161,6 +171,9 @@ GENERATIONS = OrderedDict([
     }),
 ])
 GENERATION_NAMES = list(GENERATIONS)
+for _g, _gd in GENERATIONS.items():  # every part can have a 3D model and credits (after the other columns)
+    for _p in _gd["parts"].values():
+        _p["columns"] = _p["columns"] + [c for c in (MODEL_3D, CREDITS) if c not in _p["columns"]]
 for _g, _gd in GENERATIONS.items():  # Excel refuses sheet names longer than 31 characters
     for _k, _p in _gd["parts"].items():
         assert len(f"Parts_{_g}_{_p['sheet']}") <= 31, (_g, _k)
@@ -218,17 +231,37 @@ APP_REQUIRED = {
     "products": ["productID", "manufacturer", "hobbyName", "hobbyGeneration", "productName"],
     "productContents": ["productID", "partType", "partDataID"],
     "accessories": ["dataID", "accessoryType", "manufacturer", "hobbyName", "hobbyGeneration", "name"],
+    "stockCombos": ["stockComboID", "productID", "name", "bitDataID"],
+    "bladers": ["bladerID", "name"],
 }
 
 PRODUCTS_COLUMNS = ["productID", "parentProductId", "variantLabel", "manufacturer", "hobbyName",
                     "hobbyGeneration", "productName", "productType", "releaseDate", "itemCost", "currency",
-                    "sku", "region", "description", "incompleteData", "updated_at", "deleted"]
+                    "sku", "region", "description", CREDITS, "incompleteData", "updated_at", "deleted"]
 PRODUCTS_IMAGE_COLS = ("boxImageUrl", "minifiedBoxImage")   # names the packager already uses
 ACCESSORIES_COLUMNS = ["dataID", "parentPartId", "variantLabel", "accessoryType", "subType", "manufacturer",
-                       "hobbyName", "hobbyGeneration", "code", "name", "itemCost", "description",
+                       "hobbyName", "hobbyGeneration", "code", "name", "itemCost", "description", CREDITS,
                        "incompleteData", "updated_at", "deleted"]
 ACCESSORIES_IMAGE_COLS = ("imageUrl", "minifiedImage")
 PRODUCT_CONTENTS_COLUMNS = ["productID", "partType", "partDataID", "quantity"]
+# Stock combos: the combos that come out of the box, one row per combo of a product (a set with three beys has
+# three rows). The part columns are the app's BeybladeLoadout: bladeDataID for a one-piece blade, or
+# lockChipDataID + (mainBladeDataID | overBladeDataID + metalBladeDataID) + assistBladeDataID for a custom line
+# build; ratchetDataID is empty only when the blade or bit has an integrated ratchet. Beyblade X only for now.
+STOCK_COMBO_PART_COLUMNS = OrderedDict([   # column -> part sheet key it points into
+    ("bladeDataID", "blades"), ("ratchetDataID", "ratchets"), ("bitDataID", "bits"),
+    ("lockChipDataID", "lockChips"), ("overBladeDataID", "overBlades"), ("metalBladeDataID", "metalBlades"),
+    ("mainBladeDataID", "mainBlades"), ("assistBladeDataID", "assistBlades"),
+])
+STOCK_COMBOS_COLUMNS = (["stockComboID", "productID", "hobbyName", "hobbyGeneration", "name"]
+                        + list(STOCK_COMBO_PART_COLUMNS) + [MODEL_3D, "description", CREDITS, "incompleteData",
+                                                             "updated_at", "deleted"])
+# Bladers: the characters who use parts in the show. Two optional pictures: a portrait (image /
+# minifiedImage, the main one) and a full-body picture. Parts point at them with bladerIDs.
+BLADERS_COLUMNS = ["bladerID", "name", "hobbyName", "hobbyGeneration", "description", CREDITS, "incompleteData",
+                   "updated_at", "deleted"]
+BLADERS_IMAGE_COLS = ("image", "minifiedImage")
+BLADERS_EXTRA_IMAGES = (("fullBodyImage", "minifiedFullBodyImage"),)
 CODE_SERIES_COLUMNS = ["seriesPrefix", "manufacturer", "hobbyGeneration", "region", "sequential", "digits",
                        "example", "description", "lastKnownCode"]
 
@@ -256,7 +289,7 @@ CODE_SERIES = [
 TCG_RARITIES = ["C", "U", "R", "RR", "SR", "SEC", "Promo", "Other"]
 TCG_CARD_TYPES = ["Bey", "Blade", "Blader", "Bit-Beast", "Action", "Stadium", "Other"]
 TCG_SETS_COLUMNS = ["setID", "parentSetId", "variantLabel", "setCode", "setName", "manufacturer", "hobbyName",
-                    "hobbyGeneration", "region", "releaseDate", "cardCount", "productID", "description",
+                    "hobbyGeneration", "region", "releaseDate", "cardCount", "productID", "description", CREDITS,
                     "incompleteData", "updated_at", "deleted"]
 TCG_SETS_IMAGE_COLS = ("image", "minifiedImage")
 # hobbyGeneration tells the card games apart: "Original" = the V-Force TCG
@@ -264,7 +297,7 @@ TCG_SETS_IMAGE_COLS = ("image", "minifiedImage")
 TCG_CARDS_COLUMNS = ["dataID", "parentCardId", "variantLabel", "manufacturer", "hobbyName", "hobbyGeneration",
                      "setCode", "setName", "cardNumber", "name", "subtitle", "cardType", "rarity", "attribute",
                      "cost", "power", "battleEdge", "spinStrength", "effectText", "loreText",
-                     "linkedPartType", "linkedPartDataID", "illustrator", "legality",
+                     "linkedPartType", "linkedPartDataID", "illustrator", "legality", CREDITS,
                      "incompleteData", "updated_at", "deleted"]
 TCG_CARDS_IMAGE_COLS = ("image", "minifiedImage")
 TCG_CARD_NUMBER_RE = re.compile(r"\b([A-Z0-9]{2,6})-(\d{2,4})\b")
@@ -279,6 +312,11 @@ SHEETS = OrderedDict([
                          "id_prefix": "", "images": ACCESSORIES_IMAGE_COLS, "json": "accessories"}),
     ("ProductContents", {"book": "products", "columns": PRODUCT_CONTENTS_COLUMNS, "id": None,
                          "images": None, "json": "productContents"}),
+    ("StockCombos",     {"book": "products", "columns": STOCK_COMBOS_COLUMNS, "id": "stockComboID",
+                         "id_prefix": "SC", "images": None, "json": "stockCombos"}),
+    ("Bladers",         {"book": "parts", "columns": BLADERS_COLUMNS, "id": "bladerID", "id_prefix": "BL",
+                         "images": BLADERS_IMAGE_COLS, "extra_images": BLADERS_EXTRA_IMAGES, "json": "bladers",
+                         "image_packs": False, "images_optional": True}),
     ("CodeSeries",      {"book": "products", "columns": CODE_SERIES_COLUMNS, "id": None,
                          "images": None, "json": "codeSeries"}),
     ("TCG_Sets",        {"book": "tcg", "columns": TCG_SETS_COLUMNS, "id": "setID",
@@ -286,6 +324,17 @@ SHEETS = OrderedDict([
     ("TCG_Cards",       {"book": "tcg", "columns": TCG_CARDS_COLUMNS, "id": "dataID",
                          "id_prefix": "", "images": TCG_CARDS_IMAGE_COLS, "json": "tcgCards"}),
 ])
+
+
+
+def image_pairs(sheet_name):
+    """[(full column, minified column)] of a tab: the main pair first, then any extra pairs (Bladers' full-body
+    picture). Empty for tabs without pictures."""
+    if parse_part_sheet(sheet_name):
+        return [PART_IMAGE_COLS]
+    cfg = SHEETS.get(sheet_name) or {}
+    return ([tuple(cfg["images"])] if cfg.get("images") else []) + [tuple(p) for p in cfg.get("extra_images", ())]
+
 
 BOOK_FILES = {"parts": "beyblade_parts.xlsx", "products": "beyblade_products.xlsx", "tcg": "beyblade_tcg.xlsx"}
 

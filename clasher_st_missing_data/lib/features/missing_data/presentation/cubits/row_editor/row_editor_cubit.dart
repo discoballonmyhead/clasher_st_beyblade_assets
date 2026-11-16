@@ -53,7 +53,13 @@ class RowEditorCubit extends Cubit<RowEditorState> {
     res.fold(
       (f) => emit(state.copyWith(loading: false, error: f.message)),
       (d) => emit(
-        RowEditorState(sheet: sheet, detail: d, newImage: state.newImage),
+        RowEditorState(
+          sheet: sheet,
+          detail: d,
+          newImage: state.newImage,
+          imageField: state.imageField,
+          pickTick: state.pickTick,
+        ),
       ),
     );
   }
@@ -94,9 +100,24 @@ class RowEditorCubit extends Cubit<RowEditorState> {
     );
   }
 
-  Future<void> pickImage() async {
+  /// [field]: which picture (fullBodyImage ...); null = the main one.
+  Future<void> pickImage({String? field}) async {
     final bytes = await _picker.pickImage();
-    if (bytes != null) emit(state.copyWith(newImage: () => bytes));
+    if (bytes != null) {
+      emit(state.copyWith(newImage: () => bytes, imageField: () => field));
+    }
+  }
+
+  /// Chooses a .glb file for the row's 3D model; stored relative to [workbookPath]'s folder when it's inside it,
+  /// so the workbook folder can move (or be shared) with its models.
+  Future<void> pickModel3d(String? workbookPath, {String field = 'model3d'}) async {
+    final path = await _picker.pickFile(
+      extensions: const ['glb'],
+      title: 'Choose a 3D model (.glb)',
+    );
+    if (path == null) return;
+    edit(field, relativeToWorkbook(path, workbookPath));
+    emit(state.copyWith(pickTick: state.pickTick + 1));
   }
 
   Future<void> useParentImage() async {
@@ -107,22 +128,25 @@ class RowEditorCubit extends Cubit<RowEditorState> {
       if (b == null) {
         emit(state.copyWith(message: 'This row has no parent with an image'));
       } else {
-        emit(state.copyWith(newImage: () => b));
+        emit(state.copyWith(newImage: () => b, imageField: () => null));
       }
     });
   }
 
-  void clearNewImage() => emit(state.copyWith(newImage: () => null));
+  void clearNewImage() =>
+      emit(state.copyWith(newImage: () => null, imageField: () => null));
 
-  Future<void> putImage({String? url}) async {
+  /// Puts the picked picture (or the one at [url]) on the row. [field] picks the picture for a URL; a picked
+  /// picture goes where it was picked for.
+  Future<void> putImage({String? url, String? field}) async {
     final d = state.detail;
     if (d == null) return;
     final bytes = state.newImage;
     if (url == null && bytes == null) return;
     emit(state.copyWith(saving: true));
     final res = url != null
-        ? await _setImage.fromUrl(state.sheet!, d.id, url)
-        : await _setImage(state.sheet!, d.id, bytes!);
+        ? await _setImage.fromUrl(state.sheet!, d.id, url, field: field)
+        : await _setImage(state.sheet!, d.id, bytes!, field: state.imageField);
     await res.fold(
       (f) async => emit(state.copyWith(saving: false, error: f.message)),
       (_) async {
@@ -130,6 +154,7 @@ class RowEditorCubit extends Cubit<RowEditorState> {
           state.copyWith(
             saving: false,
             newImage: () => null,
+            imageField: () => null,
             message: 'Image put on #${d.id} - save to keep',
           ),
         );
@@ -144,4 +169,19 @@ class RowEditorCubit extends Cubit<RowEditorState> {
     await _sub.cancel();
     return super.close();
   }
+}
+
+/// [path] relative to the folder of [workbookPath] when it's inside it (forward slashes), else [path] as is.
+String relativeToWorkbook(String path, String? workbookPath) {
+  if (workbookPath == null) return path;
+  final norm = path.replaceAll('\\', '/');
+  final book = workbookPath.replaceAll('\\', '/');
+  final cut = book.lastIndexOf('/');
+  if (cut < 0) return path;
+  final dir = book.substring(0, cut + 1);
+  final windows = RegExp(r'^[A-Za-z]:/').hasMatch(dir);
+  final inside = windows
+      ? norm.toLowerCase().startsWith(dir.toLowerCase())
+      : norm.startsWith(dir);
+  return inside ? norm.substring(dir.length) : path;
 }

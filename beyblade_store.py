@@ -60,6 +60,15 @@ README = {
         "  deleted         leave empty; put 'true' to hide a row without losing its dataID.",
         "  image / minifiedImage  a picture placed OVER that row's cell (Insert > Pictures > Place over Cells), or let",
         "                  the missing data tool put it there. Never 'Place in Cell': the tools can't keep those.",
+        "  model3d         optional 3D model: a .glb file (path relative to this workbook's folder, e.g. models/dran.glb,",
+        "                  or an absolute path) or an https link. Max 20 MB. The packager copies files to data/models/.",
+        "  credits         optional: who contributed this row's data or pictures, e.g. '@kai_photos (picture)'.",
+        "                  Shown in the app. Clasher Studio adds it when it applies a picture sent from the app.",
+        "  bladerIDs       (X Blades, LockChips) the bladers who use the part in the show: bladerIDs from the Bladers",
+        "                  tab, separated by commas (BL1, BL4). Optional.",
+        "",
+        "Bladers          the characters who use parts in the show. bladerID = 'BL' + number, name, two optional",
+        "                 pictures: image / minifiedImage (portrait) and fullBodyImage / minifiedFullBodyImage.",
         "",
         "Empty rows are skipped (the tools and the packager read every non-empty row).",
         "To remove a part, put 'true' in deleted (its dataID stays reserved); if you delete a row in Excel, use",
@@ -82,12 +91,18 @@ README = {
         "Accessories      launchers, grips, stadiums, cases, tools, winders. dataID = whole number. Same parent/variant rule.",
         "ProductContents  one row per thing inside a product: productID, partType (sheet name, e.g. Parts_X_Blades or",
         "                 Accessories, TCG_Cards), partDataID (the dataID in that sheet), quantity.",
+        "StockCombos      the combos that come out of the box: one row per bey in a product (a set with 2 beys = 2 rows).",
+        "                 stockComboID = 'SC' + number, productID, name (e.g. 'Dran Sword 3-60F'), then the parts:",
+        "                 bladeDataID for a one-piece blade, or lockChipDataID + mainBladeDataID (or overBladeDataID +",
+        "                 metalBladeDataID) + assistBladeDataID for a custom line build; ratchetDataID (empty only for an",
+        "                 integrated ratchet) and bitDataID. Optional model3d (.glb path or https link) of the whole combo.",
         "CodeSeries       the release-code series per manufacturer + generation. sequential=1 means codes count up",
         "                 (BX-54 -> BX-55), which the scraper's update mode uses to look for the next releases.",
         "                 lastKnownCode is filled in by the scraper for information.",
         "",
         "itemCost is a plain number; put the currency in the currency column (JPY, USD...).",
         "releaseDate: YYYY-MM-DD.",
+        "credits (Products, Accessories, StockCombos): optional, who contributed the row's data or pictures; shown in the app.",
         "Empty rows are skipped; to remove a row use deleted = true.",
     ],
     "tcg": [
@@ -110,6 +125,7 @@ README = {
         "Card mechanics columns (cardType, attribute, cost, power, effectText) are generic; add columns at the end",
         "if the game needs more - the packager passes every column through.",
         "image / minifiedImage: paste the card scan into the row's cell.",
+        "credits: optional, who contributed the row's data or scan (shown in the app).",
     ],
 }
 
@@ -244,6 +260,7 @@ class Book:
                 cell.fill = PatternFill("solid", fgColor=HEAD_FILL[group])
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
                 width = {"image": 16, "minifiedImage": 8, "minifiedBoxImage": 8, "boxImageUrl": 16,
+                         "fullBodyImage": 16, "minifiedFullBodyImage": 8, "model3d": 24, "bladerIDs": 14, "credits": 24,
                          "imageUrl": 16, "name": 22, "productName": 34, "description": 40, "edition": 26,
                          "effectText": 50, "setName": 28}.get(col, 13)
                 ws.column_dimensions[get_column_letter(i)].width = width
@@ -270,13 +287,20 @@ class Book:
         return ws
 
     def ensure_schema_columns(self):
-        """Adds columns a newer schema defines to the part tabs this workbook already has.
+        """Adds columns a newer schema defines to the data tabs this workbook already has.
         -> [(tab, column)] added (the workbook is then dirty)."""
         before = len(self.__dict__.get("added_columns", []))
         for name in list(self.wb.sheetnames):
             part = S.parse_part_sheet(name)
             if part and part[2]:
                 self.part_sheet(part[0], part[1])
+            elif name in S.SHEETS:  # Products, Accessories, TCG ... get new columns (credits) too
+                self.named_sheet(name)
+        # tabs a newer schema added to this kind of workbook (Bladers, StockCombos) are created, empty
+        for name, cfg in S.SHEETS.items():
+            if cfg.get("book") == self.kind and name not in self.wb.sheetnames:
+                self.named_sheet(name)
+                self.__dict__.setdefault("added_columns", []).append((name, "(new tab)"))
         return self.__dict__.get("added_columns", [])[before:]
 
     def part_sheet(self, gen, key):
@@ -285,7 +309,7 @@ class Book:
 
     def named_sheet(self, name):
         cfg = S.SHEETS[name]
-        return self.sheet(name, cfg["columns"], cfg["images"])
+        return self.sheet(name, cfg["columns"], [c for pair in S.image_pairs(name) for c in pair])
 
     # ---- reading --------------------------------------------------------------------
     def headers(self, ws):

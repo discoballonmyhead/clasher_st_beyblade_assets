@@ -144,14 +144,16 @@ def data_pack_rows(sheets, hobby, generation):
 
 
 def write_app_assets(dest, sheets, manifest):
-    """The bundled catalog: exactly the sheets loadPartsDataBundle() reads, plus manifest.json. Same rows as
+    """The bundled catalog: the sheets loadPartsDataBundle() reads (the required ones, plus stockCombos and
+    bladers when the catalog has them - the loader reads those if present), plus manifest.json. Same rows as
     catalog.zip, so a fresh install starts on this release's data."""
     dest.mkdir(parents=True, exist_ok=True)
-    for name in catalog_check.APP_SHEETS:
+    names = list(catalog_check.APP_SHEETS) + [n for n in sorted(catalog_check.STRICT_OPTIONAL) if n in sheets]
+    for name in names:
         (dest / f"{name}.json").write_text(json.dumps(sheets.get(name, []), separators=(",", ":"),
                                                       ensure_ascii=False), encoding="utf-8")
     (dest / "manifest.json").write_text(json.dumps({**manifest, "bundled": True}, indent=2), encoding="utf-8")
-    print(f"app assets: {len(catalog_check.APP_SHEETS)} sheets + manifest.json -> {dest}")
+    print(f"app assets: {len(names)} sheets + manifest.json -> {dest}")
 
 
 def main(argv=None):

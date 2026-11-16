@@ -31,6 +31,7 @@ import '../widgets/recycle_bin_dialog.dart';
 import '../widgets/row_editor_panel.dart';
 import '../widgets/rows_panel.dart';
 import '../widgets/sheet_sidebar.dart';
+import '../../../submissions/presentation/submissions_dialog.dart';
 
 /// Tabs + missing per field | rows | row editor, with the log below.
 class WorkbookPage extends StatefulWidget {
@@ -447,6 +448,11 @@ class _WorkbookPageState extends State<WorkbookPage> {
                   tooltip: 'Recently deleted',
                   onPressed: () => showRecycleBin(context),
                   icon: const Icon(Icons.delete_sweep_outlined),
+                ),
+                IconButton(
+                  tooltip: 'Submissions (pictures sent from the app)',
+                  onPressed: () => showSubmissionsDialog(context),
+                  icon: const Icon(Icons.inbox_outlined),
                 ),
                 IconButton(
                   tooltip: 'Settings',

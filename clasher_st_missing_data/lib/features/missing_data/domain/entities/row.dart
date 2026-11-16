@@ -55,6 +55,7 @@ class RowDetail extends Equatable {
     required this.missing,
     required this.image,
     this.customFields = const [],
+    this.extraImages = const {},
   });
 
   final int row;
@@ -73,11 +74,15 @@ class RowDetail extends Equatable {
   /// Current image (WebP/PNG bytes), null when the row has none.
   final Uint8List? image;
 
+  /// More pictures of the row (Bladers' full-body picture): picture column -> bytes (null = none yet).
+  final Map<String, Uint8List?> extraImages;
+
   String display(String field) {
     final v = values[field];
     return v == null ? '' : '$v';
   }
 
   @override
-  List<Object?> get props => [row, id, parentId, updatedAt, fields, values, missing, image?.length, customFields];
+  List<Object?> get props => [row, id, parentId, updatedAt, fields, values, missing, image?.length, customFields,
+        [for (final e in extraImages.entries) '${e.key}:${e.value?.length}']];
 }

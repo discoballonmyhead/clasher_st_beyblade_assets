@@ -10,6 +10,7 @@ class SheetInfo extends Equatable {
     this.generation,
     this.generations = const [],
     this.hobby,
+    this.json,
   });
 
   final String name;
@@ -24,12 +25,15 @@ class SheetInfo extends Equatable {
   final List<String> generations;
   final String? hobby;
 
+  /// The catalog key the app uses for this tab: blades (Parts_X_Blades), products, bladers ...
+  final String? json;
+
   /// Shown when [gen] is picked: its own part tabs, and shared tabs that have rows of it (or no rows yet).
   bool belongsTo(String? gen) =>
       gen == null || generation == gen || (generation == null && (generations.isEmpty || generations.contains(gen)));
 
   @override
-  List<Object?> get props => [name, rows, rowsWithMissing, hasImages, generation, generations, hobby];
+  List<Object?> get props => [name, rows, rowsWithMissing, hasImages, generation, generations, hobby, json];
 }
 
 class WorkbookSummary extends Equatable {

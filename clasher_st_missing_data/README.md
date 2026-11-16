@@ -75,6 +75,13 @@ everything else) to a JSON file you can keep or import on another computer.
 * **Editor**: blank fields are highlighted. Press Enter in a field to apply. **Next gap** (Ctrl+Enter) jumps to the
   next row that still misses something. The image can come from a file, a URL or the parent row; it's trimmed, fitted in 600 px with a
   128 px minified copy, and stored as WebP.
+* **More pictures and 3D models**: a tab with a second kind of picture (Bladers' full-body picture) gets a second
+  picture box in the editor (optional, not counted as missing). The `model3d` field has a cube button that picks a
+  `.glb` file and stores it relative to the workbook's folder.
+* **Submissions** (inbox button): pictures people sent from the app, with who sent them and the credit they asked
+  for. **Apply** puts a picture on its row in the open workbook (the main picture, or a blader's full-body picture)
+  and adds the credit to the row's `credits`. Then save. **Reject** marks a picture rejected. Set the web app URL and
+  admin key in Settings → Publishing (setup: `submissions/README.md`).
 * **Auto-fill** lets you preview each proposal, filter by source (derived, parent, same name) and tick what to apply.
 * **Fill from wiki** runs the scraper's polite client on the ticked rows. Progress shows in the log panel and you
   can stop it.
