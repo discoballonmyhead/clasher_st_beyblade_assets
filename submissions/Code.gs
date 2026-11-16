@@ -2,7 +2,9 @@
  * Clasher submissions: pictures people send from the app (Settings -> Send pictures), kept in a Google Sheet.
  *
  * Deploy as a web app (Deploy -> New deployment -> Web app; Execute as: Me; Who has access: Anyone). Run setup()
- * once first: it creates the "Submissions" sheet, a Drive folder for the pictures and the keys.
+ * once first: it creates the "Submissions" sheet, a Drive folder for the pictures and the keys. Opened from a
+ * spreadsheet (Extensions -> Apps Script), it uses that spreadsheet; as a standalone script it creates a new
+ * "Clasher submissions" spreadsheet (or uses SHEET_ID when you set it) and logs its link.
  *
  * Every request is a POST with a JSON body (sent as text/plain, so browsers don't need a CORS preflight):
  *   {action: "submit", submitKey?, submission: {...}}        the app: a picture and/or field values + who sent it
@@ -18,7 +20,8 @@
  *   SUBMIT_KEY   optional: when set, the app must send it (keeps random scripts out; it ships inside the app,
  *                so treat it as a speed bump, not a secret).
  *   FOLDER_ID    the Drive folder pictures go to.
- *   SHEET_ID     only when the script isn't bound to the spreadsheet (a standalone script).
+ *   SHEET_ID     only for a standalone script: the spreadsheet's id or its whole link (setup() sets it when it
+ *                creates the spreadsheet).
  *   MAX_PER_HOUR how many pictures one person can send per hour (default 20).
  */
 
@@ -197,13 +200,19 @@ function setStatus_(body) {
 
 function setup() {
   var props = PropertiesService.getScriptProperties();
-  sheet_();
+  if (!spreadsheet_()) {
+    // a standalone script with no SHEET_ID: make the spreadsheet and remember it
+    var created = SpreadsheetApp.create('Clasher submissions');
+    props.setProperty('SHEET_ID', created.getId());
+  }
+  var sh = sheet_();
   folder_();
   if (!props.getProperty('ADMIN_KEY')) props.setProperty('ADMIN_KEY', Utilities.getUuid().replace(/-/g, ''));
   if (!props.getProperty('SUBMIT_KEY')) props.setProperty('SUBMIT_KEY', Utilities.getUuid().replace(/-/g, '').slice(0, 16));
   console.log('ADMIN_KEY (Clasher Studio -> Settings -> Submissions): ' + props.getProperty('ADMIN_KEY'));
   console.log('SUBMIT_KEY (the app, CONTRIBUTIONS_KEY): ' + props.getProperty('SUBMIT_KEY'));
   console.log('Pictures folder: https://drive.google.com/drive/folders/' + props.getProperty('FOLDER_ID'));
+  console.log('Submissions sheet: ' + sh.getParent().getUrl());
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────────
@@ -213,11 +222,22 @@ function requireAdmin_(body) {
   if (!key || body.adminKey !== key) throw error_('forbidden', 'Wrong admin key.');
 }
 
+/** SHEET_ID's spreadsheet (an id or a whole link), else the one the script was opened from, else null. */
+function spreadsheet_() {
+  var raw = String(PropertiesService.getScriptProperties().getProperty('SHEET_ID') || '').trim();
+  var m = raw.match(/\/d\/([A-Za-z0-9_-]+)/);
+  var id = m ? m[1] : raw;
+  if (id) return SpreadsheetApp.openById(id);
+  try {
+    return SpreadsheetApp.getActiveSpreadsheet();
+  } catch (e) {
+    return null;
+  }
+}
+
 function sheet_() {
-  var props = PropertiesService.getScriptProperties();
-  var id = props.getProperty('SHEET_ID');
-  var ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
-  if (!ss) throw error_('server', 'No spreadsheet: bind the script to one or set SHEET_ID.');
+  var ss = spreadsheet_();
+  if (!ss) throw error_('server', 'No spreadsheet yet: run setup() once from the Apps Script editor.');
   var sh = ss.getSheetByName(SHEET_NAME);
   if (!sh) {
     sh = ss.insertSheet(SHEET_NAME);

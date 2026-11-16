@@ -24,6 +24,25 @@ test('setup creates the sheet, the folder and both keys', () => {
   assert.deepStrictEqual(h.sheets.Submissions.rows[0].slice(0, 3), ['id', 'submittedAt', 'status']);
 });
 
+test('setup as a standalone script creates the spreadsheet and remembers it', () => {
+  const h = harness({}, {standalone: true});
+  const before = h.post({action: 'list', adminKey: 'x'});
+  assert.strictEqual(before.ok, false);
+  h.ctx.setup();
+  assert.ok(h.wasCreated());
+  assert.strictEqual(h.store.SHEET_ID, 'sheet1');
+  assert.deepStrictEqual(h.sheets.Submissions.rows[0].slice(0, 3), ['id', 'submittedAt', 'status']);
+  const res = h.post({action: 'submit', submitKey: h.store.SUBMIT_KEY, submission: submission()});
+  assert.strictEqual(res.ok, true);
+});
+
+test('SHEET_ID can be the whole spreadsheet link', () => {
+  const h = harness({SHEET_ID: 'https://docs.google.com/spreadsheets/d/1AbC_d-9/edit#gid=0'}, {standalone: true});
+  h.ctx.setup();
+  assert.strictEqual(h.wasCreated(), false);
+  assert.strictEqual(h.opened[0], '1AbC_d-9');
+});
+
 test('a submission saves the picture and one row', () => {
   const h = harness({ADMIN_KEY: 'admin', SUBMIT_KEY: 'sk', FOLDER_ID: 'f'});
   const res = h.post({action: 'submit', submitKey: 'sk', submission: submission()});

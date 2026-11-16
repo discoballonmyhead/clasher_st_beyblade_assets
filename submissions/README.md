@@ -24,13 +24,17 @@ Clasher Studio (Data -> Submissions) ---------+  list / picture / mark applied o
 
 1. Create a Google Sheet, e.g. "Clasher submissions".
 2. In it, open **Extensions → Apps Script**. Replace `Code.gs` with this folder's `Code.gs`.
+   (A standalone script made at script.google.com works too: `setup` then creates a "Clasher submissions"
+   spreadsheet in your Drive and logs its link. To use an existing sheet instead, set the script property
+   `SHEET_ID` to its id or its whole link before running `setup`.)
 3. Optional, to match the scopes: **Project settings → Show "appsscript.json"**, then paste this folder's
    `appsscript.json`.
 4. Select `setup` in the function list and click **Run**. Allow the access it asks for (your spreadsheet and your
    Drive). The log prints:
    * `ADMIN_KEY`: for Clasher Studio;
    * `SUBMIT_KEY`: for the app;
-   * the link to the new "Clasher submissions" Drive folder.
+   * the link to the new "Clasher submissions" Drive folder;
+   * the link to the spreadsheet it writes to.
 
    It also creates the "Submissions" sheet. The keys are kept in **Project settings → Script properties**.
 5. **Deploy → New deployment**, type **Web app**: Execute as **Me**, Who has access **Anyone**. Copy the
@@ -93,7 +97,7 @@ and use `CONTRIBUTIONS_WANTED_URL=http://127.0.0.1:8000/_wanted.json`. Only `htt
 
 ## Tests
 * `node --test submissions/test/code.test.js`: the script against stand-ins for Sheets, Drive, Cache and Lock
-  (11 tests).
+  (13 tests).
 * End to end, over real HTTP: start the local server, then run `app_features/test/contributions_e2e_test.dart`
   (with `CONTRIBUTIONS_E2E_URL`; sends pictures and a batch of values) and
   `clasher_st_missing_data/test/features/submissions_e2e_test.dart` (with `SUBMISSIONS_E2E_URL`; reads them back).
