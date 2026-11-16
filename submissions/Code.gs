@@ -209,7 +209,7 @@ function setup() {
   folder_();
   if (!props.getProperty('ADMIN_KEY')) props.setProperty('ADMIN_KEY', Utilities.getUuid().replace(/-/g, ''));
   if (!props.getProperty('SUBMIT_KEY')) props.setProperty('SUBMIT_KEY', Utilities.getUuid().replace(/-/g, '').slice(0, 16));
-  console.log('ADMIN_KEY (Clasher Studio -> Settings -> Submissions): ' + props.getProperty('ADMIN_KEY'));
+  console.log('ADMIN_KEY (Clasher Studio -> Settings -> Publishing -> Submissions admin key): ' + props.getProperty('ADMIN_KEY'));
   console.log('SUBMIT_KEY (the app, CONTRIBUTIONS_KEY): ' + props.getProperty('SUBMIT_KEY'));
   console.log('Pictures folder: https://drive.google.com/drive/folders/' + props.getProperty('FOLDER_ID'));
   console.log('Submissions sheet: ' + sh.getParent().getUrl());
