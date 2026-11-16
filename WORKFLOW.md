@@ -43,9 +43,11 @@ flowchart LR
 Packaging** (which columns each JSON gets and which ones block the release). Language packs go to a different repo:
 **Publish -> Translations release**. The command lines below still work the same.
 
-**Pictures from the app:** people can send pictures from the app (Settings → Send pictures). They land in a Google
-Sheet (`submissions/`); Clasher Studio's Data → Submissions puts them on their rows with the sender's credit, and they
-ship with the next package like any other picture.
+**Data from the app:** every package also writes `data/_wanted.json`, the list of what each row is missing. The
+app's Settings → Help complete the catalog shows it; people fill in what they know (release dates, prices, card
+stats ...) and send missing pictures. Everything lands in a Google Sheet (`submissions/`), never straight in the
+app. Clasher Studio's Data → Submissions puts what you accept on its row with the sender's credit, and it ships with
+the next package like any other edit.
 
 **Assets folder:** only when you build a new version of the app. Add `--app-assets <folder>` in step 7 and it writes
 the copy of the data that ships inside the app (used on first launch and offline). Images are never put in assets.
@@ -99,7 +101,7 @@ flowchart TD
 |---|---|---|
 | scrape | `python fandom_scraper.py` (GUI) or `--target parts:X:blades ...` | rows and images in the three workbooks, `scrape_state/` (resume point and log) |
 | fill gaps | `python missing_data_tool.py` or the `missing_data_app` | edits, new / deleted rows, id shifts and new columns in the workbooks (each edit stamps `updated_at`); the `_deleted` tab (recently deleted rows with their pictures); the `_edit_log` tab (every change: when, tool, tab, row, field, old → new) and the `_columns` tab (columns added with the tool); a `.bak` on every save |
-| package | `python beyblade_data.py --parts ... --products ... --tcg ... --out data` | `data/<sheet>.json` for every sheet (including new rows and columns, `stockCombos.json` and `bladers.json`), `data/images/<sheet>-<id>[-min].webp` (bladers also `-fullBodyImage[-min]`), `data/models/<sheet>-<id>.glb` (3D models), `manifest.json` (with a `changes` summary), `_images_by_hobby.json`, `_package_diff.json` (rows/columns added, removed or changed since the last package), `_edit_log.json`, `_custom_columns.json`, and a catalog check report |
+| package | `python beyblade_data.py --parts ... --products ... --tcg ... --out data` | `data/<sheet>.json` for every sheet (including new rows and columns, `stockCombos.json` and `bladers.json`), `data/images/<sheet>-<id>[-min].webp` (bladers also `-fullBodyImage[-min]`), `data/models/<sheet>-<id>.glb` (3D models), `manifest.json` (with a `changes` summary), `_images_by_hobby.json`, `_package_diff.json` (rows/columns added, removed or changed since the last package), `_edit_log.json`, `_custom_columns.json`, `_wanted.json` (what's missing per row, for the app's "Help complete the catalog"), and a catalog check report |
 | release | `python build_release.py --tag <tag> [--drop-invalid] [--app-assets DIR]` | `_release/<tag>/`: `catalog.zip`, `catalog_manifest.json`, image packs, data packs, `packs.json` (and the bundled catalog in `DIR`) |
 | check only | `python catalog_check.py --data data` | a report; exits 1 when the app would reject or break on the data |
 

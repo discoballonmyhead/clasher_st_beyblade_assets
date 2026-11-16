@@ -47,7 +47,13 @@ class AppsScriptContributionsRepository implements ContributionsRepository {
         'consent': d.consent,
         'appVersion': _config.appVersion,
         'platform': _config.platform,
-        'image': {'mimeType': d.picture.mimeType, 'base64': base64Encode(d.picture.bytes)},
+        if (d.hasValues)
+          'values': {
+            for (final e in d.values.entries)
+              if (e.value.trim().isNotEmpty) e.key: e.value.trim(),
+          },
+        if (d.picture != null)
+          'image': {'mimeType': d.picture!.mimeType, 'base64': base64Encode(d.picture!.bytes)},
       },
     });
 

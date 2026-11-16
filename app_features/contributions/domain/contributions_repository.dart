@@ -21,6 +21,14 @@ abstract class ContributionTargetSearch {
   Future<List<ContributionTarget>> search(String type, String query, {int limit = 30});
 }
 
+/// The published list of what's missing (data/_wanted.json on the CDN).
+abstract class WantedSource {
+  bool get isConfigured;
+
+  /// [refresh] skips the in-memory copy.
+  Future<WantedList> load({bool refresh = false});
+}
+
 /// The phone's gallery / camera.
 abstract class ContributionPicturePicker {
   Future<PickedPicture?> pick({bool camera = false});

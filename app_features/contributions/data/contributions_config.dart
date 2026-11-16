@@ -1,8 +1,10 @@
-/// Where pictures go: the Apps Script web app (submissions/Code.gs) deployment URL, and its optional submit key.
+/// Where pictures go: the Apps Script web app (submissions/Code.gs) deployment URL, and its optional submit key;
+/// and where the list of what's missing comes from.
 ///
 /// By default both come from build flags, so nothing is hard-coded:
 ///   flutter run --dart-define=CONTRIBUTIONS_URL=https://script.google.com/macros/s/.../exec \
-///               --dart-define=CONTRIBUTIONS_KEY=<SUBMIT_KEY from setup()>
+///               --dart-define=CONTRIBUTIONS_KEY=<SUBMIT_KEY from setup()> \
+///               --dart-define=CONTRIBUTIONS_WANTED_URL=https://cdn.jsdelivr.net/gh/<owner>/<repo>@main/data/_wanted.json
 /// Register your own instance in DI to read them from AppEnv or remote config instead.
 class ContributionsConfig {
   const ContributionsConfig({
@@ -10,18 +12,24 @@ class ContributionsConfig {
     this.submitKey = '',
     this.appVersion = '',
     this.platform = '',
+    this.wantedUrl = '',
   });
 
   factory ContributionsConfig.fromEnvironment({String appVersion = '', String platform = ''}) =>
       ContributionsConfig(
         endpoint: const String.fromEnvironment('CONTRIBUTIONS_URL'),
         submitKey: const String.fromEnvironment('CONTRIBUTIONS_KEY'),
+        wantedUrl: const String.fromEnvironment('CONTRIBUTIONS_WANTED_URL'),
         appVersion: appVersion,
         platform: platform,
       );
 
   final String endpoint;
   final String submitKey;
+
+  /// What's missing: data/_wanted.json on the CDN, e.g.
+  /// https://cdn.jsdelivr.net/gh/<owner>/<repo>@main/data/_wanted.json (--dart-define=CONTRIBUTIONS_WANTED_URL).
+  final String wantedUrl;
 
   /// Sent with each submission (helps when reviewing): app version and OS.
   final String appVersion;

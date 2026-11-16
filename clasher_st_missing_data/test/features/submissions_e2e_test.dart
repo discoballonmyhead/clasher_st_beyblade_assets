@@ -1,4 +1,4 @@
-// Reads the pictures contributions_e2e_test.dart sent, over real HTTP. Skipped unless SUBMISSIONS_E2E_URL is set:
+// Reads the pictures and values contributions_e2e_test.dart sent, over real HTTP. Skipped unless SUBMISSIONS_E2E_URL is set:
 //   SUBMISSIONS_E2E_URL=http://127.0.0.1:8765/exec flutter test test/features/submissions_e2e_test.dart
 import 'dart:io';
 
@@ -19,12 +19,19 @@ void main() {
     final repo = AppsScriptSubmissionsRepository(settings);
 
     final items = (await repo.list()).valueOrNull!;
-    final kai = items.firstWhere((s) => s.username == 'kai');
+    final kai = items.firstWhere((s) => s.username == 'kai' && s.targetType == 'blades');
     final ren = items.firstWhere((s) => s.username == 'ren');
     expect(kai.targetType, 'blades');
     expect(kai.targetId, '203');
     expect(kai.creditText, '@kai_photos');
     expect(ren.creditText, 'ren', reason: 'no credit typed: the app sent the username');
+
+    final values = items.where((s) => s.isValue && s.targetId == 'P2').toList();
+    expect({for (final v in values) v.field: v.value}, {'releaseDate': '2023-07-15', 'itemCost': '15.99'});
+    expect(values.map((v) => v.batch).toSet(), hasLength(1), reason: 'sent together, one batch');
+    final p2Picture = items.firstWhere((s) => !s.isValue && s.targetId == 'P2');
+    expect(p2Picture.batch, values.first.batch);
+    expect(values.first.creditText, '@kai_photos');
 
     final img = (await repo.image(kai.id)).valueOrNull!;
     expect(img.sublist(0, 3), [0xFF, 0xD8, 0xFF]);

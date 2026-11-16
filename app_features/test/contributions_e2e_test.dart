@@ -1,4 +1,4 @@
-// Sends real HTTP to a running submissions web app (the deployed one, or submissions/test/local_server.js).
+// Sends pictures and values over real HTTP to a running submissions web app (the deployed one, or submissions/test/local_server.js).
 // Skipped unless CONTRIBUTIONS_E2E_URL is set:
 //   CONTRIBUTIONS_E2E_URL=http://127.0.0.1:8765/exec flutter test test/contributions_e2e_test.dart
 import 'dart:io';
@@ -39,6 +39,20 @@ void main() {
       const Contributor(username: 'ren', userId: 'u-2'),
     );
     expect(b.id, isNot(a.id));
+
+    // "Help complete the catalog": typed-in values with a picture, sent together
+    final c = await repo.submit(
+      ContributionDraft(
+        kind: ContributionKind.image,
+        target: const ContributionTarget(type: 'products', id: 'P2', name: 'Xtreme Stadium'),
+        picture: PickedPicture(bytes: jpeg, mimeType: 'image/jpeg'),
+        values: const {'releaseDate': '2023-07-15', 'itemCost': '15.99'},
+        credit: '@kai_photos',
+        consent: true,
+      ),
+      const Contributor(username: 'kai', userId: 'u-1'),
+    );
+    expect(c.id, isNotEmpty);
 
     final wrongKey = AppsScriptContributionsRepository(ContributionsConfig(endpoint: url, submitKey: 'nope'));
     await expectLater(

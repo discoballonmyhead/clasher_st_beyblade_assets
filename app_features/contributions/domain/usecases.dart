@@ -31,14 +31,23 @@ class SubmitContributionUseCase {
     if (!d.target.isOther && d.target.id.isEmpty) {
       throw const ContributionException('invalid', 'Pick what the picture is of.');
     }
-    if (d.kind == ContributionKind.fullBodyImage && !d.target.isBlader) {
-      throw const ContributionException('invalid', 'Full-body pictures are for bladers.');
+    final pic = d.picture;
+    if (pic == null && !d.hasValues) {
+      throw const ContributionException('invalid', 'Add a picture or fill in a field.');
     }
-    if (d.picture.bytes.length > maxBytes) {
-      throw const ContributionException('too_large', 'The picture is too big (max 6 MB).');
+    if (d.hasValues && d.target.isOther) {
+      throw const ContributionException('invalid', 'Pick what the values are for.');
     }
-    if (sniffImageMime(d.picture.bytes) == null) {
-      throw const ContributionException('invalid', 'Pick a JPEG, PNG or WebP picture.');
+    if (pic != null) {
+      if (d.kind == ContributionKind.fullBodyImage && !d.target.isBlader) {
+        throw const ContributionException('invalid', 'Full-body pictures are for bladers.');
+      }
+      if (pic.bytes.length > maxBytes) {
+        throw const ContributionException('too_large', 'The picture is too big (max 6 MB).');
+      }
+      if (sniffImageMime(pic.bytes) == null) {
+        throw const ContributionException('invalid', 'Pick a JPEG, PNG or WebP picture.');
+      }
     }
     return _repo.submit(d, who);
   }

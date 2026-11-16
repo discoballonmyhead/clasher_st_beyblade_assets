@@ -5,7 +5,7 @@ const vm = require('node:vm');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
 
-function harness(props = {}) {
+function harness(props = {}, {standalone = false} = {}) {
   const store = {...props};
   const cache = {};
   const files = {};
@@ -26,9 +26,17 @@ function harness(props = {}) {
     }
     getRange(r, c) { return new Range(this, r, c); }
   }
+  const opened = [];
+  let created = !standalone;
   const ss = {
+    getId: () => 'sheet1',
+    getUrl: () => 'https://docs.google.com/spreadsheets/d/sheet1/edit',
     getSheetByName: (n) => sheets[n] || null,
-    insertSheet: (n) => (sheets[n] = new Sheet()),
+    insertSheet: (n) => {
+      sheets[n] = new Sheet();
+      sheets[n].getParent = () => ss;
+      return sheets[n];
+    },
   };
   const toBytes = (b64) => [...Buffer.from(b64, 'base64')].map((x) => (x > 127 ? x - 256 : x)); // signed like GAS
   const ctx = {
@@ -43,7 +51,12 @@ function harness(props = {}) {
       put: (k, v) => { cache[k] = v; },
     })},
     LockService: {getScriptLock: () => ({waitLock() {}, releaseLock() {}})},
-    SpreadsheetApp: {getActiveSpreadsheet: () => ss, openById: () => ss},
+    // standalone: no spreadsheet until setup() creates one (or SHEET_ID names one)
+    SpreadsheetApp: {
+      getActiveSpreadsheet: () => (standalone ? null : ss),
+      openById: (id) => { opened.push(id); return ss; },
+      create: () => { created = true; return ss; },
+    },
     DriveApp: {
       createFolder: () => ({getId: () => 'folder1'}),
       getFolderById: () => ({createFile: (blob) => {
@@ -73,7 +86,7 @@ function harness(props = {}) {
   vm.createContext(ctx);
   vm.runInContext(SOURCE, ctx);
   const post = (body) => JSON.parse(ctx.doPost({postData: {contents: JSON.stringify(body)}}).text);
-  return {ctx, post, store, sheets, files, cache};
+  return {ctx, post, store, sheets, files, cache, opened, wasCreated: () => created};
 }
 
 

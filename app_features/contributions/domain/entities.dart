@@ -62,15 +62,24 @@ class ContributionDraft extends Equatable {
   const ContributionDraft({
     required this.kind,
     required this.target,
-    required this.picture,
+    this.picture,
+    this.values = const {},
     this.credit,
     this.note,
     this.consent = false,
   });
 
+  /// Which picture [picture] is (ignored without one).
   final ContributionKind kind;
   final ContributionTarget target;
-  final PickedPicture picture;
+
+  /// Optional when [values] has something.
+  final PickedPicture? picture;
+
+  /// Missing fields filled in: field name -> value as typed (e.g. {"mass": "34.6", "type": "attack"}).
+  final Map<String, String> values;
+
+  bool get hasValues => values.values.any((v) => v.trim().isNotEmpty);
 
   /// How the person wants to be credited in the app (a name, a handle, a link). Optional: when empty the
   /// username is used.
@@ -81,7 +90,7 @@ class ContributionDraft extends Equatable {
   final bool consent;
 
   @override
-  List<Object?> get props => [kind, target, picture, credit, note, consent];
+  List<Object?> get props => [kind, target, picture, values, credit, note, consent];
 }
 
 class ContributionReceipt extends Equatable {
@@ -113,4 +122,111 @@ String? sniffImageMime(Uint8List b) {
     return 'image/webp';
   }
   return null;
+}
+
+// ── what's missing (data/_wanted.json) ──────────────────────────────────────────
+
+/// How a missing field is filled in.
+enum WantedFieldType { number, date, choice, text, image }
+
+class WantedField extends Equatable {
+  const WantedField({
+    required this.name,
+    required this.type,
+    required this.label,
+    this.unit,
+    this.hint,
+    this.choices = const [],
+  });
+
+  final String name;
+  final WantedFieldType type;
+  final String label;
+  final String? unit;
+  final String? hint;
+  final List<String> choices;
+
+  bool get isPicture => type == WantedFieldType.image;
+
+  /// Null when [value] is acceptable for this field, else why not.
+  String? check(String value) {
+    final v = value.trim();
+    if (v.isEmpty) return null;
+    switch (type) {
+      case WantedFieldType.number:
+        final n = double.tryParse(v.replaceAll(',', '.'));
+        if (n == null) return 'A number, e.g. 34.6';
+        if (n < 0) return 'Can\'t be negative';
+        return null;
+      case WantedFieldType.date:
+        return RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v) && DateTime.tryParse(v) != null
+            ? null
+            : 'A date like 2024-07-15';
+      case WantedFieldType.choice:
+        return choices.contains(v) ? null : 'Pick one of the options';
+      case WantedFieldType.text:
+      case WantedFieldType.image:
+        return v.length > 300 ? 'Keep it under 300 characters' : null;
+    }
+  }
+
+  @override
+  List<Object?> get props => [name, type, label, unit, hint, choices];
+}
+
+/// One catalog sheet in the wanted list (Blades, Boxes and sets, Bladers ...).
+class WantedSheet extends Equatable {
+  const WantedSheet({required this.key, required this.label, this.generation, this.fields = const {}});
+  final String key;
+  final String label;
+  final String? generation;
+  final Map<String, WantedField> fields;
+  @override
+  List<Object?> get props => [key, label, generation, fields];
+}
+
+/// A catalog entry with gaps.
+class WantedItem extends Equatable {
+  const WantedItem({
+    required this.sheet,
+    required this.id,
+    required this.name,
+    required this.missing,
+    this.code = '',
+    this.variant,
+    this.generation,
+    this.hobby,
+    this.thumb,
+  });
+
+  final String sheet;
+  final String id;
+  final String name;
+  final String code;
+  final String? variant;
+  final String? generation;
+  final String? hobby;
+
+  /// A small picture of it when there is one.
+  final String? thumb;
+
+  /// Missing field names (pictures: image / fullBodyImage).
+  final List<String> missing;
+
+  ContributionTarget get target => ContributionTarget(type: sheet, id: id, name: name);
+
+  @override
+  List<Object?> get props => [sheet, id, name, code, variant, generation, hobby, thumb, missing];
+}
+
+class WantedList extends Equatable {
+  const WantedList({required this.sheets, required this.items, this.generatedAt});
+  final Map<String, WantedSheet> sheets;
+  final List<WantedItem> items;
+  final DateTime? generatedAt;
+
+  WantedField? field(String sheet, String name) => sheets[sheet]?.fields[name];
+
+  @override
+  List<Object?> get props => [sheets, items, generatedAt];
 }

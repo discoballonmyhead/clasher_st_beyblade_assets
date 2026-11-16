@@ -55,7 +55,7 @@ class SubmissionsState extends Equatable {
   List<Object?> get props => [loading, configured, items, images.keys.toList(), busy, error, message];
 }
 
-/// Data -> Submissions: pictures sent from the app, put on their rows (with the credit) in the open workbook.
+/// Data -> Submissions: pictures and values sent from the app, put on their rows (with the credit) in the open workbook.
 class SubmissionsCubit extends Cubit<SubmissionsState> {
   SubmissionsCubit({
     required SubmissionsRepository repository,
@@ -84,7 +84,7 @@ class SubmissionsCubit extends Cubit<SubmissionsState> {
         emit(state.copyWith(loading: false, items: items));
         for (final s in items) {
           if (isClosed) return;
-          await _loadImage(s.id);
+          if (!s.isValue) await _loadImage(s.id);
         }
     }
   }
@@ -108,7 +108,8 @@ class SubmissionsCubit extends Cubit<SubmissionsState> {
     return null;
   }
 
-  /// Puts the picture on its row and adds the credit to the row's credits; marks the submission applied.
+  /// Puts the picture (or the value) on its row and adds the credit to the row's credits; marks the submission
+  /// applied.
   Future<void> apply(Submission s, List<SheetInfo> sheets) async {
     final tab = tabFor(s, sheets);
     if (tab == null || s.isOther) return;
@@ -120,10 +121,22 @@ class SubmissionsCubit extends Cubit<SubmissionsState> {
           message: message == null ? null : () => message,
         ));
 
-    final bytes = await _loadImage(s.id);
-    if (bytes == null) return done(error: 'Couldn\'t download the picture of ${s.targetName}.');
-    final put = await _data.setImage(tab.name, s.targetId, bytes, field: s.pictureField);
-    if (put case Err(:final failure)) return done(error: '${tab.name} #${s.targetId}: ${failure.message}');
+    final what = s.isValue ? '${s.field} = ${s.value}' : 'Picture';
+    var replaced = '';
+    if (s.isValue) {
+      if (s.field.isEmpty) return done(error: 'This submission has no field.');
+      final current = (await _data.row(tab.name, s.targetId)).valueOrNull;
+      if (current == null) return done(error: '${tab.name} has no row #${s.targetId}.');
+      final had = current.values[s.field]?.toString().trim() ?? '';
+      if (had.isNotEmpty && had != s.value) replaced = ' (it was "$had")';
+      final put = await _data.updateRow(tab.name, s.targetId, {s.field: s.value});
+      if (put case Err(:final failure)) return done(error: '${tab.name} #${s.targetId}: ${failure.message}');
+    } else {
+      final bytes = await _loadImage(s.id);
+      if (bytes == null) return done(error: 'Couldn\'t download the picture of ${s.targetName}.');
+      final put = await _data.setImage(tab.name, s.targetId, bytes, field: s.pictureField);
+      if (put case Err(:final failure)) return done(error: '${tab.name} #${s.targetId}: ${failure.message}');
+    }
 
     final row = (await _data.row(tab.name, s.targetId)).valueOrNull;
     final before = row?.values['credits']?.toString() ?? '';
@@ -131,7 +144,7 @@ class SubmissionsCubit extends Cubit<SubmissionsState> {
     if (after != before) {
       final upd = await _data.updateRow(tab.name, s.targetId, {'credits': after});
       if (upd case Err(:final failure)) {
-        return done(error: 'Picture put on ${tab.name} #${s.targetId}, but the credit wasn\'t: ${failure.message}');
+        return done(error: '$what put on ${tab.name} #${s.targetId}, but the credit wasn\'t: ${failure.message}');
       }
     }
     _changes.notify(DataChange.rowsEdited);
@@ -144,7 +157,11 @@ class SubmissionsCubit extends Cubit<SubmissionsState> {
         error: 'Put on $where - save the workbook to keep it. It couldn\'t be marked applied in the sheet: '
             '${f.message}',
       ),
-      (_) => done(remove: true, message: 'Put on $where with credit "${s.creditText}" - save the workbook to keep it.'),
+      (_) => done(
+        remove: true,
+        message: '${s.isValue ? '$what put' : 'Put'} on $where$replaced with credit "${s.creditText}" - save the '
+            'workbook to keep it.',
+      ),
     );
   }
 
