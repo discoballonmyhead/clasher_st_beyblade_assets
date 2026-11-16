@@ -525,6 +525,8 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
                                  for h, gs in images_by_hobby.items()}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     report_changes(out_dir, prev, prev_when, edit_log, custom_cols, manifest, log)
+    import wanted  # what's missing, for the app's "Help complete the catalog" page (data/_wanted.json)
+    wanted.write(out_dir, log)
 
     # what the app would reject or fail to read (build_release.py blocks on these)
     import catalog_check
