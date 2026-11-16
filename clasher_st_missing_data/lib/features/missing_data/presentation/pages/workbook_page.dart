@@ -450,7 +450,7 @@ class _WorkbookPageState extends State<WorkbookPage> {
                   icon: const Icon(Icons.delete_sweep_outlined),
                 ),
                 IconButton(
-                  tooltip: 'Submissions (pictures sent from the app)',
+                  tooltip: 'Submissions (sent from the app)',
                   onPressed: () => showSubmissionsDialog(context),
                   icon: const Icon(Icons.inbox_outlined),
                 ),

@@ -4,8 +4,8 @@ App features kept here so the data tools and the clasher_st app stay in step. Th
 `flutter_integration/` folder. Each feature folder is a drop-in for `lib/features/`:
 
 * `beyblade/`: the app's beyblade feature. It now reads 3D models, stock combos, bladers and credits; see below.
-* `contributions/`: new. **Settings → Send pictures**: people send pictures with their username and an optional
-  credit. See *Contributions* below.
+* `contributions/`: new. **Settings → Help complete the catalog**: people see what the catalog is missing, fill in
+  what they know or send pictures, with their username and an optional credit. See *Contributions* below.
 
 ```bash
 cp -r app_features/beyblade app_features/contributions <app>/lib/features/
@@ -68,9 +68,24 @@ or accessory page shows it as a "Credits" row in the specs, and a blader's sheet
 Studio adds a contributor's credit to the row when it applies a picture they sent. You can also type credits by hand
 in any workbook.
 
-## Contributions (Settings → Send pictures)
+## Contributions (Settings → Help complete the catalog)
 
-People pick what the picture is of: a part (searched by name or code), a blader (portrait or full body), a box, an
+An isolated feature: its own routes, its own cubits, nothing in the catalog or the beyblade feature changes. What
+people send goes to the Google Sheet in `submissions/`; you decide in Clasher Studio what gets used.
+
+**Help complete the catalog** (`/settings/contribute`, `MissingListPage`): the list of what's missing, downloaded
+from `data/_wanted.json` on the CDN (the packager writes it; kept in memory for 10 minutes). Chips filter by sheet
+(Boxes and sets, Cards, Bladers ...), a switch by pictures / details, and a search box by name or code. Each entry
+shows what it's missing.
+
+**One entry** (`/settings/contribute/item`, `FillMissingPage`, `extra` = `(WantedItem, WantedSheet?)`): an input
+per missing field by its type (number with its unit, date `YYYY-MM-DD`, a dropdown for choices, text), each
+checked as it's typed; a picture slot for a missing picture (a blader can get a portrait or a full-body picture);
+credit, note and consent. Values and the picture are sent together (one batch); only values that pass their check
+are sent.
+
+**Send something else** (`/settings/contribute/send`, `ContributePage`): the free-form page. People pick what the
+picture is of: a part (searched by name or code), a blader (portrait or full body), a box, an
 accessory, or "Other" with a note. Then they choose a picture from the gallery or camera (scaled to 1600 px and
 compressed on the phone), add an optional credit and note, confirm they may share it, and send. The picture goes to
 the Google Sheet / Drive web app in `submissions/` together with their **username** and user id. You review it in
@@ -82,8 +97,10 @@ Clasher Studio (Data → Submissions), and **Apply** puts it on the row with the
 2. DI, after `BeybladeDependencies.init()`: `ContributionsDependencies.init(appVersion: '<version>');`
 3. Router: add `...ContributionsRoutes.routes`. Settings page: add `const ContributeSettingsTile()` where it fits.
 
-Build with `--dart-define=CONTRIBUTIONS_URL=<web app /exec URL> --dart-define=CONTRIBUTIONS_KEY=<SUBMIT_KEY>`.
-Without them the page says sending isn't set up.
+Build with `--dart-define=CONTRIBUTIONS_URL=<web app /exec URL> --dart-define=CONTRIBUTIONS_KEY=<SUBMIT_KEY>
+--dart-define=CONTRIBUTIONS_WANTED_URL=https://cdn.jsdelivr.net/gh/<owner>/<repo>@main/data/_wanted.json`.
+Without the first two the pages say sending isn't set up; without the last the list says it isn't set up and
+offers only "Send something else".
 
 **Username:** `SupabaseContributorIdentity` sends the first of these set in the signed-in user's metadata:
 `username`, `user_name`, `preferred_username`, `display_name`, `full_name`, `name`. If none is set, it sends the part
@@ -99,11 +116,13 @@ register your own `ContributorIdentity` before `ContributionsDependencies.init()
 * `data/`:
   * `AppsScriptContributionsRepository` sends JSON as text/plain (no CORS preflight on web) and reads Apps Script's
     302 answer with a GET;
+  * `HttpWantedSource` downloads and parses `_wanted.json` (`parseWanted` skips broken entries);
   * also the Supabase identity, the catalog search and the image_picker picker.
-* `presentation/`: `ContributeCubit`, `ContributePage` and `ContributeSettingsTile`, built from plain Material
-  widgets. Restyle them with the Holo components and TrTokens texts as you like.
-* A route `extra` can be a `ContributionTarget`, to open the page on a specific part, e.g. from a "Send a picture of
-  this" button.
+* `presentation/`: `MissingListCubit` / `MissingListPage`, `FillMissingCubit` / `FillMissingPage`, `ContributeCubit`
+  / `ContributePage` and `ContributeSettingsTile`, built from plain Material widgets. Restyle them with the Holo
+  components and TrTokens texts as you like.
+* The `/send` route's `extra` can be a `ContributionTarget`, to open the page on a specific part, e.g. from a "Send
+  a picture of this" button.
 
 ## How the data gets in
 * `catalog.zip` (download) and the bundled assets carry `stockCombos.json` and `bladers.json` when the catalog has
@@ -139,7 +158,14 @@ register your own `ContributorIdentity` before `ContributionsDependencies.init()
   * the client: the request body, the redirect, the username as the default credit, errors;
   * the checks before sending;
   * the page end to end with fakes: part, blader full body, signed out, a server refusal.
-* `test/contributions_e2e_test.dart` sends over real HTTP to the web app; it ran against the local server.
+* `test/missing_data_test.dart` (14 tests) covers:
+  * the packager's real `_wanted.json` for `samples/` (in `test/fixtures/`), broken entries, field checks by type;
+  * the HTTP source (cached until a refresh, readable errors);
+  * the list filters, the per-entry form (values alone, values with a picture, full-body pictures, what blocks
+    sending) and what the client sends;
+  * both pages with fakes.
+* `test/contributions_e2e_test.dart` sends pictures and a batch of values over real HTTP to the web app; it ran
+  against the local server, and Studio's e2e test read them back.
 * `test/catalog_extras_test.dart` runs the packager's real output for `samples/` (in `test/fixtures/`) through the
   parser, the models, the store and the repository. It ran against a stand-in package with stubs for the app parts
   that aren't in this folder.

@@ -4,7 +4,8 @@ import 'package:equatable/equatable.dart';
 
 import '../../../core/error/failure.dart';
 
-/// A picture someone sent from the app (one row of the Submissions sheet).
+/// A picture or one field value someone sent from the app (one row of the Submissions sheet). Values sent
+/// together share a [batch].
 class Submission extends Equatable {
   const Submission({
     required this.id,
@@ -21,6 +22,9 @@ class Submission extends Equatable {
     this.bytes = 0,
     this.platform = '',
     this.appVersion = '',
+    this.field = '',
+    this.value = '',
+    this.batch = '',
   });
 
   final String id;
@@ -29,7 +33,8 @@ class Submission extends Equatable {
   /// new, applied, rejected.
   final String status;
 
-  /// image (the main picture / a blader's portrait), fullBodyImage (a blader's full body) or other.
+  /// image (the main picture / a blader's portrait), fullBodyImage (a blader's full body), other, or value (a
+  /// typed-in [field] = [value], no picture).
   final String kind;
 
   /// The catalog key (blades, lockChips, products, bladers ...) or "other".
@@ -46,6 +51,15 @@ class Submission extends Equatable {
   final String platform;
   final String appVersion;
 
+  /// For value rows: the column and what was typed (already checked by type in the app).
+  final String field;
+  final String value;
+
+  /// Shared by everything sent at once.
+  final String batch;
+
+  bool get isValue => kind == 'value';
+
   bool get isOther => targetType == 'other' || kind == 'other';
 
   /// The picture column it goes into: null = the tab's main picture.
@@ -55,7 +69,7 @@ class Submission extends Equatable {
   String get creditText => credit.trim().isNotEmpty ? credit.trim() : username;
 
   @override
-  List<Object?> get props => [id, status, kind, targetType, targetId, credit, note];
+  List<Object?> get props => [id, status, kind, targetType, targetId, credit, note, field, value, batch];
 }
 
 /// The submissions web app (Apps Script). Everything needs the admin key.

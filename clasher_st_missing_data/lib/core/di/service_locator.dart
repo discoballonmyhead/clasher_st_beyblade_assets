@@ -212,7 +212,7 @@ Future<void> initDependencies({
       () => studioRepository ?? StudioRepositoryImpl(sl(instanceName: studioEngine), sl()),
     )
     ..registerLazySingleton(() => JobCenter(sl()), dispose: (j) => j.dispose())
-    // pictures sent from the app (Apps Script), reviewed in Data -> Submissions
+    // pictures and values sent from the app (Apps Script), reviewed in Data -> Submissions
     ..registerLazySingleton<SubmissionsRepository>(
       () => submissionsRepository ?? AppsScriptSubmissionsRepository(sl()),
     )

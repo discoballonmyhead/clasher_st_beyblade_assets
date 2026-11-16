@@ -13,7 +13,7 @@ Humans manage three Excel workbooks → the packager turns them into `data/*.jso
 | `beyblade_data.py` | packager: workbooks → `data/` (PNG in the sheet → WebP) |
 | `build_release.py` | release builder: `data/` → `catalog.zip` + manifest, image packs and data packs per hobby/generation |
 | `catalog_check.py` | the release gate: checks `data/` against what the app accepts (required sheets and fields, duplicate ids, ProductContents keys) |
-| `app_features/` | app features kept in step with the data: `beyblade/` (reads 3D models, stock combos, bladers, credits) and `contributions/` (Settings → Send pictures) – see its README |
+| `app_features/` | app features kept in step with the data: `beyblade/` (reads 3D models, stock combos, bladers, credits) and `contributions/` (Settings → Help complete the catalog) – see its README |
 | `submissions/` | the Google Apps Script web app that stores pictures people send from the app in a Google Sheet + Drive; Clasher Studio reviews and applies them – see its README |
 | `beyblade_store.py` | shared workbook read/write helper |
 | `missing_data_tool.py` | finds empty fields / images per tab and fills them (auto, from the wiki, or by hand) |
@@ -65,8 +65,11 @@ by hand in the missing data tool.
   `metalBladeDataID` + `assistBladeDataID`, plus `ratchetDataID` and `bitDataID`). The release check stops a combo the app
   couldn't build, and warns when a combo part isn't in that product's `ProductContents`.
 * `credits` on every data tab: who contributed a row's data or pictures, shown on the app's detail pages. Pictures
-  people send from the app (Settings → Send pictures → `submissions/`) come with their username and an optional
-  credit; Clasher Studio's Data → Submissions puts the picture on the row and adds the credit.
+  and values people send from the app (Settings → Help complete the catalog → `submissions/`) come with their
+  username and an optional credit; Clasher Studio's Data → Submissions puts the picture or value on the row and adds
+  the credit.
+* `data/_wanted.json` (written by `wanted.py` with every package, not in `catalog.zip`): what each row is missing,
+  with each field's input type. The app's "Help complete the catalog" page lists it so people know what to send.
 * Opening an older workbook in the tools adds the new columns (`model3d`, `credits` ...) and the new tabs
   (`Bladers`, `StockCombos`); save to keep them.
 * `Bladers` (parts workbook): the characters who use parts in the show, with two optional pictures (portrait =

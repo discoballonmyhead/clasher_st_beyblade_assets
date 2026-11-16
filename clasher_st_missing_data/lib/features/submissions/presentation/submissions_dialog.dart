@@ -7,7 +7,7 @@ import '../../missing_data/presentation/cubits/workbook/workbook_cubit.dart';
 import '../domain/submission.dart';
 import 'submissions_cubit.dart';
 
-/// Pictures sent from the app (Settings -> Send pictures), waiting for review.
+/// Pictures and typed-in values sent from the app (Settings -> Help complete the catalog), waiting for review.
 Future<void> showSubmissionsDialog(BuildContext context) {
   final sheets = context.read<WorkbookCubit>().state.summary?.sheets ?? const <SheetInfo>[];
   return showDialog<void>(
@@ -94,17 +94,42 @@ class _SubmissionCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             alignment: Alignment.center,
-            child: img == null
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : Image.memory(img, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.broken_image)),
+            child: sub.isValue
+                ? Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.edit_note, color: cs.primary),
+                      Text(sub.field, style: tt.labelSmall, textAlign: TextAlign.center, maxLines: 2),
+                    ]),
+                  )
+                : img == null
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    : Image.memory(img,
+                        fit: BoxFit.contain, errorBuilder: (_, _, _) => const Icon(Icons.broken_image)),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(what, style: tt.titleSmall),
+              if (sub.isValue)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: SelectableText.rich(
+                    key: ValueKey('value-${sub.id}'),
+                    TextSpan(children: [
+                      TextSpan(text: '${sub.field} = ', style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+                      TextSpan(text: sub.value, style: tt.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ),
               Text(
                 [
-                  if (sub.kind == 'fullBodyImage') 'full-body picture' else if (!sub.isOther) 'picture',
+                  if (sub.isValue)
+                    'value'
+                  else if (sub.kind == 'fullBodyImage')
+                    'full-body picture'
+                  else if (!sub.isOther)
+                    'picture',
                   'from ${sub.username}',
                   if (sub.credit.isNotEmpty && sub.credit != sub.username) 'credit "${sub.credit}"',
                   if (sub.submittedAt != null) sub.submittedAt!.toLocal().toString().substring(0, 16),
@@ -126,10 +151,12 @@ class _SubmissionCard extends StatelessWidget {
                   Tooltip(
                     message: tab == null
                         ? 'Open the workbook that has the ${sub.targetType} tab'
-                        : 'Put it on ${tab.name} #${sub.targetId} and add the credit',
+                        : sub.isValue
+                            ? 'Set ${sub.field} on ${tab.name} #${sub.targetId} and add the credit'
+                            : 'Put it on ${tab.name} #${sub.targetId} and add the credit',
                     child: FilledButton.icon(
                       key: ValueKey('apply-${sub.id}'),
-                      onPressed: busy || tab == null || img == null ? null : () => cubit.apply(sub, sheets),
+                      onPressed: busy || tab == null || (img == null && !sub.isValue) ? null : () => cubit.apply(sub, sheets),
                       icon: busy
                           ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                           : const Icon(Icons.check, size: 18),

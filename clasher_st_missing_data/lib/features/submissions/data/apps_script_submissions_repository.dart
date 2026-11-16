@@ -103,6 +103,9 @@ class AppsScriptSubmissionsRepository implements SubmissionsRepository {
       bytes: int.tryParse(s('bytes')) ?? 0,
       platform: s('platform'),
       appVersion: s('appVersion'),
+      field: s('field'),
+      value: s('value'),
+      batch: s('batch'),
     );
   }
 }
