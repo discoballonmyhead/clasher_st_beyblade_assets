@@ -155,6 +155,18 @@ class SettingsPage extends StatelessWidget {
                     help:
                         'Language packs go to ${p.translationsRepoSlug} @ ${p.translationsTag}',
                   ),
+                  field(
+                    'Submissions web app URL',
+                    p.submissionsUrl,
+                    (x, v) => x.copyWith(submissionsUrl: v.trim()),
+                    help: 'Pictures sent from the app (Apps Script: submissions/README.md). Data -> Submissions.',
+                  ),
+                  field(
+                    'Submissions admin key',
+                    p.submissionsAdminKey,
+                    (x, v) => x.copyWith(submissionsAdminKey: v.trim()),
+                    help: 'ADMIN_KEY printed by setup(). Kept with your settings (and in exported backups).',
+                  ),
                   Row(
                     children: [
                       FilledButton.icon(

@@ -39,6 +39,9 @@ import '../services/data_change_notifier.dart';
 import '../services/file_picker_service.dart';
 import '../services/unsaved_work.dart';
 import '../settings/app_settings.dart';
+import '../../features/submissions/data/apps_script_submissions_repository.dart';
+import '../../features/submissions/domain/submission.dart';
+import '../../features/submissions/presentation/submissions_cubit.dart';
 
 /// The service locator. Everything is registered here and nowhere else.
 final sl = GetIt.instance;
@@ -55,6 +58,7 @@ Future<void> initDependencies({
   MissingDataRepository? repository,
   TranslationRepository? translationRepository,
   StudioRepository? studioRepository,
+  SubmissionsRepository? submissionsRepository,
 }) async {
   // ── core ──
   sl.registerLazySingleton<AppSettings>(() => AppSettings(prefs!));
@@ -208,6 +212,11 @@ Future<void> initDependencies({
       () => studioRepository ?? StudioRepositoryImpl(sl(instanceName: studioEngine), sl()),
     )
     ..registerLazySingleton(() => JobCenter(sl()), dispose: (j) => j.dispose())
+    // pictures sent from the app (Apps Script), reviewed in Data -> Submissions
+    ..registerLazySingleton<SubmissionsRepository>(
+      () => submissionsRepository ?? AppsScriptSubmissionsRepository(sl()),
+    )
+    ..registerFactory(() => SubmissionsCubit(repository: sl(), data: sl(), changes: sl()))
     ..registerLazySingleton(() => DataReleaseCubit(repository: sl(), jobs: sl(), settings: sl()))
     ..registerLazySingleton(() => TranslationsReleaseCubit(repository: sl(), jobs: sl(), settings: sl()))
     ..registerLazySingleton(() => PackagingCubit(sl()))

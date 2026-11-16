@@ -92,6 +92,7 @@ class FakeRepository implements MissingDataRepository {
     sheets: [
       SheetInfo(
         name: 'Parts_X_Blades',
+        json: 'blades',
         rows: rowsData.length,
         rowsWithMissing: rowsData.keys
             .where((k) => _missing(k).isNotEmpty)

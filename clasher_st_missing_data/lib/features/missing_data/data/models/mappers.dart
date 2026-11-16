@@ -34,6 +34,7 @@ WorkbookSummary workbookFromJson(Json j) => WorkbookSummary(
         generation: s['generation'] == null ? null : _s(s['generation']),
         generations: [for (final g in (s['generations'] as List? ?? const [])) '$g'],
         hobby: s['hobby'] == null ? null : _s(s['hobby']),
+        json: s['json'] == null ? null : _s(s['json']),
       ),
   ],
   dirty: j['dirty'] == true,

@@ -27,5 +27,9 @@ class ContributionsConfig {
   final String appVersion;
   final String platform;
 
-  bool get isConfigured => endpoint.startsWith('https://');
+  /// https only; plain http just for a local test server (submissions/test/local_server.js).
+  bool get isConfigured =>
+      endpoint.startsWith('https://') ||
+      endpoint.startsWith('http://127.0.0.1') ||
+      endpoint.startsWith('http://localhost');
 }

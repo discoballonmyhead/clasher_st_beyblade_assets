@@ -1421,7 +1421,9 @@ class Engine:
                            # a part tab belongs to one generation; Products/Accessories/TCG hold several
                            "generation": part[0] if part else None,
                            "generations": [part[0]] if part else gens,
-                           "hobby": S.TCG_HOBBY_NAME if name.startswith("TCG_") else S.HOBBY_NAME})
+                           "hobby": S.TCG_HOBBY_NAME if name.startswith("TCG_") else S.HOBBY_NAME,
+                           # the catalog key the app uses for this tab (blades, products, bladers ...)
+                           "json": json_name(name)})
         log_rows = (len(self.book.rows(self.book.wb[S.EDIT_LOG_SHEET]))
                     if S.EDIT_LOG_SHEET in self.book.wb.sheetnames else 0)
         return {"path": self.path, "kind": kind_of_workbook(self.path), "sheets": sheets,

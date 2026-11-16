@@ -287,13 +287,20 @@ class Book:
         return ws
 
     def ensure_schema_columns(self):
-        """Adds columns a newer schema defines to the part tabs this workbook already has.
+        """Adds columns a newer schema defines to the data tabs this workbook already has.
         -> [(tab, column)] added (the workbook is then dirty)."""
         before = len(self.__dict__.get("added_columns", []))
         for name in list(self.wb.sheetnames):
             part = S.parse_part_sheet(name)
             if part and part[2]:
                 self.part_sheet(part[0], part[1])
+            elif name in S.SHEETS:  # Products, Accessories, TCG ... get new columns (credits) too
+                self.named_sheet(name)
+        # tabs a newer schema added to this kind of workbook (Bladers, StockCombos) are created, empty
+        for name, cfg in S.SHEETS.items():
+            if cfg.get("book") == self.kind and name not in self.wb.sheetnames:
+                self.named_sheet(name)
+                self.__dict__.setdefault("added_columns", []).append((name, "(new tab)"))
         return self.__dict__.get("added_columns", [])[before:]
 
     def part_sheet(self, gen, key):
