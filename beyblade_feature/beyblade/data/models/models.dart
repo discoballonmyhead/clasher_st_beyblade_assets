@@ -48,6 +48,7 @@ class _SharedPartFieldsModel {
         model3dUrl = nullableString(ciGet(row, 'model3dUrl')),
         model3dHash = nullableString(ciGet(row, 'model3dHash')),
         bladerIds = parseIdList(ciGet(row, 'bladerIDs')),
+        credits = nullableString(ciGet(row, 'credits')),
         mass = parseDouble(ciGet(row, 'mass')) ?? 0,
         legalityRaw = requiredString(row, 'wbolegality'),
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
@@ -68,6 +69,7 @@ class _SharedPartFieldsModel {
   final String? model3dUrl;
   final String? model3dHash;
   final List<String> bladerIds;
+  final String? credits;
   final double mass;
   final String legalityRaw;
   final bool isIncomplete;
@@ -109,6 +111,7 @@ class BladeModel {
         model3dUrl: _shared.model3dUrl,
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
+        credits: _shared.credits,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -157,6 +160,7 @@ class RatchetModel {
         model3dUrl: _shared.model3dUrl,
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
+        credits: _shared.credits,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -209,6 +213,7 @@ class BitModel {
         model3dUrl: _shared.model3dUrl,
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
+        credits: _shared.credits,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -250,6 +255,7 @@ class LockChipModel {
         model3dUrl: _shared.model3dUrl,
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
+        credits: _shared.credits,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -302,6 +308,7 @@ class OverBladeModel {
         model3dUrl: _p.shared.model3dUrl,
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
+        credits: _p.shared.credits,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -334,6 +341,7 @@ class MetalBladeModel {
         model3dUrl: _p.shared.model3dUrl,
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
+        credits: _p.shared.credits,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -366,6 +374,7 @@ class MainBladeModel {
         model3dUrl: _p.shared.model3dUrl,
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
+        credits: _p.shared.credits,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -400,6 +409,7 @@ class AssistBladeModel {
         model3dUrl: _p.shared.model3dUrl,
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
+        credits: _p.shared.credits,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -427,6 +437,7 @@ class ProductModel {
         minifiedBoxImageHash = nullableString(ciGet(row, 'minifiedImageHash')),
         sku = nullableString(ciGet(row, 'sku')),
         description = nullableString(ciGet(row, 'description')),
+        credits = nullableString(ciGet(row, 'credits')),
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
 
   final String productId, manufacturer, hobbyName, hobbyGeneration, productName;
@@ -437,7 +448,8 @@ class ProductModel {
       minifiedBoxImageUrl,
       minifiedBoxImageHash,
       sku,
-      description;
+      description,
+      credits;
   final double? itemCost;
   final bool isIncomplete;
 
@@ -457,6 +469,7 @@ class ProductModel {
         minifiedBoxImageHash: minifiedBoxImageHash,
         sku: sku,
         description: description,
+        credits: credits,
         isIncomplete: isIncomplete,
       );
 }
@@ -505,10 +518,11 @@ class StockComboModel {
         model3dUrl = nullableString(ciGet(row, 'model3dUrl')),
         model3dHash = nullableString(ciGet(row, 'model3dHash')),
         description = nullableString(ciGet(row, 'description')),
+        credits = nullableString(ciGet(row, 'credits')),
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
 
   final String stockComboId, productId, name;
-  final String? hobbyName, hobbyGeneration, model3dUrl, model3dHash, description;
+  final String? hobbyName, hobbyGeneration, model3dUrl, model3dHash, description, credits;
   final BeybladeLoadout loadout;
   final bool isIncomplete;
 
@@ -522,6 +536,7 @@ class StockComboModel {
         model3dUrl: model3dUrl,
         model3dHash: model3dHash,
         description: description,
+        credits: credits,
         isIncomplete: isIncomplete,
       );
 }
@@ -546,6 +561,7 @@ class BladerModel {
             nullableString(ciGet(row, 'minifiedFullBodyImageUrl')),
         minifiedFullBodyImageHash =
             nullableString(ciGet(row, 'minifiedFullBodyImageHash')),
+        credits = nullableString(ciGet(row, 'credits')),
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
 
   final String bladerId, name;
@@ -559,7 +575,8 @@ class BladerModel {
       fullBodyImageUrl,
       fullBodyImageHash,
       minifiedFullBodyImageUrl,
-      minifiedFullBodyImageHash;
+      minifiedFullBodyImageHash,
+      credits;
   final bool isIncomplete;
 
   Blader toEntity() => Blader(
@@ -576,6 +593,7 @@ class BladerModel {
         fullBodyImageHash: fullBodyImageHash,
         minifiedFullBodyImageUrl: minifiedFullBodyImageUrl,
         minifiedFullBodyImageHash: minifiedFullBodyImageHash,
+        credits: credits,
         isIncomplete: isIncomplete,
       );
 }
@@ -596,6 +614,7 @@ class AccessoryModel {
         minifiedImageUrl = nullableString(ciGet(row, 'minifiedImageUrl')),
         minifiedImageHash = nullableString(ciGet(row, 'minifiedImageHash')),
         description = nullableString(ciGet(row, 'description')),
+        credits = nullableString(ciGet(row, 'credits')),
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
 
   final String dataId,
@@ -609,7 +628,8 @@ class AccessoryModel {
       imageHash,
       minifiedImageUrl,
       minifiedImageHash,
-      description;
+      description,
+      credits;
   final double? itemCost;
   final bool isIncomplete;
 
@@ -627,6 +647,7 @@ class AccessoryModel {
         minifiedImageUrl: minifiedImageUrl,
         minifiedImageHash: minifiedImageHash,
         description: description,
+        credits: credits,
         isIncomplete: isIncomplete,
       );
 }

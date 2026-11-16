@@ -854,6 +854,13 @@ class _PartSections extends StatelessWidget {
               monospaceValue: true,
               icon: Icons.fingerprint,
             ),
+            if (part.credits != null)
+              HoloDetailRow(
+                label: 'Credits',
+                value: part.credits!,
+                icon: Icons.volunteer_activism_outlined,
+                details: 'The people who contributed this entry\'s data or pictures.',
+              ),
           ],
         ),
 
@@ -1237,6 +1244,13 @@ class _AccessorySections extends StatelessWidget {
               monospaceValue: true,
               icon: Icons.fingerprint,
             ),
+            if (accessory.credits != null)
+              HoloDetailRow(
+                label: 'Credits',
+                value: accessory.credits!,
+                icon: Icons.volunteer_activism_outlined,
+                details: 'The people who contributed this entry\'s data or pictures.',
+              ),
           ],
         ),
         SizedBox(height: rc.lg),
@@ -1312,6 +1326,13 @@ class _ProductSections extends StatelessWidget {
               monospaceValue: true,
               icon: Icons.fingerprint,
             ),
+            if (product.credits != null)
+              HoloDetailRow(
+                label: 'Credits',
+                value: product.credits!,
+                icon: Icons.volunteer_activism_outlined,
+                details: 'The people who contributed this entry\'s data or pictures.',
+              ),
           ],
         ),
         if (stockCombos.isNotEmpty) ...[

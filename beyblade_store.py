@@ -62,6 +62,8 @@ README = {
         "                  the missing data tool put it there. Never 'Place in Cell': the tools can't keep those.",
         "  model3d         optional 3D model: a .glb file (path relative to this workbook's folder, e.g. models/dran.glb,",
         "                  or an absolute path) or an https link. Max 20 MB. The packager copies files to data/models/.",
+        "  credits         optional: who contributed this row's data or pictures, e.g. '@kai_photos (picture)'.",
+        "                  Shown in the app. Clasher Studio adds it when it applies a picture sent from the app.",
         "  bladerIDs       (X Blades, LockChips) the bladers who use the part in the show: bladerIDs from the Bladers",
         "                  tab, separated by commas (BL1, BL4). Optional.",
         "",
@@ -100,6 +102,7 @@ README = {
         "",
         "itemCost is a plain number; put the currency in the currency column (JPY, USD...).",
         "releaseDate: YYYY-MM-DD.",
+        "credits (Products, Accessories, StockCombos): optional, who contributed the row's data or pictures; shown in the app.",
         "Empty rows are skipped; to remove a row use deleted = true.",
     ],
     "tcg": [
@@ -122,6 +125,7 @@ README = {
         "Card mechanics columns (cardType, attribute, cost, power, effectText) are generic; add columns at the end",
         "if the game needs more - the packager passes every column through.",
         "image / minifiedImage: paste the card scan into the row's cell.",
+        "credits: optional, who contributed the row's data or scan (shown in the app).",
     ],
 }
 
@@ -256,7 +260,7 @@ class Book:
                 cell.fill = PatternFill("solid", fgColor=HEAD_FILL[group])
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
                 width = {"image": 16, "minifiedImage": 8, "minifiedBoxImage": 8, "boxImageUrl": 16,
-                         "fullBodyImage": 16, "minifiedFullBodyImage": 8, "model3d": 24, "bladerIDs": 14,
+                         "fullBodyImage": 16, "minifiedFullBodyImage": 8, "model3d": 24, "bladerIDs": 14, "credits": 24,
                          "imageUrl": 16, "name": 22, "productName": 34, "description": 40, "edition": 26,
                          "effectText": 50, "setName": 28}.get(col, 13)
                 ws.column_dimensions[get_column_letter(i)].width = width

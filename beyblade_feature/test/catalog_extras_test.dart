@@ -64,10 +64,12 @@ void main() {
     expect(dran.model3dUrl, endsWith('/data/models/blades-65.glb'));
     expect(dran.model3dHash, isNotNull);
     expect(dran.bladerIds, ['BL1', 'BL2']);
+    expect(dran.credits, 'EXAMPLE: @kai_photos (picture)');
 
     final other = blades.firstWhere((b) => b.dataId != '65');
     expect(other.has3dModel, isFalse);
     expect(other.bladerIds, isEmpty);
+    expect(other.credits, isNull);
 
     final chips = parsed.lockChips.map((r) => LockChipModel.fromSheetJson(r).toEntity()).toList();
     expect(chips.firstWhere((c) => c.dataId == '1').bladerIds, ['BL1']);

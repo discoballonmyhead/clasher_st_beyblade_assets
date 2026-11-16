@@ -200,6 +200,12 @@ Future<void> showBladerSheet(BuildContext context, Blader blader) =>
                       style: tt.bodyMedium
                           ?.copyWith(color: cs.onSurfaceVariant)),
                 ],
+                if (blader.credits != null) ...[
+                  const SizedBox(height: 8),
+                  Text('Credits: ${blader.credits}',
+                      textAlign: TextAlign.center,
+                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                ],
               ],
             ),
           ),

@@ -189,7 +189,7 @@ def profiles(data_root=None, only=None):
 OPTIONAL_DEFAULT = {"parentPartId", "variantLabel", "updated_at", "deleted", "incompleteData", "integratedRatchet",
                     "twoStat", "parentProductId", "parentCardId", "parentSetId", "linkedPartType",
                     "linkedPartDataID", "illustrator", "legality", "description", "subType", "simpleRatchet",
-                    "requiresSimpleRatchet", S.MODEL_3D, S.BLADER_IDS,
+                    "requiresSimpleRatchet", S.MODEL_3D, S.BLADER_IDS, S.CREDITS,
                     *[c for c in S.STOCK_COMBO_PART_COLUMNS if c != "bitDataID"]}
 
 

@@ -69,7 +69,7 @@ OPTIONAL = {"parentPartId", "variantLabel", "updated_at", "deleted", "incomplete
             "twoStat", "parentProductId", "parentCardId", "parentSetId", "linkedPartType", "linkedPartDataID",
             "illustrator", "legality", "description", "subType", "productID", "lastKnownCode",
             # optional extras: 3D models, who uses a part in the show, the parts a stock combo may not have
-            S.MODEL_3D, S.BLADER_IDS, "bladeDataID", "ratchetDataID", "lockChipDataID", "overBladeDataID",
+            S.MODEL_3D, S.BLADER_IDS, S.CREDITS, "bladeDataID", "ratchetDataID", "lockChipDataID", "overBladeDataID",
             "metalBladeDataID", "mainBladeDataID", "assistBladeDataID"}
 # Fields a variant shares with its parent
 INHERIT = {"name", "type", "spinDir", "attack", "defense", "stamina", "mass", "wbolegality", "system",

@@ -30,7 +30,8 @@ EXAMPLE_PART_IDS = {
 }
 VARIANTS = {("blades", 66): (65, "Katsushika City Collaboration Ver."), ("blades", 72): (65, "Special Ver.")}
 # who uses a part in the show (Bladers tab) and an example 3D model (path relative to the workbook's folder)
-EXAMPLE_EXTRAS = {("blades", 65): {"bladerIDs": "BL1, BL2", "model3d": "models/example-triangle.glb"},
+EXAMPLE_EXTRAS = {("blades", 65): {"bladerIDs": "BL1, BL2", "model3d": "models/example-triangle.glb",
+                                   "credits": "EXAMPLE: @kai_photos (picture)"},
                   ("lockChips", 1): {"bladerIDs": "BL1"}}
 
 

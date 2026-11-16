@@ -169,6 +169,7 @@ abstract class BeybladePart extends Equatable {
     this.model3dUrl,
     this.model3dHash,
     this.bladerIds = const [],
+    this.credits,
     required this.mass,
     required this.legality,
     required this.isIncomplete,
@@ -225,6 +226,10 @@ abstract class BeybladePart extends Equatable {
   /// BeybladeDataRepo.getBladersForPart.
   final List<String> bladerIds;
 
+  /// Who contributed this part's data or pictures (free text from the sheet's `credits` column, e.g.
+  /// "@kai_photos (picture)"). Null when nobody is credited. Shown on the detail page.
+  final String? credits;
+
   final double mass;
   final WboLegality legality;
 
@@ -252,6 +257,7 @@ abstract class BeybladePart extends Equatable {
         model3dUrl,
         model3dHash,
         bladerIds,
+        credits,
         mass,
         legality,
         isIncomplete,
@@ -277,6 +283,7 @@ class Blade extends BeybladePart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -327,6 +334,7 @@ class Ratchet extends BeybladePart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -370,6 +378,7 @@ class Bit extends BeybladePart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -418,6 +427,7 @@ class LockChip extends BeybladePart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -452,6 +462,7 @@ abstract class _TypedStatPart extends BeybladePart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -489,6 +500,7 @@ class OverBlade extends _TypedStatPart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -520,6 +532,7 @@ class MetalBlade extends _TypedStatPart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -553,6 +566,7 @@ class MainBlade extends _TypedStatPart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -586,6 +600,7 @@ class AssistBlade extends _TypedStatPart {
     super.model3dUrl,
     super.model3dHash,
     super.bladerIds,
+    super.credits,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -1018,6 +1033,7 @@ class Product extends Equatable {
     this.minifiedBoxImageHash,
     this.sku,
     this.description,
+    this.credits,
     required this.isIncomplete,
   });
 
@@ -1035,6 +1051,9 @@ class Product extends Equatable {
   final String? minifiedBoxImageHash;
   final String? sku;
   final String? description;
+
+  /// Who contributed this product's data or pictures (`credits` column).
+  final String? credits;
   final bool isIncomplete;
 
   @override
@@ -1053,6 +1072,7 @@ class Product extends Equatable {
         minifiedBoxImageHash,
         sku,
         description,
+        credits,
         isIncomplete,
       ];
 }
@@ -1098,6 +1118,7 @@ class StockCombo extends Equatable {
     this.model3dUrl,
     this.model3dHash,
     this.description,
+    this.credits,
     this.isIncomplete = false,
   });
 
@@ -1115,6 +1136,9 @@ class StockCombo extends Equatable {
   final String? model3dHash;
   bool get has3dModel => model3dUrl != null;
   final String? description;
+
+  /// Who contributed this combo's data or 3D model (`credits` column).
+  final String? credits;
   final bool isIncomplete;
 
   /// (part sheet key, dataId) of every part in the combo, top to bottom.
@@ -1144,6 +1168,7 @@ class StockCombo extends Equatable {
         model3dUrl,
         model3dHash,
         description,
+        credits,
         isIncomplete,
       ];
 }
@@ -1167,6 +1192,7 @@ class Blader extends Equatable {
     this.fullBodyImageHash,
     this.minifiedFullBodyImageUrl,
     this.minifiedFullBodyImageHash,
+    this.credits,
     this.isIncomplete = false,
   });
 
@@ -1187,6 +1213,9 @@ class Blader extends Equatable {
   final String? fullBodyImageHash;
   final String? minifiedFullBodyImageUrl;
   final String? minifiedFullBodyImageHash;
+
+  /// Who contributed this blader's pictures or data (`credits` column).
+  final String? credits;
   final bool isIncomplete;
 
   /// Best picture for a small avatar: the small portrait, then the portrait, then the full body.
@@ -1207,6 +1236,7 @@ class Blader extends Equatable {
         fullBodyImageHash,
         minifiedFullBodyImageUrl,
         minifiedFullBodyImageHash,
+        credits,
         isIncomplete,
       ];
 }
@@ -1252,6 +1282,7 @@ class Accessory extends Equatable {
     this.minifiedImageUrl,
     this.minifiedImageHash,
     this.description,
+    this.credits,
     required this.isIncomplete,
   });
 
@@ -1268,6 +1299,9 @@ class Accessory extends Equatable {
   final String? minifiedImageUrl;
   final String? minifiedImageHash;
   final String? description;
+
+  /// Who contributed this accessory's data or pictures (`credits` column).
+  final String? credits;
   final bool isIncomplete;
 
   @override
@@ -1285,6 +1319,7 @@ class Accessory extends Equatable {
         minifiedImageUrl,
         minifiedImageHash,
         description,
+        credits,
         isIncomplete,
       ];
 }

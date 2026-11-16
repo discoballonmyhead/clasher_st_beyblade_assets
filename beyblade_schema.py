@@ -73,6 +73,9 @@ PART_IMAGE_COLS = ("image", "minifiedImage")
 MODEL_3D = "model3d"
 MODEL_3D_EXTS = (".glb",)                 # one self-contained file; .gltf with side files can't be served as one
 MODEL_3D_MAX_BYTES = 20 * 1024 * 1024     # jsDelivr serves files up to 20 MB from GitHub
+# Who contributed a row's data or pictures (free text, e.g. "@kai_photos (picture)"). Optional, on every data
+# tab; the app shows it on the detail page. Clasher Studio fills it when it applies a picture sent from the app.
+CREDITS = "credits"
 # The bladers (characters) who use a part in the show: comma-separated bladerIDs from the Bladers tab.
 BLADER_IDS = "bladerIDs"
 
@@ -168,10 +171,9 @@ GENERATIONS = OrderedDict([
     }),
 ])
 GENERATION_NAMES = list(GENERATIONS)
-for _g, _gd in GENERATIONS.items():  # every part can have a 3D model (after the other columns, before the pictures)
+for _g, _gd in GENERATIONS.items():  # every part can have a 3D model and credits (after the other columns)
     for _p in _gd["parts"].values():
-        if MODEL_3D not in _p["columns"]:
-            _p["columns"] = _p["columns"] + [MODEL_3D]
+        _p["columns"] = _p["columns"] + [c for c in (MODEL_3D, CREDITS) if c not in _p["columns"]]
 for _g, _gd in GENERATIONS.items():  # Excel refuses sheet names longer than 31 characters
     for _k, _p in _gd["parts"].items():
         assert len(f"Parts_{_g}_{_p['sheet']}") <= 31, (_g, _k)
@@ -235,10 +237,10 @@ APP_REQUIRED = {
 
 PRODUCTS_COLUMNS = ["productID", "parentProductId", "variantLabel", "manufacturer", "hobbyName",
                     "hobbyGeneration", "productName", "productType", "releaseDate", "itemCost", "currency",
-                    "sku", "region", "description", "incompleteData", "updated_at", "deleted"]
+                    "sku", "region", "description", CREDITS, "incompleteData", "updated_at", "deleted"]
 PRODUCTS_IMAGE_COLS = ("boxImageUrl", "minifiedBoxImage")   # names the packager already uses
 ACCESSORIES_COLUMNS = ["dataID", "parentPartId", "variantLabel", "accessoryType", "subType", "manufacturer",
-                       "hobbyName", "hobbyGeneration", "code", "name", "itemCost", "description",
+                       "hobbyName", "hobbyGeneration", "code", "name", "itemCost", "description", CREDITS,
                        "incompleteData", "updated_at", "deleted"]
 ACCESSORIES_IMAGE_COLS = ("imageUrl", "minifiedImage")
 PRODUCT_CONTENTS_COLUMNS = ["productID", "partType", "partDataID", "quantity"]
@@ -252,11 +254,11 @@ STOCK_COMBO_PART_COLUMNS = OrderedDict([   # column -> part sheet key it points 
     ("mainBladeDataID", "mainBlades"), ("assistBladeDataID", "assistBlades"),
 ])
 STOCK_COMBOS_COLUMNS = (["stockComboID", "productID", "hobbyName", "hobbyGeneration", "name"]
-                        + list(STOCK_COMBO_PART_COLUMNS) + [MODEL_3D, "description", "incompleteData",
+                        + list(STOCK_COMBO_PART_COLUMNS) + [MODEL_3D, "description", CREDITS, "incompleteData",
                                                              "updated_at", "deleted"])
 # Bladers: the characters who use parts in the show. Two optional pictures: a portrait (image /
 # minifiedImage, the main one) and a full-body picture. Parts point at them with bladerIDs.
-BLADERS_COLUMNS = ["bladerID", "name", "hobbyName", "hobbyGeneration", "description", "incompleteData",
+BLADERS_COLUMNS = ["bladerID", "name", "hobbyName", "hobbyGeneration", "description", CREDITS, "incompleteData",
                    "updated_at", "deleted"]
 BLADERS_IMAGE_COLS = ("image", "minifiedImage")
 BLADERS_EXTRA_IMAGES = (("fullBodyImage", "minifiedFullBodyImage"),)
@@ -287,7 +289,7 @@ CODE_SERIES = [
 TCG_RARITIES = ["C", "U", "R", "RR", "SR", "SEC", "Promo", "Other"]
 TCG_CARD_TYPES = ["Bey", "Blade", "Blader", "Bit-Beast", "Action", "Stadium", "Other"]
 TCG_SETS_COLUMNS = ["setID", "parentSetId", "variantLabel", "setCode", "setName", "manufacturer", "hobbyName",
-                    "hobbyGeneration", "region", "releaseDate", "cardCount", "productID", "description",
+                    "hobbyGeneration", "region", "releaseDate", "cardCount", "productID", "description", CREDITS,
                     "incompleteData", "updated_at", "deleted"]
 TCG_SETS_IMAGE_COLS = ("image", "minifiedImage")
 # hobbyGeneration tells the card games apart: "Original" = the V-Force TCG
@@ -295,7 +297,7 @@ TCG_SETS_IMAGE_COLS = ("image", "minifiedImage")
 TCG_CARDS_COLUMNS = ["dataID", "parentCardId", "variantLabel", "manufacturer", "hobbyName", "hobbyGeneration",
                      "setCode", "setName", "cardNumber", "name", "subtitle", "cardType", "rarity", "attribute",
                      "cost", "power", "battleEdge", "spinStrength", "effectText", "loreText",
-                     "linkedPartType", "linkedPartDataID", "illustrator", "legality",
+                     "linkedPartType", "linkedPartDataID", "illustrator", "legality", CREDITS,
                      "incompleteData", "updated_at", "deleted"]
 TCG_CARDS_IMAGE_COLS = ("image", "minifiedImage")
 TCG_CARD_NUMBER_RE = re.compile(r"\b([A-Z0-9]{2,6})-(\d{2,4})\b")
