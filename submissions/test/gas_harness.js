@@ -5,7 +5,15 @@ const vm = require('node:vm');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'Code.gs'), 'utf8');
 
-function harness(props = {}, {standalone = false} = {}) {
+function harness(props = {}, {standalone = false, trashed = false} = {}) {
+  // Drive's trash: the spreadsheet (sheet1) and the pictures folder (folder1)
+  const trash = trashed ? {sheet1: true, folder1: true} : {};
+  const driveItem = (id, extra = {}) => ({
+    getId: () => id,
+    isTrashed: () => !!trash[id],
+    setTrashed: (t) => { trash[id] = t; },
+    ...extra,
+  });
   const store = {...props};
   const cache = {};
   const files = {};
@@ -58,13 +66,13 @@ function harness(props = {}, {standalone = false} = {}) {
       create: () => { created = true; return ss; },
     },
     DriveApp: {
-      createFolder: () => ({getId: () => 'folder1'}),
-      getFolderById: () => ({createFile: (blob) => {
+      createFolder: () => driveItem('folder1'),
+      getFolderById: (id) => driveItem(id, {createFile: (blob) => {
         const id = 'file' + Object.keys(files).length;
         files[id] = blob;
         return {getId: () => id};
       }}),
-      getFileById: (id) => ({getBlob: () => ({
+      getFileById: (id) => driveItem(id, {getBlob: () => ({
         getContentType: () => files[id].type,
         getBytes: () => files[id].bytes,
       })}),
@@ -86,7 +94,7 @@ function harness(props = {}, {standalone = false} = {}) {
   vm.createContext(ctx);
   vm.runInContext(SOURCE, ctx);
   const post = (body) => JSON.parse(ctx.doPost({postData: {contents: JSON.stringify(body)}}).text);
-  return {ctx, post, store, sheets, files, cache, opened, wasCreated: () => created};
+  return {ctx, post, store, sheets, files, cache, opened, trash, wasCreated: () => created};
 }
 
 

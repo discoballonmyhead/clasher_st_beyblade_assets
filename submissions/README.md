@@ -50,6 +50,18 @@ Clasher Studio (Data -> Submissions) ---------+  list / picture / mark applied o
 
 After you change `Code.gs`, use **Deploy → Manage deployments → Edit → New version**. That keeps the same URL.
 
+### If something doesn't show up
+* **No rows:** open the `Submissions sheet:` link from the `setup` log (Executions → the setup run). A standalone
+  script writes to the spreadsheet `setup` created, not to one you made yourself. Executions should also list a
+  `doPost` run for each send.
+* **Files in the Drive trash:** the script never deletes anything. Script properties can still point at a
+  spreadsheet or folder from an earlier try that was put in the trash, and Google keeps writing there (a file made
+  in a trashed folder starts out trashed). Run `setup` again: it takes both back out of the trash, and every new
+  picture does the same for the folder. To start fresh instead, delete `SHEET_ID` and `FOLDER_ID` in Script
+  properties and run `setup`.
+* **After changing `Code.gs`:** Deploy → Manage deployments → Edit → New version, or the web app keeps running the
+  old code.
+
 ## What's stored
 
 One row per picture, and one row per typed-in value, in "Submissions". Everything sent at once shares a `batch`:
@@ -97,7 +109,7 @@ and use `CONTRIBUTIONS_WANTED_URL=http://127.0.0.1:8000/_wanted.json`. Only `htt
 
 ## Tests
 * `node --test submissions/test/code.test.js`: the script against stand-ins for Sheets, Drive, Cache and Lock
-  (13 tests).
+  (14 tests).
 * End to end, over real HTTP: start the local server, then run `app_features/test/contributions_e2e_test.dart`
   (with `CONTRIBUTIONS_E2E_URL`; sends pictures and a batch of values) and
   `clasher_st_missing_data/test/features/submissions_e2e_test.dart` (with `SUBMISSIONS_E2E_URL`; reads them back).
