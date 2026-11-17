@@ -16,17 +16,21 @@ enum ContributionKind {
 /// What the picture is of. [type] is the catalog sheet key the app uses ("blades", "lockChips", "bladers",
 /// "products", "accessories" ...) or "other"; [id] is the row id in that sheet (dataID / bladerID / productID).
 class ContributionTarget extends Equatable {
-  const ContributionTarget({required this.type, required this.id, required this.name});
+  const ContributionTarget({required this.type, required this.id, required this.name, this.missing = const []});
 
   /// Something that isn't in the catalog: say what it is in the note.
   const ContributionTarget.other()
       : type = 'other',
         id = '',
-        name = 'Something else';
+        name = 'Something else',
+        missing = const [];
 
   final String type;
   final String id;
   final String name;
+
+  /// What the catalog lacks for it (labels, e.g. "Picture", "Weight"), when known. Not part of equality.
+  final List<String> missing;
 
   bool get isOther => type == 'other';
   bool get isBlader => type == 'bladers';

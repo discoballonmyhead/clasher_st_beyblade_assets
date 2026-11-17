@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:clasher_st/features/contributions/data/apps_script_contributions_repository.dart';
 import 'package:clasher_st/features/contributions/data/contributions_config.dart';
 import 'package:clasher_st/features/contributions/data/http_wanted_source.dart';
+import 'package:clasher_st/features/contributions/data/wanted_target_search.dart';
 import 'package:clasher_st/features/contributions/domain/contributions_repository.dart';
 import 'package:clasher_st/features/contributions/domain/entities.dart';
 import 'package:clasher_st/features/contributions/domain/usecases.dart';
@@ -66,7 +67,41 @@ class _Source implements WantedSource {
   }
 }
 
+class _AllSearch implements ContributionTargetSearch {
+  int calls = 0;
+  @override
+  Future<List<ContributionTarget>> search(String type, String query, {int limit = 30}) async {
+    calls++;
+    return [const ContributionTarget(type: 'blades', id: '65', name: 'Dran Sword')];
+  }
+}
+
 void main() {
+  group('"Send something else" search shows only what\'s missing', () {
+    test('parts, boxes, bladers and accessories with gaps, and what each lacks', () async {
+      final all = _AllSearch();
+      final s = WantedTargetSearch(_Source(), all);
+      final parts = await s.search('parts', '');
+      expect(parts.map((t) => (t.type, t.id)), [('ratchets', '13')], reason: 'cards and boxes aren\'t parts');
+      expect(parts.single.missing, ['Picture']);
+      expect(parts.single.name, '0-80 · G3063');
+      final boxes = await s.search('products', 'bx-50');
+      expect(boxes.map((t) => t.id), ['P3', 'P4']);
+      expect(boxes.last.missing, ['Release date', 'Item cost', 'Picture']);
+      expect((await s.search('bladers', '')).single.missing, ['Picture', 'Full-body picture']);
+      expect(await s.search('products', 'dran sword 3-60f starter'), isEmpty, reason: 'the name doesn\'t match');
+      expect(all.calls, 0, reason: 'never the whole catalog while the list is there');
+    });
+
+    test('the whole catalog only when the list isn\'t set up or can\'t load', () async {
+      final all = _AllSearch();
+      expect(await WantedTargetSearch(_Source(configured: false), all).search('parts', 'dran'), hasLength(1));
+      final failing = _Source(fail: const ContributionException('network', 'Offline.'));
+      expect(await WantedTargetSearch(failing, all).search('parts', 'dran'), hasLength(1));
+      expect(all.calls, 2);
+    });
+  });
+
   group('the wanted list', () {
     test('parses the packager\'s real output', () {
       final l = parseWanted(jsonDecode(wantedJson));

@@ -106,13 +106,13 @@ class _Form extends StatelessWidget {
               ListTile(
                 dense: true,
                 title: Text(t.name),
-                subtitle: Text('${t.type} #${t.id}'),
+                subtitle: Text(t.missing.isEmpty ? '${t.type} #${t.id}' : 'Missing: ${t.missing.join(', ')}'),
                 onTap: () => cubit.selectTarget(t),
               ),
             if (s.results.isEmpty && s.query.isNotEmpty && !s.searching)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text('Nothing found. Not in the catalog yet? Choose Other and describe it.',
+                child: Text('Nothing missing found for that. Not in the catalog yet? Choose Other and describe it.',
                     style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
               ),
           ],
