@@ -43,6 +43,16 @@ test('SHEET_ID can be the whole spreadsheet link', () => {
   assert.strictEqual(h.opened[0], '1AbC_d-9');
 });
 
+test('setup and new pictures take a trashed spreadsheet and folder back out of the trash', () => {
+  const h = harness({SHEET_ID: 'sheet1', FOLDER_ID: 'folder1'}, {standalone: true, trashed: true});
+  h.ctx.setup();
+  assert.deepStrictEqual(h.trash, {sheet1: false, folder1: false});
+  h.trash.folder1 = true;
+  const res = h.post({action: 'submit', submitKey: h.store.SUBMIT_KEY, submission: submission()});
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(h.trash.folder1, false);
+});
+
 test('a submission saves the picture and one row', () => {
   const h = harness({ADMIN_KEY: 'admin', SUBMIT_KEY: 'sk', FOLDER_ID: 'f'});
   const res = h.post({action: 'submit', submitKey: 'sk', submission: submission()});

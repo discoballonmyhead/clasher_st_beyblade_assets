@@ -206,10 +206,13 @@ function setup() {
     props.setProperty('SHEET_ID', created.getId());
   }
   var sh = sheet_();
+  // ids kept from an earlier run may point at a spreadsheet / folder that was put in the trash: Google still
+  // lets a script write there (and files made in a trashed folder start out trashed), so bring them back
+  restore_(DriveApp.getFileById(sh.getParent().getId()), 'The submissions spreadsheet');
   folder_();
   if (!props.getProperty('ADMIN_KEY')) props.setProperty('ADMIN_KEY', Utilities.getUuid().replace(/-/g, ''));
   if (!props.getProperty('SUBMIT_KEY')) props.setProperty('SUBMIT_KEY', Utilities.getUuid().replace(/-/g, '').slice(0, 16));
-  console.log('ADMIN_KEY (Clasher Studio -> Settings -> Submissions): ' + props.getProperty('ADMIN_KEY'));
+  console.log('ADMIN_KEY (Clasher Studio -> Settings -> Publishing -> Submissions admin key): ' + props.getProperty('ADMIN_KEY'));
   console.log('SUBMIT_KEY (the app, CONTRIBUTIONS_KEY): ' + props.getProperty('SUBMIT_KEY'));
   console.log('Pictures folder: https://drive.google.com/drive/folders/' + props.getProperty('FOLDER_ID'));
   console.log('Submissions sheet: ' + sh.getParent().getUrl());
@@ -247,10 +250,20 @@ function sheet_() {
   return sh;
 }
 
+/** Takes [item] (a Drive file or folder) out of the trash, saying so in the log. */
+function restore_(item, what) {
+  if (item && item.isTrashed()) {
+    item.setTrashed(false);
+    console.log(what + ' was in the Drive trash: restored it.');
+  }
+  return item;
+}
+
+/** The pictures folder (taken back out of the trash if it was put there; new pictures would land in the trash). */
 function folder_() {
   var props = PropertiesService.getScriptProperties();
   var id = props.getProperty('FOLDER_ID');
-  if (id) return DriveApp.getFolderById(id);
+  if (id) return restore_(DriveApp.getFolderById(id), 'The pictures folder');
   var folder = DriveApp.createFolder('Clasher submissions');
   props.setProperty('FOLDER_ID', folder.getId());
   return folder;
