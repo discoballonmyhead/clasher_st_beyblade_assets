@@ -1,5 +1,5 @@
 {
-  "packagedAt": "2026-11-10T05:33:05.647813+00:00",
+  "packagedAt": "2026-11-17T07:40:00.702513+00:00",
   "workbooks": [
     "beyblade_parts.xlsx",
     "beyblade_products.xlsx"
@@ -50,6 +50,11 @@
       "withImage": 48,
       "withoutImage": 26
     },
+    "bladers": {
+      "rowCount": 0,
+      "withImage": 0,
+      "withoutImage": 0
+    },
     "products": {
       "rowCount": 422,
       "withImage": 263,
@@ -91,21 +96,47 @@
     }
   },
   "changes": {
-    "previousPackagedAt": "2026-11-08T06:14:08.845364+00:00",
+    "previousPackagedAt": "2026-11-10T05:33:05.647813+00:00",
     "sheets": {
+      "assistBlades": {
+        "columnsAdded": 3
+      },
       "bits": {
-        "rowsAdded": 15,
-        "rowsChanged": 126
+        "columnsAdded": 3
+      },
+      "bladers": {
+        "newSheet": true,
+        "rows": 0,
+        "columns": 0
+      },
+      "blades": {
+        "columnsAdded": 4
+      },
+      "burstLayers": {
+        "columnsAdded": 3
+      },
+      "lockChips": {
+        "columnsAdded": 4
+      },
+      "mainBlades": {
+        "columnsAdded": 3
+      },
+      "metalBlades": {
+        "columnsAdded": 3
+      },
+      "overBlades": {
+        "columnsAdded": 3
+      },
+      "ratchets": {
+        "columnsAdded": 3
       }
     },
     "missingDataTool": {
-      "entriesSincePrevious": 288,
+      "entriesSincePrevious": 21,
       "byAction": {
-        "set": 194,
-        "image": 79,
-        "add_row": 15
+        "add_column": 21
       },
-      "totalEntries": 1892
+      "totalEntries": 1913
     },
     "customColumns": []
   }
