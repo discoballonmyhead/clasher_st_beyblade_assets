@@ -84,7 +84,9 @@ checked as it's typed; a picture slot for a missing picture (a blader can get a 
 credit, note and consent. Values and the picture are sent together (one batch); only values that pass their check
 are sent.
 
-**Send something else** (`/settings/contribute/send`, `ContributePage`): the free-form page. People pick what the
+**Send something else** (`/settings/contribute/send`, `ContributePage`): the free-form page. Its search lists only
+entries that are missing something, with what each one lacks (`WantedTargetSearch` over the wanted list). It falls
+back to the whole catalog on the phone only when the list isn't set up or can't be loaded. People pick what the
 picture is of: a part (searched by name or code), a blader (portrait or full body), a box, an
 accessory, or "Other" with a note. Then they choose a picture from the gallery or camera (scaled to 1600 px and
 compressed on the phone), add an optional credit and note, confirm they may share it, and send. The picture goes to
@@ -158,9 +160,10 @@ register your own `ContributorIdentity` before `ContributionsDependencies.init()
   * the client: the request body, the redirect, the username as the default credit, errors;
   * the checks before sending;
   * the page end to end with fakes: part, blader full body, signed out, a server refusal.
-* `test/missing_data_test.dart` (14 tests) covers:
+* `test/missing_data_test.dart` (16 tests) covers:
   * the packager's real `_wanted.json` for `samples/` (in `test/fixtures/`), broken entries, field checks by type;
   * the HTTP source (cached until a refresh, readable errors);
+  * the free-form search showing only entries with gaps, and its fallback;
   * the list filters, the per-entry form (values alone, values with a picture, full-body pictures, what blocks
     sending) and what the client sends;
   * both pages with fakes.

@@ -145,7 +145,8 @@ class ContributeCubit extends Cubit<ContributeState> {
     final configured = _submit.isConfigured;
     final who = await _submit.contributor();
     emit(state.copyWith(loading: false, configured: configured, contributor: () => who));
-    if (state.group != TargetGroup.parts && state.group != TargetGroup.other) await search('');
+    // lists what's missing straight away (parts too, when the wanted list is there)
+    if (state.group != TargetGroup.other) await search('');
   }
 
   Future<void> setGroup(TargetGroup g) async {
@@ -158,7 +159,7 @@ class ContributeCubit extends Cubit<ContributeState> {
       kind: ContributionKind.image,
     ));
     // bladers / boxes / accessories are short lists: show them straight away
-    if (g != TargetGroup.parts && g != TargetGroup.other) await search('');
+    if (g != TargetGroup.other) await search('');
   }
 
   Future<void> search(String q) async {

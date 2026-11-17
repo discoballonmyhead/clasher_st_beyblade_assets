@@ -5,6 +5,7 @@ import 'package:clasher_st/features/contributions/data/contributions_config.dart
 import 'package:clasher_st/features/contributions/data/http_wanted_source.dart';
 import 'package:clasher_st/features/contributions/data/image_picker_picture_picker.dart';
 import 'package:clasher_st/features/contributions/data/supabase_contributor_identity.dart';
+import 'package:clasher_st/features/contributions/data/wanted_target_search.dart';
 import 'package:clasher_st/features/contributions/domain/contributions_repository.dart';
 import 'package:clasher_st/features/contributions/domain/entities.dart';
 import 'package:clasher_st/features/contributions/domain/usecases.dart';
@@ -31,7 +32,8 @@ class ContributionsDependencies {
     }
     sl
       ..registerLazySingleton<ContributionsRepository>(() => AppsScriptContributionsRepository(sl()))
-      ..registerLazySingleton<ContributionTargetSearch>(() => CatalogTargetSearch(sl()))
+      // only entries that are missing something (the wanted list); the whole catalog when the list isn't there
+      ..registerLazySingleton<ContributionTargetSearch>(() => WantedTargetSearch(sl(), CatalogTargetSearch(sl())))
       ..registerLazySingleton<ContributionPicturePicker>(() => ImagePickerPicturePicker())
       ..registerLazySingleton(() => SubmitContributionUseCase(sl(), sl()))
       ..registerLazySingleton<WantedSource>(() => HttpWantedSource(sl()))
