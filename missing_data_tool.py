@@ -1410,10 +1410,12 @@ class Engine:
         sheets = []
         for name in data_sheets(self.book):
             rows = [x for _, x in self.book.rows(self.book.wb[name]) if not is_deleted(x)]
-            if not rows:
+            part = S.parse_part_sheet(name)
+            # empty part tabs are left out (the scraper fills them); an empty named tab such as Bladers or
+            # StockCombos is listed, so its first rows can be added by hand
+            if not rows and part:
                 continue
             idx = self._index(name)
-            part = S.parse_part_sheet(name)
             gens = sorted({str(x.get("hobbyGeneration")) for x in rows if not blank(x.get("hobbyGeneration"))})
             sheets.append({"name": name, "rows": len(rows),
                            "rowsWithMissing": sum(1 for m in idx["missing"].values() if m),
