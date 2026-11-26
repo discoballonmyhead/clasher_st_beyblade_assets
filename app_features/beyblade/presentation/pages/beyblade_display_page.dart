@@ -34,7 +34,7 @@ class _BeybladeDisplayPageState extends State<BeybladeDisplayPage> {
     final rc = ResponsiveProvider.config(context);
     final bey = widget.beyblade;
 
-    return Scaffold(
+    return ResponsiveScaffold(
       backgroundColor: cs.surface,
       appBar: AppBar(
         title: const Text('Beyblade Build'),
@@ -55,44 +55,42 @@ class _BeybladeDisplayPageState extends State<BeybladeDisplayPage> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.all(rc.horizontalPadding),
-          child: Column(
-            children: [
-              SegmentedButton<_ViewMode>(
-                segments: const [
-                  ButtonSegment(
-                      value: _ViewMode.combined, label: Text('Combined')),
-                  ButtonSegment(
-                      value: _ViewMode.isolated, label: Text('Isolated')),
-                ],
-                selected: {_mode},
-                onSelectionChanged: (s) => setState(() => _mode = s.first),
-              ),
-              SizedBox(height: rc.lg),
-              Expanded(
-                child: SingleChildScrollView(
-                  child: _mode == _ViewMode.combined
-                      ? Column(
-                          children: [
-                            BeybladeStackPreview.fromResolved(bey),
-                            SizedBox(height: rc.lg),
-                            CombinedStatsPanel(beyblade: bey),
+      body: Padding(
+        padding: EdgeInsets.all(rc.horizontalPadding),
+        child: Column(
+          children: [
+            SegmentedButton<_ViewMode>(
+              segments: const [
+                ButtonSegment(
+                    value: _ViewMode.combined, label: Text('Combined')),
+                ButtonSegment(
+                    value: _ViewMode.isolated, label: Text('Isolated')),
+              ],
+              selected: {_mode},
+              onSelectionChanged: (s) => setState(() => _mode = s.first),
+            ),
+            SizedBox(height: rc.lg),
+            Expanded(
+              child: SingleChildScrollView(
+                child: _mode == _ViewMode.combined
+                    ? Column(
+                        children: [
+                          BeybladeStackPreview.fromResolved(bey),
+                          SizedBox(height: rc.lg),
+                          CombinedStatsPanel(beyblade: bey),
+                        ],
+                      )
+                    : Column(
+                        children: [
+                          for (final part in bey.stackedParts) ...[
+                            Card(child: PartDetailSheet(part: part)),
+                            SizedBox(height: rc.sm),
                           ],
-                        )
-                      : Column(
-                          children: [
-                            for (final part in bey.stackedParts) ...[
-                              Card(child: PartDetailSheet(part: part)),
-                              SizedBox(height: rc.sm),
-                            ],
-                          ],
-                        ),
-                ),
+                        ],
+                      ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

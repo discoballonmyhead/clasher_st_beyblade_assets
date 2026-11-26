@@ -1,11 +1,14 @@
 import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/core/router/route_kit.dart';
-import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
+import 'package:clasher_st/features/beyblade/presentation/cubit/combo_decks_paged_cubit/combo_decks_paged_cubit.dart';
+import 'package:clasher_st/features/beyblade/presentation/cubit/part_list_editcubit/part_list_edit_cubit.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
+import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/bey_builder_page.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/beyblade_home.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/combo_decks_page.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/detail_page.dart';
+import 'package:clasher_st/features/beyblade/presentation/pages/part_list_edit_page.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/part_lists_page.dart';
 import 'package:clasher_st/features/beyblade/presentation/pages/part_search_page.dart';
 import 'package:clasher_st/features/beyblade_tcg/presentation/tcg_cards_page.dart';
@@ -14,6 +17,7 @@ import 'package:clasher_st/features/user_collection/presentation/pages/build_rea
 import 'package:clasher_st/features/user_collection/presentation/pages/quick_add_page.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:clasher_st/features/beyblade/parts_list.dart';
 
 class BeybladeRoutes {
   BeybladeRoutes._();
@@ -34,8 +38,14 @@ class BeybladeRoutes {
   static const String collectionAdd = '/beyblade/collection/add';
   static const String buildCheck = '/beyblade/collection/build-check';
 
-  /// Saved ban / approve lists (tournament part rules).
+  /// Saved tournament kits (ban lists, allowed parts, pools, deck kits).
   static const String partLists = '/beyblade/part-lists';
+  static const String partListNew = '$partLists/new';
+
+  /// A new kit of [kind] (`?kind=deck`).
+  static String partListNewOf(PartListKind kind) =>
+      '$partListNew?kind=${kind.toJson()}';
+  static String partListEdit(String id) => '$partLists/$id';
 
   /// Beyblade TCG cards (separate hobby, same catalog download).
   static const String tcg = '/beyblade/tcg';
@@ -44,7 +54,8 @@ class BeybladeRoutes {
         GoRoute(
           path: builder,
           name: builderName,
-          // extra: a BeybladeLoadout to start from (e.g. a stock combo's "Open in builder")
+          // extra: a BeybladeLoadout to start from (a stock combo's
+          // "Open in builder"); nothing = an empty build.
           builder: (_, state) => BeyBuilderPage(
             initialLoadout: state.extra is BeybladeLoadout
                 ? state.extra as BeybladeLoadout
@@ -54,10 +65,26 @@ class BeybladeRoutes {
         GoRoute(
           path: assets,
           name: assetsName,
-          builder: (_, __) => const BeybladeHomePage(),
+          builder: (_, __) => const BeybladeHomePage(), //done
         ),
-        GoRoute(path: search, builder: (_, __) => const PartSearchPage()),
-        GoRoute(path: combosDecks, builder: (_, __) => const CombosDecksPage()),
+        GoRoute(
+          path: search,
+          builder: (_, __) => const PartSearchPage(),
+        ), //done
+        GoRoute(
+          path: combosDecks,
+          builder: (context, state) => MultiBlocProvider(
+            providers: [
+              BlocProvider<CombosPageCubit>(
+                create: (_) => sl<CombosPageCubit>()..load(),
+              ),
+              BlocProvider<DecksPageCubit>(
+                create: (_) => sl<DecksPageCubit>()..load(),
+              ),
+            ],
+            child: const CombosDecksPage(), //done partially TODO CHECK AGAIn
+          ),
+        ),
         GoRoute(
           path: detail,
           builder: (context, state) => state.extra is DetailSubject
@@ -66,11 +93,11 @@ class BeybladeRoutes {
         ),
         GoRoute(
           path: inventory,
-          builder: (_, __) => const UserCollectionPage(),
+          builder: (_, __) => const UserCollectionPage(), //done
         ),
         GoRoute(
           path: collectionAdd,
-          builder: (_, __) => const QuickAddPage(),
+          builder: (_, __) => const QuickAddPage(), //done
         ),
         GoRoute(
           path: buildCheck,
@@ -90,7 +117,29 @@ class BeybladeRoutes {
             create: (_) => sl<PartListsCubit>()..load(),
             child: const PartListsPage(),
           ),
+          routes: [
+            // 'new' must come before ':id'.
+            GoRoute(
+              path: 'new',
+              builder: (_, state) => BlocProvider(
+                create: (_) => sl<PartListEditCubit>()
+                  ..open(null,
+                      kind: PartListKind.fromJson(
+                          state.uri.queryParameters['kind'])),
+                child: const PartListEditPage(), //done
+              ),
+            ),
+            GoRoute(
+              path: ':id',
+              builder: (_, state) => BlocProvider(
+                create: (_) =>
+                    sl<PartListEditCubit>()..open(state.pathParameters['id']),
+                child: const PartListEditPage(), //done
+              ),
+            ),
+          ],
         ),
+
         GoRoute(path: tcg, builder: (_, __) => const TcgCardsPage()),
         GoRoute(
           path: analytics,

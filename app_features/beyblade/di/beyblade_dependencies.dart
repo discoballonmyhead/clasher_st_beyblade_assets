@@ -18,6 +18,7 @@ import 'package:clasher_st/features/beyblade/presentation/cubit/combo_cubit/comb
 import 'package:clasher_st/features/beyblade/presentation/cubit/combo_decks_paged_cubit/combo_decks_paged_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/deck_cubit/deck_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/deck_slot_cubit/beyblade_deck_slots_cubit.dart';
+import 'package:clasher_st/features/beyblade/presentation/cubit/part_list_editcubit/part_list_edit_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/part_search_cubit/part_search_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/part_lists/beyblade_part_catalog.dart';
@@ -54,8 +55,7 @@ class BeybladeDependencies {
     sl.registerLazySingleton(
         () => PartListsRepository(Supabase.instance.client));
 
-    // The real parts picker for ban / approve lists. Without it
-    // resolvePartCatalog() falls back to typing a part type and data id.
+    // The parts picker for tournament kits. resolvePartCatalog() reads it.
     sl.registerLazySingleton<PartCatalog>(() => BeybladePartCatalog(sl()));
 
     // Card game catalog (hobby "Beyblade TCG"), filled from catalog.zip.
@@ -152,5 +152,6 @@ class BeybladeDependencies {
     );
 
     sl.registerFactory(() => PartListsCubit(sl()));
+    sl.registerFactory(() => PartListEditCubit(sl()));
   }
 }

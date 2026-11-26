@@ -1,288 +1,247 @@
-// Ban & approve lists, managed in the Beyblade feature.
+// Tournament kits (formerly "Ban & approve lists"), managed in the Beyblade
+// feature.
 //
-// The host's saved lists: the same ones the create-tournament page offers
-// under "My lists". Uses the existing PartListsCubit / PartListsRepository
-// (inventory_get_part_lists / inventory_save_part_list /
-// inventory_delete_part_list), so there's no new backend.
+// The host's saved kits: the same ones the create-tournament page offers.
+// Part rules (ban list, allowed parts) limit the decks players bring;
+// organiser kits (parts pool, deck kit) are what the organiser hands out
+// in formats like Mirror Match. Uses PartListsCubit / PartListsRepository.
 //
-// Reached from the Bey Station "Manage" grid and from "Manage lists" in the
-// create-tournament Part rules block (route BeybladeRoutes.partLists).
+// Reached from the Bey Station "Manage" grid and from "Manage kits" on the
+// create-tournament page (route BeybladeRoutes.partLists). Creating and
+// editing a kit is its own route: PartListEditPage.
 
 import 'package:clasher_st/core/constants/trc_constant_tokens.dart';
 import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/core/services/translation/translation_helper.dart';
 import 'package:clasher_st/core/widgets/app_beyblade_loading_indicator.dart';
 import 'package:clasher_st/core/widgets/holow_components.dart';
+import 'package:clasher_st/features/beyblade/b_routes/beyblade_routes.dart';
 import 'package:clasher_st/features/beyblade/parts_list.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/parts_list_cubit/parts_list_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_list_editor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
 class PartListsPage extends StatelessWidget {
   const PartListsPage({super.key});
 
-  Future<void> _open(BuildContext context, PartList list) async {
-    final cubit = context.read<PartListsCubit>();
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => BlocProvider.value(
-          value: cubit,
-          child: PartListEditPage(initial: list),
-        ),
-      ),
-    );
+  /// The edit page loads the kit by id itself; nothing is passed along
+  /// and nothing comes back (this page updates from the repository).
+  void _open(BuildContext context, PartList list) {
+    final id = list.id;
+    context.push(id == null
+        ? BeybladeRoutes.partListNewOf(list.kind)
+        : BeybladeRoutes.partListEdit(id));
   }
 
   @override
   Widget build(BuildContext context) {
     final rc = ResponsiveProvider.config(context);
     final cs = Theme.of(context).colorScheme;
-    final t = HoloTokens.of(context);
 
     return ResponsiveScaffold(
       maxWidth: rc.maxContentWidth,
-      appBar: AppBar(title: Text(TrTokens.banApproveCardTitle.tr)),
+      backgroundColor: cs.surface,
+      appBar: AppBar(title: Text(TrTokens.kitsPageTitle.tr)),
       body: BlocBuilder<PartListsCubit, PartListsState>(
         builder: (context, state) {
           if (state.loading && state.lists.isEmpty) {
             return const Center(child: BeybladeSpinner());
           }
-          return ListView(
-            padding: EdgeInsets.all(rc.horizontalPadding),
-            children: [
-              Text(
-                TrTokens.partListsPageDescTxt.tr,
-                style: TextStyle(
-                  fontSize: rc.bodySM,
-                  color: cs.onSurfaceVariant,
+          final rules = state.lists.where((l) => l.kind.isPartRule).toList();
+          final kits = state.lists.where((l) => l.kind.isOrganizerKit).toList();
+          return RefreshIndicator(
+            onRefresh: () => context.read<PartListsCubit>().load(),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(
+                  rc.horizontalPadding, rc.md, rc.horizontalPadding, rc.lg),
+              children: [
+                Text(
+                  TrTokens.kitsPageIntro.tr,
+                  style: TextStyle(
+                      fontSize: rc.bodySM,
+                      height: 1.4,
+                      color: cs.onSurfaceVariant),
                 ),
-              ),
-              SizedBox(height: rc.md),
-              if (state.error != null)
-                Padding(
-                  padding: EdgeInsets.only(bottom: rc.sm),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          state.error!,
-                          style: TextStyle(color: cs.error),
+                SizedBox(height: rc.md),
+                HoloActionRail(
+                  actions: [
+                    for (final k in PartListKind.values)
+                      HoloRailAction(
+                        label: k.shortLabel,
+                        icon: k.icon,
+                        tint: kitKindColor(context, k),
+                        onTap: () => _open(context, PartList(kind: k)),
+                      ),
+                  ],
+                ),
+                if (state.error != null) ...[
+                  SizedBox(height: rc.md),
+                  HoloCard(
+                    borderColor: HoloTokens.of(context).danger,
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(state.error!,
+                              style:
+                                  TextStyle(fontSize: 13, color: cs.onSurface)),
                         ),
-                      ),
-                      TextButton(
-                        onPressed: () => context.read<PartListsCubit>().load(),
-                        child: Text(TrTokens.retryTxt.tr),
-                      ),
-                    ],
-                  ),
-                ),
-              if (state.lists.isEmpty)
-                HoloEmptyState(
-                  icon: Icons.rule_outlined,
-                  title: TrTokens.noSavedListsYetTxt.tr,
-                  message: TrTokens.noSavedListsMsgTxt.tr,
-                )
-              else
-                for (final list in state.lists)
-                  Padding(
-                    padding: EdgeInsets.only(bottom: rc.sm),
-                    child: HoloCard(
-                      onTap: () => _open(context, list),
-                      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-                      child: Row(
-                        children: [
-                          Icon(
-                            list.kind == PartListKind.ban
-                                ? Icons.block
-                                : Icons.verified_outlined,
-                            color: list.kind == PartListKind.ban
-                                ? t.danger
-                                : t.success,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  list.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    HoloPill(
-                                      label: list.kind.shortLabel,
-                                      color: list.kind == PartListKind.ban
-                                          ? t.danger
-                                          : t.success,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      TrTokens.partsCountFormat.tr.replaceFirst(
-                                        '%s',
-                                        list.partCount.toString(),
-                                      ),
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: cs.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                PartListPreview(list: list),
-                              ],
-                            ),
-                          ),
-                          const Icon(Icons.chevron_right),
-                        ],
-                      ),
+                        HoloActionButton(
+                          label: TrTokens.retryTxt.tr,
+                          dense: true,
+                          variant: HoloButtonVariant.outline,
+                          onPressed: () =>
+                              context.read<PartListsCubit>().load(),
+                        ),
+                      ],
                     ),
                   ),
-              SizedBox(height: rc.lg),
-              HoloActionButton(
-                label: TrTokens.newListTxt.tr,
-                icon: Icons.playlist_add,
-                expand: true,
-                onPressed: () =>
-                    _open(context, const PartList(kind: PartListKind.ban)),
-              ),
-            ],
+                ],
+                SizedBox(height: rc.lg),
+                HoloSectionLabel(
+                  title: TrTokens.partRulesTitle.tr,
+                  subtitle: TrTokens.kitsRulesSubtitle.tr,
+                  info: rules.isEmpty
+                      ? null
+                      : HoloPill(label: '${rules.length}', color: cs.primary),
+                ),
+                SizedBox(height: rc.sm),
+                if (rules.isEmpty)
+                  _empty(
+                      context,
+                      Icons.rule_outlined,
+                      TrTokens.noSavedListsYetTxt.tr,
+                      TrTokens.kitsRulesEmpty.tr)
+                else
+                  for (final list in rules)
+                    KitCard(list: list, onTap: () => _open(context, list)),
+                SizedBox(height: rc.lg),
+                HoloSectionLabel(
+                  title: TrTokens.kitsOrganiserTitle.tr,
+                  subtitle: TrTokens.kitsOrganiserSubtitle.tr,
+                  info: kits.isEmpty
+                      ? null
+                      : HoloPill(label: '${kits.length}', color: cs.primary),
+                ),
+                SizedBox(height: rc.sm),
+                if (kits.isEmpty)
+                  _empty(
+                      context,
+                      Icons.style_outlined,
+                      TrTokens.kitsOrganiserEmptyTitle.tr,
+                      TrTokens.kitsOrganiserEmptyMsg.tr)
+                else
+                  for (final list in kits)
+                    KitCard(list: list, onTap: () => _open(context, list)),
+              ],
+            ),
           );
         },
       ),
     );
   }
-}
 
-/// Create or edit one saved list.
-class PartListEditPage extends StatefulWidget {
-  const PartListEditPage({super.key, required this.initial});
-
-  final PartList initial;
-
-  @override
-  State<PartListEditPage> createState() => _PartListEditPageState();
-}
-
-class _PartListEditPageState extends State<PartListEditPage> {
-  late PartList _list = widget.initial;
-  late final _name = TextEditingController(text: widget.initial.name);
-
-  @override
-  void dispose() {
-    _name.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    final messenger = ScaffoldMessenger.of(context);
-    final name = _name.text.trim();
-    if (name.isEmpty) {
-      messenger.showSnackBar(
-        SnackBar(content: Text(TrTokens.nameListToSaveMsg.tr)),
-      );
-      return;
-    }
-    final cubit = context.read<PartListsCubit>();
-    final saved = await cubit.save(_list.copyWith(name: name));
-    if (!mounted) return;
-    if (saved == null) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(cubit.state.error ?? TrTokens.couldNotSaveListMsg.tr),
-        ),
-      );
-      return;
-    }
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(TrTokens.savedToListsFormat.tr.replaceFirst('%s', name)),
-      ),
-    );
-    Navigator.of(context).pop();
-  }
-
-  Future<void> _delete() async {
-    final id = _list.id;
-    if (id == null) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: Text(TrTokens.deleteListDialogTitle.tr),
-        content: Text(
-          TrTokens.deleteListDialogDesc.tr,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, false),
-            child: Text(TrTokens.cancelTxt.tr),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(c, true),
-            child: Text(TrTokens.deleteTxt.tr),
-          ),
+  Widget _empty(
+      BuildContext context, IconData icon, String title, String body) {
+    final cs = Theme.of(context).colorScheme;
+    return HoloCard(
+      wash: true,
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Icon(icon, size: 22, color: AppTheme.primaryText(cs)),
+          const SizedBox(width: 12),
+          Expanded(child: HoloSubLabel(title: title, subtitle: body)),
         ],
       ),
     );
-    if (ok != true || !mounted) return;
-    if (await context.read<PartListsCubit>().delete(id) && mounted) {
-      Navigator.of(context).pop();
-    }
   }
+}
+
+/// A saved kit in a list: kind icon, name, kind tag, size and a preview.
+/// [selected] / [trailing] are for pickers (the create-tournament page).
+class KitCard extends StatelessWidget {
+  const KitCard({
+    super.key,
+    required this.list,
+    this.onTap,
+    this.selected = false,
+    this.trailing,
+  });
+
+  final PartList list;
+  final VoidCallback? onTap;
+  final bool selected;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
-    final rc = ResponsiveProvider.config(context);
-    return ResponsiveScaffold(
-      maxWidth: rc.maxContentWidth,
-      appBar: AppBar(
-        title: Text(
-            _list.isSaved ? TrTokens.editListTxt.tr : TrTokens.newListTxt.tr),
-        actions: [
-          if (_list.isSaved)
-            IconButton(
-              tooltip: TrTokens.deleteTxt.tr,
-              icon: const Icon(Icons.delete_outline),
-              onPressed: _delete,
+    final cs = Theme.of(context).colorScheme;
+    final tint = kitKindColor(context, list.kind);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: HoloCard(
+        onTap: onTap,
+        highlight: selected,
+        wash: selected,
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: ShapeDecoration(
+                color: tint.withValues(alpha: 0.12),
+                shape: ChamferBorder.tab(
+                    cut: 10,
+                    side: BorderSide(color: tint.withValues(alpha: 0.5))),
+              ),
+              child: Icon(list.kind.icon, size: 20, color: tint),
             ),
-        ],
-      ),
-      body: ListView(
-        padding: EdgeInsets.all(rc.horizontalPadding),
-        children: [
-          TextField(
-            controller: _name,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(
-              labelText: TrTokens.listNameLabel.tr,
-              hintText: TrTokens.listNameHint.tr,
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    list.name.isEmpty ? list.kind.label : list.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: cs.onSurface),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      HoloPill(label: list.kind.shortLabel, color: tint),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          list.sizeLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: cs.onSurfaceVariant,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  PartListPreview(list: list),
+                ],
+              ),
             ),
-          ),
-          SizedBox(height: rc.md),
-          PartListEditor(
-            list: _list,
-            onChanged: (l) => setState(() => _list = l),
-          ),
-          SizedBox(height: rc.lg),
-          BlocBuilder<PartListsCubit, PartListsState>(
-            buildWhen: (p, c) => p.saving != c.saving,
-            builder: (context, state) => HoloActionButton(
-              label: state.saving
-                  ? TrTokens.savingMsg.tr
-                  : TrTokens.saveListBtnTxt.tr,
-              icon: Icons.save_outlined,
-              expand: true,
-              onPressed: state.saving || _list.isEmpty ? null : _save,
-            ),
-          ),
-        ],
+            trailing ?? Icon(Icons.chevron_right, color: cs.onSurfaceVariant),
+          ],
+        ),
       ),
     );
   }

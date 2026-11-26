@@ -2,6 +2,8 @@ import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/core/widgets/holow_components.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
+import 'package:clasher_st/features/contributions/contributions_routes.dart';
+import 'package:clasher_st/features/contributions/domain/entities.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -179,8 +181,16 @@ Future<void> showBladerSheet(BuildContext context, Blader blader) =>
                 compact: false) ??
             preferredImageSource(blader.minifiedImageUrl, blader.imageUrl,
                 compact: false);
+        final target = ContributionTarget(
+            type: 'bladers', id: blader.bladerId, name: blader.name);
+        // Captured now: the sheet's own context goes away once it closes.
+        final router = GoRouter.of(context);
+        void contribute() {
+          Navigator.of(context).pop();
+          router.push(ContributionsRoutes.contribute, extra: target);
+        }
         return SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -206,6 +216,30 @@ Future<void> showBladerSheet(BuildContext context, Blader blader) =>
                       textAlign: TextAlign.center,
                       style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
                 ],
+                const SizedBox(height: 14),
+                // The two kinds of blader picture: the portrait (avatar)
+                // and the full-body one.
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.face_outlined, size: 18),
+                      label: Text(blader.imageUrl == null
+                          ? 'Add a portrait'
+                          : 'Better portrait'),
+                      onPressed: contribute,
+                    ),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.accessibility_new, size: 18),
+                      label: Text(blader.fullBodyImageUrl == null
+                          ? 'Add a full-body picture'
+                          : 'Better full-body picture'),
+                      onPressed: contribute,
+                    ),
+                  ],
+                ),
               ],
             ),
           ),

@@ -1,5 +1,6 @@
 import 'package:clasher_st/core/widgets/app_beyblade_loading_indicator.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/bey_inspect.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/minified_beyblade_tile.dart';
 import 'package:flutter/material.dart';
 
@@ -13,14 +14,17 @@ import 'resolved_bey_thumb.dart';
 class ResolvedMinifiedBeyTile extends StatelessWidget {
   const ResolvedMinifiedBeyTile({super.key, required this.loadout, this.onTap});
   final BeybladeLoadout loadout;
+
+  /// Defaults to the combo sheet (its parts, each opening the part sheet).
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return ResolvedBeyBuilder(
       loadout: loadout,
-      builder: (context, beyblade) =>
-          MinifiedBeybladeTile(beyblade: beyblade, onTap: onTap),
+      builder: (context, beyblade) => MinifiedBeybladeTile(
+          beyblade: beyblade,
+          onTap: onTap ?? () => showComboSheet(context, beyblade: beyblade)),
       loading: (_) => const Card(
           child: Padding(
               padding: EdgeInsets.all(24),
@@ -31,35 +35,10 @@ class ResolvedMinifiedBeyTile extends StatelessWidget {
   }
 }
 
-/// Opens a dialog showing every bey in [deck], each as a full
-/// ResolvedMinifiedBeyTile — the "view full deck" entry point used by
-/// both the participant tile and the match card, so both get identical
-/// treatment rather than two slightly different implementations.
+/// The "view full deck" entry point (participant tile, match card,
+/// profile, boards). Now the deck sheet: every combo with its parts, each
+/// part opening its sheet and from there its page. One combo opens as a
+/// combo sheet. Same signature as before, so callers don't change.
 Future<void> showDeckDialog(BuildContext context,
-    {required String title, required List<BeybladeLoadout> beys}) {
-  return showDialog<void>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text(title),
-      content: SizedBox(
-        width: 360,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < beys.length; i++) ...[
-                ResolvedMinifiedBeyTile(loadout: beys[i]),
-                if (i != beys.length - 1) const SizedBox(height: 12),
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Close'))
-      ],
-    ),
-  );
-}
+        {required String title, required List<BeybladeLoadout> beys}) =>
+    showDeckSheet(context, title: title, beys: beys);

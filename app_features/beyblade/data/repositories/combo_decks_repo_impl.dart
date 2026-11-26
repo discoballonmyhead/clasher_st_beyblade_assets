@@ -170,6 +170,13 @@ class CombosDecksRepositoryImpl implements CombosDecksRepository {
   }
 
   @override
+  Future<Combo> updateCombo(Combo combo) async {
+    final saved = await _data.updateCombo(combo);
+    _flushLater();
+    return saved;
+  }
+
+  @override
   Future<Deck> createDeck(String name, List<String> comboIds) async {
     final deck = await _data.createDeck(name, comboIds);
     _flushLater();
@@ -180,6 +187,13 @@ class CombosDecksRepositoryImpl implements CombosDecksRepository {
   Future<void> deleteDeck(String id) async {
     await _data.deleteDeck(id);
     _flushLater();
+  }
+
+  @override
+  Future<Deck> updateDeck(Deck deck) async {
+    final saved = await _data.updateDeck(deck);
+    _flushLater();
+    return saved;
   }
 
   // ── HELPERS ────────────────────────────────────────────────────────────────

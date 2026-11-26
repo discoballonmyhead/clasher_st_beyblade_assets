@@ -522,7 +522,12 @@ class StockComboModel {
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
 
   final String stockComboId, productId, name;
-  final String? hobbyName, hobbyGeneration, model3dUrl, model3dHash, description, credits;
+  final String? hobbyName,
+      hobbyGeneration,
+      model3dUrl,
+      model3dHash,
+      description,
+      credits;
   final BeybladeLoadout loadout;
   final bool isIncomplete;
 

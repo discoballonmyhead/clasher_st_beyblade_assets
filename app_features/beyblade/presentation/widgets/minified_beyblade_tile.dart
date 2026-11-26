@@ -117,31 +117,187 @@ class _FilledContent extends StatelessWidget {
   }
 }
 
+// /// The actual grid + connector geometry. 3 columns, however many rows
+// /// [parts] needs. Every tile and every connector segment's position is
+// /// derived from (index ~/ perRow, index % perRow) — nothing here is a
+// /// guessed pixel offset, so it's correct for 3 parts (1 row, no wrap) or
+// /// 6 (2 full rows, one wrap connector) without special-casing either.
+// class _ConnectedPartsGrid extends StatelessWidget {
+//   const _ConnectedPartsGrid({required this.parts});
+//   final List<BeybladePart> parts;
+
+//   static const _perRow = 3;
+//   static const _lineThickness = 2.0;
+
+//   @override
+//   Widget build(BuildContext context) {
+//     final cs = Theme.of(context).colorScheme;
+//     final rc = ResponsiveProvider.config(context);
+//     final gap = rc.sm;
+//     // Taller than the intra-row gap — this is what the wrap connector's
+//     // two vertical segments actually have room to be drawn inside.
+//     final rowGap = rc.sm * 2.5;
+
+//     return LayoutBuilder(
+//       builder: (context, constraints) {
+//         final tileSize = (constraints.maxWidth - gap * (_perRow - 1)) / _perRow;
+//         final rows = (parts.length / _perRow).ceil();
+//         final totalHeight = rows * tileSize + (rows - 1) * rowGap;
+
+//         Offset centerOf(int index) {
+//           final col = index % _perRow;
+//           final row = index ~/ _perRow;
+//           final left = col * (tileSize + gap);
+//           final top = row * (tileSize + rowGap);
+//           return Offset(left + tileSize / 2, top + tileSize / 2);
+//         }
+
+//         final connectors = <Widget>[];
+//         for (var i = 0; i < parts.length - 1; i++) {
+//           final sameRow = (i ~/ _perRow) == ((i + 1) ~/ _perRow);
+//           final from = centerOf(i);
+//           final to = centerOf(i + 1);
+
+//           if (sameRow) {
+//             // One straight horizontal segment between neighbors.
+//             connectors.add(Positioned(
+//               left: from.dx + tileSize / 2,
+//               top: from.dy - _lineThickness / 2,
+//               width: gap,
+//               height: _lineThickness,
+//               child: ColoredBox(color: cs.outlineVariant),
+//             ));
+//           } else {
+//             // Wrap point: tile i is the last in its row, tile i+1 is the
+//             // first of the next — diagonally placed, not adjacent. Drawn
+//             // as down / across / down rather than one straight line,
+//             // since a straight line between these two points would cut
+//             // diagonally across whatever tile is in between them.
+//             final midY = from.dy + tileSize / 2 + rowGap / 2;
+//             connectors.add(Positioned(
+//               left: from.dx - _lineThickness / 2,
+//               top: from.dy + tileSize / 2,
+//               width: _lineThickness,
+//               height: rowGap / 2,
+//               child: ColoredBox(color: cs.outlineVariant),
+//             ));
+//             connectors.add(Positioned(
+//               left: from.dx < to.dx ? from.dx : to.dx,
+//               top: midY - _lineThickness / 2,
+//               width: (to.dx - from.dx).abs(),
+//               height: _lineThickness,
+//               child: ColoredBox(color: cs.outlineVariant),
+//             ));
+//             connectors.add(Positioned(
+//               left: to.dx - _lineThickness / 2,
+//               top: midY,
+//               width: _lineThickness,
+//               height: rowGap / 2,
+//               child: ColoredBox(color: cs.outlineVariant),
+//             ));
+//           }
+//         }
+
+//         return SizedBox(
+//           width: constraints.maxWidth,
+//           height: totalHeight,
+//           child: Stack(
+//             children: [
+//               ...connectors,
+//               for (var i = 0; i < parts.length; i++)
+//                 Positioned(
+//                   left: (i % _perRow) * (tileSize + gap),
+//                   top: (i ~/ _perRow) * (tileSize + rowGap),
+//                   width: tileSize,
+//                   height: tileSize,
+//                   child: ClipRRect(
+//                     borderRadius: BorderRadius.circular(rc.borderRadius / 2),
+//                     child: PartImageThumb(
+//                         imageUrl: preferredThumbUrl(parts[i]),
+//                         size: tileSize,
+//                         scale: imageScaleFor(parts[i])),
+//                   ),
+//                 ),
+//             ],
+//           ),
+//         );
+//       },
+//     );
+//   }
+// }
+
 /// The actual grid + connector geometry. 3 columns, however many rows
-/// [parts] needs. Every tile and every connector segment's position is
-/// derived from (index ~/ perRow, index % perRow) — nothing here is a
-/// guessed pixel offset, so it's correct for 3 parts (1 row, no wrap) or
-/// 6 (2 full rows, one wrap connector) without special-casing either.
-class _ConnectedPartsGrid extends StatelessWidget {
-  const _ConnectedPartsGrid({required this.parts});
+/// [parts] needs. Supports a staggered slide-in unveil animation piece by piece.
+class _ConnectedPartsGrid extends StatefulWidget {
+  const _ConnectedPartsGrid({
+    required this.parts,
+    this.animate = true,
+  });
+
   final List<BeybladePart> parts;
+  final bool animate;
+
+  @override
+  State<_ConnectedPartsGrid> createState() => _ConnectedPartsGridState();
+}
+
+class _ConnectedPartsGridState extends State<_ConnectedPartsGrid>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
 
   static const _perRow = 3;
   static const _lineThickness = 2.0;
+
+  @override
+  void initState() {
+    super.initState();
+    final duration = const Duration(milliseconds: 400);
+    final stagger = const Duration(milliseconds: 90);
+    final totalDuration = widget.animate
+        ? duration + (stagger * (widget.parts.length - 1))
+        : Duration.zero;
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: totalDuration,
+    );
+
+    if (widget.animate) {
+      _controller.forward();
+    } else {
+      _controller.value = 1.0;
+    }
+  }
+
+  @override
+  void didUpdateWidget(_ConnectedPartsGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animate != oldWidget.animate) {
+      if (widget.animate) {
+        _controller.forward(from: 0.0);
+      } else {
+        _controller.value = 1.0;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final rc = ResponsiveProvider.config(context);
     final gap = rc.sm;
-    // Taller than the intra-row gap — this is what the wrap connector's
-    // two vertical segments actually have room to be drawn inside.
     final rowGap = rc.sm * 2.5;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final tileSize = (constraints.maxWidth - gap * (_perRow - 1)) / _perRow;
-        final rows = (parts.length / _perRow).ceil();
+        final rows = (widget.parts.length / _perRow).ceil();
         final totalHeight = rows * tileSize + (rows - 1) * rowGap;
 
         Offset centerOf(int index) {
@@ -153,13 +309,12 @@ class _ConnectedPartsGrid extends StatelessWidget {
         }
 
         final connectors = <Widget>[];
-        for (var i = 0; i < parts.length - 1; i++) {
+        for (var i = 0; i < widget.parts.length - 1; i++) {
           final sameRow = (i ~/ _perRow) == ((i + 1) ~/ _perRow);
           final from = centerOf(i);
           final to = centerOf(i + 1);
 
           if (sameRow) {
-            // One straight horizontal segment between neighbors.
             connectors.add(Positioned(
               left: from.dx + tileSize / 2,
               top: from.dy - _lineThickness / 2,
@@ -168,11 +323,6 @@ class _ConnectedPartsGrid extends StatelessWidget {
               child: ColoredBox(color: cs.outlineVariant),
             ));
           } else {
-            // Wrap point: tile i is the last in its row, tile i+1 is the
-            // first of the next — diagonally placed, not adjacent. Drawn
-            // as down / across / down rather than one straight line,
-            // since a straight line between these two points would cut
-            // diagonally across whatever tile is in between them.
             final midY = from.dy + tileSize / 2 + rowGap / 2;
             connectors.add(Positioned(
               left: from.dx - _lineThickness / 2,
@@ -198,26 +348,79 @@ class _ConnectedPartsGrid extends StatelessWidget {
           }
         }
 
+        final totalMs = _controller.duration!.inMilliseconds > 0
+            ? _controller.duration!.inMilliseconds.toDouble()
+            : 1.0;
+
         return SizedBox(
           width: constraints.maxWidth,
           height: totalHeight,
           child: Stack(
             children: [
               ...connectors,
-              for (var i = 0; i < parts.length; i++)
-                Positioned(
-                  left: (i % _perRow) * (tileSize + gap),
-                  top: (i ~/ _perRow) * (tileSize + rowGap),
-                  width: tileSize,
-                  height: tileSize,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(rc.borderRadius / 2),
-                    child: PartImageThumb(
-                        imageUrl: preferredThumbUrl(parts[i]),
+              for (var i = 0; i < widget.parts.length; i++)
+                ...() {
+                  final left = (i % _perRow) * (tileSize + gap);
+                  final top = (i ~/ _perRow) * (tileSize + rowGap);
+
+                  Widget tileWidget = Positioned(
+                    left: left,
+                    top: top,
+                    width: tileSize,
+                    height: tileSize,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(rc.borderRadius / 2),
+                      child: PartImageThumb(
+                        imageUrl: preferredThumbUrl(widget.parts[i]),
                         size: tileSize,
-                        scale: imageScaleFor(parts[i])),
-                  ),
-                ),
+                        scale: imageScaleFor(widget.parts[i]),
+                      ),
+                    ),
+                  );
+
+                  if (!widget.animate) return [tileWidget];
+
+                  // Stagger timing calculation per part index
+                  final startMs = 90.0 * i;
+                  final endMs = startMs + 400.0;
+                  final startInterval = (startMs / totalMs).clamp(0.0, 1.0);
+                  final endInterval = (endMs / totalMs).clamp(0.0, 1.0);
+
+                  final curvedAnim = CurvedAnimation(
+                    parent: _controller,
+                    curve: Interval(startInterval, endInterval,
+                        curve: Curves.easeOutCubic),
+                  );
+
+                  return [
+                    Positioned(
+                      left: left,
+                      top: top,
+                      width: tileSize,
+                      height: tileSize,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(
+                              -0.3, 0), // Slide in from left to right
+                          end: Offset.zero,
+                        ).animate(curvedAnim),
+                        child: FadeTransition(
+                          opacity: Tween<double>(begin: 0.0, end: 1.0)
+                              .animate(curvedAnim),
+                          child: ClipRRect(
+                            borderRadius:
+                                BorderRadius.circular(rc.borderRadius / 2),
+                            child: PartImageThumb(
+                              imageUrl: preferredThumbUrl(widget.parts[i]),
+                              size: tileSize,
+                              scale: imageScaleFor(widget.parts[i]),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ];
+                }(),
             ],
           ),
         );

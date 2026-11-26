@@ -10,6 +10,8 @@ import 'package:clasher_st/features/beyblade/presentation/widgets/catalog_extras
 import 'package:clasher_st/features/beyblade/presentation/widgets/loyalty_badge.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/stat_bar_row.dart';
+import 'package:clasher_st/features/contributions/domain/entities.dart';
+import 'package:clasher_st/features/contributions/presentation/widgets/contribute_picture_button.dart';
 import 'package:clasher_st/features/user_collection/domain/entities/entities.dart';
 import 'package:clasher_st/features/user_collection/domain/usecases/usecases.dart';
 import 'package:clasher_st/features/user_collection/presentation/cubit/inventory_cubit/inventory_cubit.dart';
@@ -873,13 +875,20 @@ class _PartSections extends StatelessWidget {
           ),
         ],
 
-        if (part.has3dModel) ...[
-          SizedBox(height: rc.md),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Model3dButton(url: part.model3dUrl, title: part.name),
-          ),
-        ],
+        SizedBox(height: rc.md),
+        Wrap(
+          spacing: rc.sm,
+          runSpacing: rc.sm,
+          children: [
+            if (part.has3dModel)
+              Model3dButton(url: part.model3dUrl, title: part.name),
+            ContributePictureButton(
+              target: ContributionTarget(
+                  type: partTypeKey, id: part.dataId, name: part.name),
+              hasPicture: part.imageUrl != null,
+            ),
+          ],
+        ),
 
         if (bladers.isNotEmpty) ...[
           SizedBox(height: rc.lg),
@@ -1253,6 +1262,15 @@ class _AccessorySections extends StatelessWidget {
               ),
           ],
         ),
+        SizedBox(height: rc.md),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ContributePictureButton(
+            target: ContributionTarget(
+                type: 'accessories', id: accessory.dataId, name: accessory.name),
+            hasPicture: accessory.imageUrl != null,
+          ),
+        ),
         SizedBox(height: rc.lg),
         _ProductListSection(
           title: 'Included in',
@@ -1334,6 +1352,15 @@ class _ProductSections extends StatelessWidget {
                 details: 'The people who contributed this entry\'s data or pictures.',
               ),
           ],
+        ),
+        SizedBox(height: rc.md),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ContributePictureButton(
+            target: ContributionTarget(
+                type: 'products', id: product.productId, name: product.productName),
+            hasPicture: product.boxImageUrl != null,
+          ),
         ),
         if (stockCombos.isNotEmpty) ...[
           SizedBox(height: rc.lg),

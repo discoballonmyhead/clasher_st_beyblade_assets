@@ -180,6 +180,21 @@ class BeyDataRepoImpl implements BeybladeDataRepo {
     await _queue((o) => o.delete('combos', id));
   }
 
+  @override
+  Future<Combo> updateCombo(Combo combo) async {
+    final model = ComboModel(
+      id: combo.id,
+      name: combo.name,
+      loadout: combo.loadout,
+      createdAtMillis: combo.createdAt.millisecondsSinceEpoch,
+    );
+    // Same id: the phone's copy is replaced and the account's row updated
+    // (newest change wins).
+    await _ldsrc.saveCombo(model);
+    await _queue((o) => o.upsertCombo(model.toJson()));
+    return model.toEntity();
+  }
+
   //decks
 
   @override
@@ -212,6 +227,24 @@ class BeyDataRepoImpl implements BeybladeDataRepo {
   Future<void> deleteDeck(String id) async {
     await _ldsrc.deleteDeck(id);
     await _queue((o) => o.delete('decks', id));
+  }
+
+  @override
+  Future<Deck> updateDeck(Deck deck) async {
+    final unique = deck.comboIds.toSet();
+    if (unique.length < 3) {
+      throw ArgumentError(
+          'A deck needs at least 3 unique combos (got ${unique.length}).');
+    }
+    final model = DeckModel(
+      id: deck.id,
+      name: deck.name,
+      comboIds: deck.comboIds,
+      createdAtMillis: deck.createdAt.millisecondsSinceEpoch,
+    );
+    await _ldsrc.saveDeck(model);
+    await _queue((o) => o.upsertDeck(model.toJson()));
+    return model.toEntity();
   }
 
 //DECK SLOTs

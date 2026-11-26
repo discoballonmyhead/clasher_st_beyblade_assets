@@ -4,32 +4,64 @@ import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 
-// Belongs with your beyblade inventory feature; the create-tournament page
-// is just one place that uses it.
+// Tournament kits (formerly "ban / approve lists"). Belongs with the
+// beyblade inventory feature; the create-tournament page is one place that
+// uses it. Class names are unchanged so existing code keeps working.
+//
+//   ban / approve   part rules: what players may bring        (part_rules)
+//   pool / deck     organiser kit: what the organiser hands out (organizer_kit)
 
 enum PartListKind {
   ban,
-  approve;
+  approve,
+  pool,
+  deck;
 
-  static PartListKind fromJson(String? value) =>
-      value == 'approve' ? approve : ban;
+  static PartListKind fromJson(String? value) => switch (value) {
+        'approve' => approve,
+        'pool' => pool,
+        'deck' => deck,
+        _ => ban,
+      };
 
   String toJson() => name;
+
+  /// Ban list and allowed parts: rules for the decks players bring.
+  static const partRuleKinds = [ban, approve];
+
+  /// Parts pool and deck kit: what the organiser hands out (Mirror Match).
+  static const organizerKinds = [pool, deck];
+
+  bool get isPartRule => this == ban || this == approve;
+  bool get isOrganizerKit => this == pool || this == deck;
 
   String get label => switch (this) {
         ban => TrTokens.banListTxt.tr,
         approve => TrTokens.approveListTxt.tr,
+        pool => TrTokens.kitKindPool.tr,
+        deck => TrTokens.kitKindDeck.tr,
       };
 
   String get shortLabel => switch (this) {
         ban => TrTokens.banShortTxt.tr,
         approve => TrTokens.approveShortTxt.tr,
+        pool => TrTokens.kitKindPoolShort.tr,
+        deck => TrTokens.kitKindDeckShort.tr,
       };
 
-  /// What the list does, in one sentence players and hosts can both read.
+  /// What the kit does, in one sentence players and hosts can both read.
   String get rule => switch (this) {
         ban => TrTokens.ruleBanTxt.tr,
         approve => TrTokens.ruleApproveTxt.tr,
+        pool => TrTokens.kitRulePool.tr,
+        deck => TrTokens.kitRuleDeck.tr,
+      };
+
+  IconData get icon => switch (this) {
+        ban => Icons.block,
+        approve => Icons.verified_outlined,
+        pool => Icons.inventory_2_outlined,
+        deck => Icons.style_outlined,
       };
 }
 
@@ -54,18 +86,82 @@ class PartRef extends Equatable {
   List<Object?> get props => [partType, dataId];
 }
 
-/// A ban or approve list. The same entity whether it's saved in the
-/// user's inventory ([id] set) or built inline for one tournament ([id]
-/// null).
+/// One ready-made deck in a deck kit: a name and its combos, each combo
+/// a loadout as `BeybladeLoadout.toJson()` writes it, empty fields left out:
+/// `{"bladeDataId": "12", "ratchetDataId": "3", "bitDataId": "7"}`.
+class KitDeck extends Equatable {
+  const KitDeck({this.name = '', this.combos = const []});
+
+  final String name;
+  final List<Map<String, String>> combos;
+
+  /// Keeps only filled loadout fields, as text.
+  static Map<String, String> cleanCombo(Map<String, dynamic> loadout) => {
+        for (final e in loadout.entries)
+          if (e.key.endsWith('DataId') &&
+              e.value != null &&
+              '${e.value}'.trim().isNotEmpty)
+            e.key: '${e.value}'.trim(),
+      };
+
+  factory KitDeck.fromJson(Map<String, dynamic> json) => KitDeck(
+        name: (json['name'] as String?) ?? '',
+        combos: [
+          for (final c in (json['combos'] as List?) ?? const [])
+            if (c is Map) cleanCombo(Map<String, dynamic>.from(c)),
+        ],
+      );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'combos': [for (final c in combos) Map<String, String>.of(c)],
+      };
+
+  /// How a combo reads, top to bottom (the server stores keys sorted
+  /// alphabetically, so order is restored here).
+  static const fieldOrder = [
+    'lockChipDataId',
+    'bladeDataId',
+    'overBladeDataId',
+    'metalBladeDataId',
+    'mainBladeDataId',
+    'assistBladeDataId',
+    'ratchetDataId',
+    'bitDataId',
+  ];
+
+  /// The parts of [combo], in reading order.
+  static List<PartRef> comboParts(Map<String, String> combo) => [
+        for (final k in fieldOrder)
+          if (combo[k] != null) PartRef.fromLoadoutField(k, combo[k]!),
+        for (final e in combo.entries)
+          if (!fieldOrder.contains(e.key))
+            PartRef.fromLoadoutField(e.key, e.value),
+      ];
+
+  /// The parts of combo [i], in reading order.
+  List<PartRef> partsOf(int i) => comboParts(combos[i]);
+
+  KitDeck copyWith({String? name, List<Map<String, String>>? combos}) =>
+      KitDeck(name: name ?? this.name, combos: combos ?? this.combos);
+
+  @override
+  List<Object?> get props => [name, combos];
+}
+
+/// A kit. The same entity whether it's saved in the user's inventory
+/// ([id] set) or built inline for one tournament ([id] null).
 ///
-/// [parts] maps part type to data ids:
-/// `{"blade": ["12", "40"], "bit": ["3"]}`.
+/// [parts] maps part type to data ids: `{"blade": ["12", "40"], "bit": ["3"]}`.
+/// Deck kits keep their decks in [decks]; the server fills [parts] with
+/// every part the decks use.
 class PartList extends Equatable {
   const PartList({
     this.id,
     this.name = '',
     required this.kind,
     this.parts = const {},
+    this.decks = const [],
     this.updatedAt,
   });
 
@@ -73,13 +169,30 @@ class PartList extends Equatable {
   final String name;
   final PartListKind kind;
   final Map<String, List<String>> parts;
+  final List<KitDeck> decks;
   final DateTime? updatedAt;
 
   bool get isSaved => id != null;
 
   int get partCount => parts.values.fold(0, (n, ids) => n + ids.length);
 
-  bool get isEmpty => partCount == 0;
+  int get deckCount => decks.length;
+
+  /// Combos per deck (every deck in a kit has the same number); 0 when empty.
+  int get comboCount => decks.isEmpty ? 0 : decks.first.combos.length;
+
+  bool get isEmpty =>
+      kind == PartListKind.deck ? decks.isEmpty : partCount == 0;
+
+  /// "12 parts" / "3 decks · 3 combos".
+  String get sizeLabel => kind == PartListKind.deck
+      ? '${deckCount == 1 ? TrTokens.kitOneDeck.tr : TrTokens.kitDecksCount.trParams({
+                  'count': deckCount
+                })}'
+          ' · ${comboCount == 1 ? TrTokens.oneComboTxt.tr : TrTokens.combosTxt.trParams({
+                  'count': comboCount
+                })}'
+      : TrTokens.partsCountFormat.tr.replaceFirst('%s', '$partCount');
 
   bool contains(PartRef part) =>
       parts[part.partType]?.contains(part.dataId) ?? false;
@@ -104,22 +217,39 @@ class PartList extends Equatable {
     return copyWith(parts: next);
   }
 
+  /// Adds [deck], or replaces the deck at [index].
+  PartList withDeck(KitDeck deck, {int? index}) {
+    final next = [...decks];
+    if (index == null || index < 0 || index >= next.length) {
+      next.add(deck);
+    } else {
+      next[index] = deck;
+    }
+    return copyWith(decks: next);
+  }
+
+  PartList withoutDeck(int index) =>
+      copyWith(decks: [...decks]..removeAt(index));
+
   PartList copyWith({
     String? name,
     PartListKind? kind,
     Map<String, List<String>>? parts,
+    List<KitDeck>? decks,
   }) =>
       PartList(
         id: id,
         name: name ?? this.name,
         kind: kind ?? this.kind,
         parts: parts ?? this.parts,
+        decks: decks ?? this.decks,
         updatedAt: updatedAt,
       );
 
-  /// Same contents, not tied to the saved list: editing it can't change
+  /// Same contents, not tied to the saved kit: editing it can't change
   /// the original.
-  PartList unsavedCopy() => PartList(name: name, kind: kind, parts: parts);
+  PartList unsavedCopy() =>
+      PartList(name: name, kind: kind, parts: parts, decks: decks);
 
   factory PartList.fromJson(Map<String, dynamic> json) {
     final raw = (json['parts'] as Map?) ?? const {};
@@ -131,6 +261,10 @@ class PartList extends Equatable {
         for (final e in raw.entries)
           e.key as String: [for (final id in e.value as List) id.toString()],
       },
+      decks: [
+        for (final d in (json['decks'] as List?) ?? const [])
+          if (d is Map) KitDeck.fromJson(Map<String, dynamic>.from(d)),
+      ],
       updatedAt: DateTime.tryParse((json['updated_at'] as String?) ?? ''),
     );
   }
@@ -139,8 +273,11 @@ class PartList extends Equatable {
         for (final e in parts.entries) e.key: List.of(e.value),
       };
 
+  List<Map<String, dynamic>> get decksJson =>
+      [for (final d in decks) d.toJson()];
+
   @override
-  List<Object?> get props => [id, name, kind, parts, updatedAt];
+  List<Object?> get props => [id, name, kind, parts, decks, updatedAt];
 }
 
 /// The one hook into your parts catalog.
@@ -150,9 +287,6 @@ class PartList extends Equatable {
 /// BeybladeDependencies.init():
 ///
 ///     sl.registerLazySingleton<PartCatalog>(() => BeybladePartCatalog(sl()));
-///
-/// [resolvePartCatalog] only falls back to [ManualEntryPartCatalog] when
-/// nothing is registered (tests).
 abstract class PartCatalog {
   const PartCatalog();
 
@@ -190,98 +324,11 @@ abstract class PartCatalog {
         ? partType
         : spaced[0].toUpperCase() + spaced.substring(1);
   }
+
+  /// "Dran Sword 3-60 Flat" for one combo of a deck kit.
+  String comboName(Map<String, String> combo) =>
+      KitDeck.comboParts(combo).map(nameOf).join(' ');
 }
 
-PartCatalog resolvePartCatalog() => GetIt.instance.isRegistered<PartCatalog>()
-    ? GetIt.instance<PartCatalog>()
-    : const ManualEntryPartCatalog();
-
-/// Stopgap until the real catalog is wired: type a part type and data id
-/// by hand. Fine for testing; not something to ship to players.
-class ManualEntryPartCatalog extends PartCatalog {
-  const ManualEntryPartCatalog();
-
-  static const _types = [
-    'blade',
-    'ratchet',
-    'bit',
-    'lockChip',
-    'mainBlade',
-    'assistBlade',
-    'overBlade',
-    'metalBlade',
-  ];
-
-  @override
-  Future<PartRef?> pickPart(BuildContext context,
-          {required PartListKind kind}) =>
-      showDialog<PartRef>(
-        context: context,
-        builder: (_) => _ManualPartDialog(types: _types, labelOf: typeLabel),
-      );
-
-  @override
-  String nameOf(PartRef part) => '${typeLabel(part.partType)} #${part.dataId}';
-}
-
-class _ManualPartDialog extends StatefulWidget {
-  const _ManualPartDialog({required this.types, required this.labelOf});
-
-  final List<String> types;
-  final String Function(String) labelOf;
-
-  @override
-  State<_ManualPartDialog> createState() => _ManualPartDialogState();
-}
-
-class _ManualPartDialogState extends State<_ManualPartDialog> {
-  late String _type = widget.types.first;
-  final _id = TextEditingController();
-
-  @override
-  void dispose() {
-    _id.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(TrTokens.addPartBtn.tr),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButtonFormField<String>(
-            initialValue: _type,
-            decoration: InputDecoration(labelText: TrTokens.partTypeTxt.tr),
-            items: [
-              for (final t in widget.types)
-                DropdownMenuItem(value: t, child: Text(widget.labelOf(t))),
-            ],
-            onChanged: (v) => setState(() => _type = v ?? _type),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _id,
-            autofocus: true,
-            decoration: InputDecoration(labelText: TrTokens.dataIdTxt.tr),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(TrTokens.cancelTxt.tr),
-        ),
-        FilledButton(
-          onPressed: () {
-            final id = _id.text.trim();
-            if (id.isEmpty) return;
-            Navigator.of(context).pop(PartRef(_type, id));
-          },
-          child: Text(TrTokens.addBtnTxt.tr),
-        ),
-      ],
-    );
-  }
-}
+/// The registered catalog (BeybladeDependencies.init registers it).
+PartCatalog resolvePartCatalog() => GetIt.instance<PartCatalog>();

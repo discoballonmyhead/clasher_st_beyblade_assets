@@ -1,4 +1,4 @@
-// The real PartCatalog behind ban / approve lists (parts_list.dart).
+// The real PartCatalog behind tournament kits (parts_list.dart).
 //
 // Backed by the local parts catalog the deck builder already uses
 // (BeybladeDataRepo): search by name or code, filter by part type, images,
@@ -9,6 +9,8 @@
 // PartList / PartRef keep their exact shape ({"blade": ["12"]}), so saved
 // lists and tournament rules stay compatible.
 
+import 'package:clasher_st/core/constants/trc_constant_tokens.dart';
+import 'package:clasher_st/core/services/translation/translation_helper.dart';
 import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/core/widgets/app_beyblade_loading_indicator.dart';
 import 'package:clasher_st/core/widgets/holow_components.dart';
@@ -285,9 +287,11 @@ class _PartPickerSheetState extends State<PartPickerSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             HoloSectionLabel(
-              title: widget.kind == PartListKind.ban
-                  ? 'Add a part to ban'
-                  : 'Add an allowed part',
+              title: switch (widget.kind) {
+                PartListKind.ban => TrTokens.kitPickBanTitle.tr,
+                PartListKind.pool => TrTokens.kitPickPoolTitle.tr,
+                _ => TrTokens.kitPickAllowedTitle.tr,
+              },
             ),
             SizedBox(height: rc.sm),
             TextField(

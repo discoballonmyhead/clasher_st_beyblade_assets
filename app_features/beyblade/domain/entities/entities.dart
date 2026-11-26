@@ -1144,11 +1144,16 @@ class StockCombo extends Equatable {
   /// (part sheet key, dataId) of every part in the combo, top to bottom.
   List<(String, String)> get partRefs => [
         if (loadout.bladeDataId != null) ('blades', loadout.bladeDataId!),
-        if (loadout.lockChipDataId != null) ('lockChips', loadout.lockChipDataId!),
-        if (loadout.overBladeDataId != null) ('overBlades', loadout.overBladeDataId!),
-        if (loadout.metalBladeDataId != null) ('metalBlades', loadout.metalBladeDataId!),
-        if (loadout.mainBladeDataId != null) ('mainBlades', loadout.mainBladeDataId!),
-        if (loadout.assistBladeDataId != null) ('assistBlades', loadout.assistBladeDataId!),
+        if (loadout.lockChipDataId != null)
+          ('lockChips', loadout.lockChipDataId!),
+        if (loadout.overBladeDataId != null)
+          ('overBlades', loadout.overBladeDataId!),
+        if (loadout.metalBladeDataId != null)
+          ('metalBlades', loadout.metalBladeDataId!),
+        if (loadout.mainBladeDataId != null)
+          ('mainBlades', loadout.mainBladeDataId!),
+        if (loadout.assistBladeDataId != null)
+          ('assistBlades', loadout.assistBladeDataId!),
         if (loadout.ratchetDataId != null) ('ratchets', loadout.ratchetDataId!),
         ('bits', loadout.bitDataId),
       ];
@@ -1219,7 +1224,11 @@ class Blader extends Equatable {
   final bool isIncomplete;
 
   /// Best picture for a small avatar: the small portrait, then the portrait, then the full body.
-  String? get avatarUrl => minifiedImageUrl ?? imageUrl ?? minifiedFullBodyImageUrl ?? fullBodyImageUrl;
+  String? get avatarUrl =>
+      minifiedImageUrl ??
+      imageUrl ??
+      minifiedFullBodyImageUrl ??
+      fullBodyImageUrl;
 
   @override
   List<Object?> get props => [
@@ -1447,6 +1456,16 @@ class DeckEntry extends Equatable {
     );
   }
 
+  /// A combo was edited: the deck shows its new name and parts.
+  DeckEntry withCombo(Combo combo) {
+    if (!combos.any((c) => c.id == combo.id)) return this;
+    return DeckEntry(
+      deck: deck,
+      combos: [for (final c in combos) c.id == combo.id ? combo : c],
+      missing: missing,
+    );
+  }
+
   @override
   List<Object?> get props => [deck, combos, missing];
 }
@@ -1464,7 +1483,13 @@ abstract class CombosDecksRepository {
 
   Future<void> deleteCombo(String id);
 
+  /// Same id, new name and / or parts.
+  Future<Combo> updateCombo(Combo combo);
+
   Future<Deck> createDeck(String name, List<String> comboIds);
 
   Future<void> deleteDeck(String id);
+
+  /// Same id, new name and / or combos (3 or more).
+  Future<Deck> updateDeck(Deck deck);
 }

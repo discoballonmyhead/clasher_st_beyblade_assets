@@ -206,6 +206,8 @@ class BeyIdentity extends StatelessWidget {
 
 /// A deck slot. [loadout] null renders the empty state with Build / Random
 /// actions; otherwise the bey is resolved and shown in one compact row.
+/// A deck slot. [loadout] null renders the empty state with Build / Random
+/// actions; otherwise the bey is resolved and shown in one compact row.
 class BeySlotCard extends StatelessWidget {
   const BeySlotCard({
     super.key,
@@ -216,6 +218,7 @@ class BeySlotCard extends StatelessWidget {
     this.onClear,
     this.emptyLabel,
     this.highlight = false,
+    this.showRandomButton = true, // Added toggle property
   });
 
   /// 0-based slot index; shown 1-based.
@@ -228,6 +231,7 @@ class BeySlotCard extends StatelessWidget {
   final VoidCallback? onClear;
   final String? emptyLabel;
   final bool highlight;
+  final bool showRandomButton; // Controls visibility of random actions
 
   static const double minHeight = 76;
 
@@ -260,17 +264,18 @@ class BeySlotCard extends StatelessWidget {
                       failed: (_) => const _UnavailableBody(),
                     ),
             ),
-            // Empty slot: the dice is the fastest action, so it stays one
-            // tap away. Filled slot: one menu keeps the name readable on
-            // narrow phones.
-            if (l == null && onRandom != null)
+            // Empty slot: show dice button only if enabled
+            if (l == null && onRandom != null && showRandomButton)
               IconButton(
                 tooltip: 'Random bey',
                 icon: const Icon(Icons.casino_outlined),
                 onPressed: onRandom,
               )
+            // Filled slot: show popup menu with or without the random option based on the flag
             else if (l != null &&
-                (onTap != null || onRandom != null || onClear != null))
+                (onTap != null ||
+                    (onRandom != null && showRandomButton) ||
+                    onClear != null))
               PopupMenuButton<_SlotAction>(
                 tooltip: 'Slot actions',
                 icon: const Icon(Icons.more_vert),
@@ -293,7 +298,8 @@ class BeySlotCard extends StatelessWidget {
                             contentPadding: EdgeInsets.zero,
                             leading: Icon(Icons.edit_outlined),
                             title: Text('Change bey'))),
-                  if (onRandom != null)
+                  // Only include the random option in the popup menu if enabled
+                  if (onRandom != null && showRandomButton)
                     const PopupMenuItem(
                         value: _SlotAction.random,
                         child: ListTile(

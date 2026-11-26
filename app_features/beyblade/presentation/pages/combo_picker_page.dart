@@ -1,6 +1,7 @@
 import 'package:clasher_st/core/constants/trc_constant_tokens.dart';
 import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/core/services/translation/translation_helper.dart';
+import 'package:clasher_st/core/theme/app_theme.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/presentation/cubit/combo_decks_paged_cubit/combo_decks_paged_cubit.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/paged_list_view.dart';
@@ -224,30 +225,39 @@ class _PickTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final selected = order != null;
+    const cut = 12.0;
+
+    // Define the custom chamfered shape matching your Holo style
+    final shape = ChamferBorder.tab(
+      cut: cut,
+      side: BorderSide(
+        color: selected ? cs.primary : Colors.transparent,
+        width: 2,
+      ),
+    );
+
     return Semantics(
       button: true,
       selected: selected,
       label: combo.name,
       child: Opacity(
         opacity: enabled ? 1 : 0.5,
-        child: DecoratedBox(
-          position: DecorationPosition.foreground,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected ? cs.primary : Colors.transparent,
-              width: 2,
-            ),
-          ),
+        child: Material(
+          color: Colors.transparent,
+          shape: shape,
+          clipBehavior:
+              Clip.antiAlias, // Clips child content to chamfered corners
           child: Stack(
             children: [
               // The whole tile picks, also while the bey is still loading
               // or couldn't be resolved.
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
+              InkWell(
                 onTap: enabled ? onTap : null,
+                customBorder: shape,
                 child: AbsorbPointer(
-                  child: ResolvedMinifiedBeyTile(loadout: combo.loadout),
+                  child: ResolvedMinifiedBeyTile(
+                    loadout: combo.loadout,
+                  ),
                 ),
               ),
               Positioned(
@@ -257,14 +267,18 @@ class _PickTile extends StatelessWidget {
                   child: Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(6)),
-                    child: Text(combo.name,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700)),
+                    decoration: ShapeDecoration(
+                      color: Colors.black54,
+                      shape: ChamferBorder.tab(cut: 6), // Matches mini-chamfer
+                    ),
+                    child: Text(
+                      combo.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -282,11 +296,14 @@ class _PickTile extends StatelessWidget {
                       border: Border.all(color: Colors.white, width: 1.5),
                     ),
                     child: selected
-                        ? Text('$order',
+                        ? Text(
+                            '$order',
                             style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                                color: cs.onPrimary))
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: cs.onPrimary,
+                            ),
+                          )
                         : null,
                   ),
                 ),
