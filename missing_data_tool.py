@@ -71,8 +71,19 @@ OPTIONAL = {"parentPartId", "variantLabel", "updated_at", "deleted", "incomplete
             # optional extras: 3D models, who uses a part in the show, the parts a stock combo may not have
             S.MODEL_3D, S.BLADER_IDS, S.CREDITS, "bladeDataID", "ratchetDataID", "lockChipDataID", "overBladeDataID",
             "metalBladeDataID", "mainBladeDataID", "assistBladeDataID"}
+# The six-stat columns every X stat part got later (height, plus dash / burstRes beyond bits) and the two-number
+# flags: blank means 0 / no, so they're never counted as missing. Bits have always had dash and burstRes.
+LATER_STATS = {"height", "dash", "burstRes", S.DYNAMIC_STAT}
+STATS_ALWAYS = {"bits": {"dash", "burstRes"}}
+
+
+def later_stats_optional(json_sheet):
+    return LATER_STATS - STATS_ALWAYS.get(json_sheet or "", set())
+
+
 # Fields a variant shares with its parent
-INHERIT = {"name", "type", "spinDir", "attack", "defense", "stamina", "mass", "wbolegality", "system",
+INHERIT = {"name", "type", "spinDir", "attack", "defense", "stamina", "height", "mass", "wbolegality", "system",
+           S.DYNAMIC_STAT, S.DUAL_MODE,
            S.SIMPLE_RATCHET, S.REQUIRES_SIMPLE_RATCHET,
            "layerComponent", "discType", "movementStyle", "baseName", "protrusions", "heightMm", "dash",
            "burstRes", "hobbyName", "hobbyGeneration",
@@ -82,7 +93,8 @@ INHERIT = {"name", "type", "spinDir", "attack", "defense", "stamina", "mass", "w
            "setCode", "setName", "cardNumber", "subtitle", "cardType", "attribute", "cost", "power",
            "battleEdge", "spinStrength", "effectText", "loreText"}
 # Fields that don't change between releases of the same part
-STABLE = {"type", "spinDir", "attack", "defense", "stamina", "wbolegality", "system", "layerComponent",
+STABLE = {"type", "spinDir", "attack", "defense", "stamina", "height", "wbolegality", "system", "layerComponent",
+          S.DYNAMIC_STAT, S.DUAL_MODE,
           S.SIMPLE_RATCHET, S.REQUIRES_SIMPLE_RATCHET,
           "movementStyle", "baseName", "protrusions", "heightMm", "dash", "burstRes", "discType"}
 PARENT_COL = {"dataID": ("parentPartId", "parentCardId"), "productID": ("parentProductId",),
@@ -149,6 +161,7 @@ def expected_fields(book, sheet, include_optional=False):
     pics = all_image_cols(sheet)
     cols = [c for c in book.headers(book.wb[sheet]) if c not in (idc, img, mini) and c not in pics]
     optional = OPTIONAL | {c for c, m in custom_columns(book, sheet).items() if m["optional"]}
+    optional |= later_stats_optional(json_name(sheet))
     # the packaging profile decides when it says something (Studio -> Publish -> Packaging)
     for c, rule in S.column_rules(json_name(sheet) or "").items():
         crit = rule.get("criticality")

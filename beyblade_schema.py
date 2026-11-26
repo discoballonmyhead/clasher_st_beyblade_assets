@@ -56,8 +56,54 @@ YES_NO = [0, 1]
 SIMPLE_RATCHET = "simpleRatchet"                    # ratchets: 1 = this is a simple ratchet
 REQUIRES_SIMPLE_RATCHET = "requiresSimpleRatchet"   # blades / assist blades: 1 = needs a simple ratchet
 # 0/1 columns: the tools accept 1/0, true/false, yes/no and store 1 or 0
+# Stats. Every Beyblade X part with stats has the same six (blank = 0 in the app); weight is the separate `mass`.
+# A stat can hold two numbers:
+#   "25/55"  dynamic   - it changes during the battle (a gimmick); the row's `dynamicStat` flag is 1
+#   "25-55"  dual mode - the part switches between two modes; the row's `twoStat` flag is 1
+# The packager rewrites the older spellings ("25 > 55", "25 → 55", "25 - 55", "30 -15") to these and sets the flag.
+SIX_STATS = ["attack", "defense", "stamina", "height", "dash", "burstRes"]
+DYNAMIC_STAT = "dynamicStat"   # 1 = a stat changes mid-battle ("25/55")
+DUAL_MODE = "twoStat"          # 1 = a stat has two modes ("25-55"); the column bits already had
 FLAG_COLUMNS = {"incompleteData", "wbolegality", "integratedRatchet", "twoStat", "sequential",
-                SIMPLE_RATCHET, REQUIRES_SIMPLE_RATCHET}
+                SIMPLE_RATCHET, REQUIRES_SIMPLE_RATCHET, DYNAMIC_STAT}
+_NUM = r"\d+(?:\.\d+)?"
+_DYNAMIC_RE = re.compile(rf"^\s*({_NUM})\s*(?:/|>|→|->|=>|»)\s*({_NUM})\s*$")
+_DUAL_RE = re.compile(rf"^\s*({_NUM})\s*(?:-|–|—|~)\s*({_NUM})\s*$")
+
+
+def _num(t):
+    f = float(t)
+    return int(f) if f.is_integer() else f
+
+
+def parse_stat(v):
+    """A stat cell -> (kind, first, second): kind is "single", "dynamic", "dual" or None (blank / not a stat).
+    "25" -> ("single", 25, None); "25/55" or "25 > 55" -> ("dynamic", 25, 55); "25-55" -> ("dual", 25, 55)."""
+    if v is None or isinstance(v, bool):
+        return (None, None, None)
+    if isinstance(v, (int, float)):
+        return ("single", v, None)
+    t = str(v).strip()
+    if not t:
+        return (None, None, None)
+    if re.fullmatch(_NUM, t):
+        return ("single", _num(t), None)
+    m = _DYNAMIC_RE.match(t)
+    if m:
+        return ("dynamic", _num(m.group(1)), _num(m.group(2)))
+    m = _DUAL_RE.match(t)
+    if m:
+        return ("dual", _num(m.group(1)), _num(m.group(2)))
+    return (None, None, None)
+
+
+def format_stat(kind, a, b=None):
+    """The stored spelling: 25, "25/55" (dynamic) or "25-55" (dual mode)."""
+    if kind == "dynamic":
+        return f"{a}/{b}"
+    if kind == "dual":
+        return f"{a}-{b}"
+    return a
 
 # -----------------------------------------------------------------------------
 # GENERATIONS -> part types (sheet suffix, label, extra columns, wiki words)
@@ -171,9 +217,14 @@ GENERATIONS = OrderedDict([
     }),
 ])
 GENERATION_NAMES = list(GENERATIONS)
-for _g, _gd in GENERATIONS.items():  # every part can have a 3D model and credits (after the other columns)
+for _p in GENERATIONS["X"]["parts"].values():  # X parts with stats get all six, and the two-number flags
+    if "attack" in _p["columns"]:
+        _extra = [c for c in SIX_STATS + [DUAL_MODE, DYNAMIC_STAT] if c not in _p["columns"]]
+        _at = _p["columns"].index("mass")  # before mass / bookkeeping, next to the other stats
+        _p["columns"] = _p["columns"][:_at] + _extra + _p["columns"][_at:]
+for _g, _gd in GENERATIONS.items():  # every part can have a description, a 3D model and credits (at the end)
     for _p in _gd["parts"].values():
-        _p["columns"] = _p["columns"] + [c for c in (MODEL_3D, CREDITS) if c not in _p["columns"]]
+        _p["columns"] = _p["columns"] + [c for c in ("description", MODEL_3D, CREDITS) if c not in _p["columns"]]
 for _g, _gd in GENERATIONS.items():  # Excel refuses sheet names longer than 31 characters
     for _k, _p in _gd["parts"].items():
         assert len(f"Parts_{_g}_{_p['sheet']}") <= 31, (_g, _k)

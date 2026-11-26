@@ -143,6 +143,39 @@ ID_FIELDS = {"dataID", "parentPartId", "productID", "parentProductId", "partData
 ID_LIST_FIELDS = {S.BLADER_IDS}
 
 
+_STAT_NOTES = []  # "Blades #245: attack '25 > 55' -> '25/55'" etc., reported once per package
+
+
+def stat_values(row, where=""):
+    """Six stats in their stored spelling: a number, "25/55" (dynamic: changes mid-battle) or "25-55" (dual mode).
+    Older spellings ("25 > 55", "25 - 55", "30 -15") are rewritten, and the row's dynamicStat / twoStat flag is set
+    to 1 when one of its stats has two numbers. mass "37.4 grams" -> 37.4. Anything unreadable is left as typed
+    (the catalog check reports it)."""
+    kinds = set()
+    for k in S.SIX_STATS:
+        if k not in row:
+            continue
+        kind, a, b = S.parse_stat(row[k])
+        if kind is None:
+            continue
+        new = S.format_stat(kind, a, b)
+        if isinstance(row[k], str) and str(new) != row[k].strip():
+            _STAT_NOTES.append(f"{where}: {k} {row[k]!r} -> {new!r}")
+        row[k] = new
+        kinds.add(kind)
+    if "dynamic" in kinds:
+        row[S.DYNAMIC_STAT] = 1
+    if "dual" in kinds:
+        row[S.DUAL_MODE] = 1
+    m = row.get("mass")
+    if isinstance(m, str) and m.strip():
+        n = re.match(r"\s*(\d+(?:\.\d+)?)", m)
+        if n:
+            row["mass"] = float(n.group(1)) if "." in n.group(1) else int(n.group(1))
+            _STAT_NOTES.append(f"{where}: mass {m!r} -> {row['mass']!r}")
+    return row
+
+
 def flags_01(row):
     """0/1 columns (simpleRatchet, requiresSimpleRatchet, integratedRatchet ...) as 1 / 0; blank stays blank
     (the app reads blank as 0). Hand-typed TRUE / yes / x become 1."""
@@ -336,6 +369,7 @@ def process_image_sheet(ws, prefix, id_field, img_field, min_field, out_dir, bas
         text_ids(row)
         id_lists(row)
         flags_01(row)
+        stat_values(row, f"{ws.title} #{data_id}")
         for f, m, tag in pairs[1:]:
             for col, kind in ((f, "full"), (m, "min")):
                 hit = encoded.get((i, tag + kind))
@@ -524,6 +558,12 @@ def package(workbooks, out_dir: Path, base_url: str, log=print):
     manifest["imagesByHobby"] = {h: {g: sum(len(v) for v in s.values()) for g, s in gs.items()}
                                  for h, gs in images_by_hobby.items()}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    if _STAT_NOTES:
+        log(f"\nStat values written in the standard spelling ({len(_STAT_NOTES)}; fix them in the workbook to "
+            "silence this):")
+        for n in _STAT_NOTES[:30]:
+            log(f"  {n}")
+        _STAT_NOTES.clear()
     report_changes(out_dir, prev, prev_when, edit_log, custom_cols, manifest, log)
     import wanted  # what's missing, for the app's "Help complete the catalog" page (data/_wanted.json)
     wanted.write(out_dir, log)

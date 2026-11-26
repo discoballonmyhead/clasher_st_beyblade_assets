@@ -147,6 +147,7 @@ def _check_references(sheets, r):
     _check_stock_combos(sheets, ids, products, r)
     _check_bladers(sheets, r)
     _check_models(sheets, r)
+    _check_stats(sheets, r)
 
 
 def _check_stock_combos(sheets, ids, products, r):
@@ -207,6 +208,27 @@ def _check_bladers(sheets, r):
             unknown = [b for b in v if str(b) not in known]
             if unknown:
                 r.warn(n, row.get("dataID"), f"blader(s) {', '.join(map(str, unknown))} not in bladers")
+
+
+def _check_stats(sheets, r):
+    """Stats are numbers, "25/55" (dynamic) or "25-55" (dual mode); the app reads anything else as 0."""
+    for n in APP_PART_SHEETS:
+        for row in sheets.get(n) or []:
+            if not isinstance(row, dict):
+                continue
+            kinds = set()
+            for k in S.SIX_STATS:
+                if _blank(row.get(k)):
+                    continue
+                kind = S.parse_stat(row[k])[0]
+                if kind is None:
+                    r.warn(n, row.get("dataID"), f"{k} {row[k]!r} isn't a number, 'a/b' (dynamic) or 'a-b' "
+                                                 "(dual mode) - the app shows it as 0")
+                kinds.add(kind)
+            if "dynamic" in kinds and str(row.get(S.DYNAMIC_STAT)) not in ("1", "True"):
+                r.warn(n, row.get("dataID"), f"has a dynamic stat ('a/b') but {S.DYNAMIC_STAT} isn't 1")
+            if "dual" in kinds and str(row.get(S.DUAL_MODE)) not in ("1", "True"):
+                r.warn(n, row.get("dataID"), f"has a dual-mode stat ('a-b') but {S.DUAL_MODE} isn't 1")
 
 
 def _check_models(sheets, r):
