@@ -55,6 +55,24 @@ by hand in the missing data tool.
 * In the app, a blade (single-blade build) or assist blade (lock chip build) with `requiresSimpleRatchet = 1` is only
   offered simple ratchets: in the builder, its ratchet picker and the randomizer.
 
+**Stats and descriptions:**
+* Every Beyblade X part with stats has six: `attack`, `defense`, `stamina`, `height`, `dash`, `burstRes`. Blank means
+  0 in the app (the new ones never count as missing). Weight stays `mass`, shown on its own.
+* A stat can hold two numbers. `25/55` = **dynamic** (it changes during the battle; flag `dynamicStat` = 1).
+  `25-55` = **dual mode** (two modes; flag `twoStat` = 1). The packager rewrites the older spellings (`25 > 55`,
+  `25 - 55`, `30 -15`) and `37.4 grams`, sets the flag, and lists what it changed; the catalog check warns about a stat
+  it can't read or a missing flag.
+* `description` on every part tab (Products and StockCombos already had one). The scraper fills it from the wiki
+  page's lead paragraph (never the infobox), for parts and product pages. To fill descriptions in workbooks you have
+  already edited, without touching anything filled in:
+  ```bash
+  python fandom_scraper.py --scope parts --refresh-existing
+  ```
+  ```bash
+  python fandom_scraper.py --scope products --refresh-existing
+  ```
+  Stock combo descriptions are typed by hand (Clasher Studio); the app shows them on product and part pages.
+
 **3D models, stock combos and bladers (all optional):**
 * `model3d` on every part tab and on `StockCombos`: a `.glb` file (path relative to the workbook's folder, e.g.
   `models/dran-sword.glb`) or an https link. The packager copies files to `data/models/<sheet>-<id>.glb` (served from the

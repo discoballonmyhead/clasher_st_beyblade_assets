@@ -6,6 +6,8 @@ import 'package:clasher_st/features/beyblade/presentation/widgets/minified_beybl
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_detail_sheet.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/resolved_bey_thumb.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/stats/holo_stat_panel.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/stats/stat_graph_page.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -13,8 +15,9 @@ import 'package:go_router/go_router.dart';
 // ONE WAY TO LOOK AT A PART, A COMBO OR A DECK, EVERYWHERE
 // -----------------------------------------------------------------------------
 //   part  -> showPartSheet: the part at a glance, and an arrow to its page
-//   combo -> showComboSheet: the bey and each of its parts; tap a part for
-//            its sheet (then the arrow to its page)
+//   combo -> showComboSheet: the bey, its stat radar ("Detailed graph" for
+//            the graph alone) and each of its parts; tap a part for its
+//            sheet (then the arrow to its page)
 //   deck  -> showDeckSheet: every combo with its parts, same chain
 // All sheets scroll and every text wraps or shortens, so long names never
 // overflow. showDeckDialog (resolved_minified_bey_tile.dart) and a
@@ -204,8 +207,20 @@ class _ComboBody extends StatelessWidget {
                   .textTheme
                   .titleMedium
                   ?.copyWith(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 6),
-        ],
+          const SizedBox(height: 10),
+          HoloStatPanel(
+            stats: beyblade.combinedStats,
+            mass: beyblade.totalMass,
+            legality: beyblade.legality,
+            compact: true,
+            radarMaxSize: 240,
+            onOpenDetailed: () =>
+                StatGraphPage.open(context, StatGraphPage.combo(beyblade)),
+          ),
+          const SizedBox(height: 10),
+        ] else
+          // In a deck sheet: one line, tap for the stats dialog.
+          ComboStatsStrip(beyblade: beyblade),
         for (final part in beyblade.stackedParts) PartRow(part: part),
       ],
     );

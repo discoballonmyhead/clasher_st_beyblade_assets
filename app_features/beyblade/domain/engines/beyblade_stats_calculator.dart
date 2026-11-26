@@ -1,22 +1,23 @@
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 
-/// Sums every stat-bearing part's contribution key-by-key (missing = 0),
-/// and every part's mass. Works over whatever [BladeAssembly] variant is
-/// active plus ratchet/bit — doesn't special-case which parts are
+/// A combo's stats: every stat-bearing part's six stats added up key by key
+/// (blank = 0), and every part's mass. Doesn't special-case which parts are
 /// present, so a future part type just needs to be in the parts list.
+///
+/// Two-number stats stay pairs: a dynamic blade ("25/55") on a plain ratchet
+/// and bit gives a dynamic combo stat (start + start, end + end), and a
+/// dual-mode bit gives a dual-mode combo stat. See [StatValue.+].
 class BeybladeStatsCalculator {
   const BeybladeStatsCalculator();
 
-  StatBlock combine(List<BeybladePart> parts) {
-    return StatBlock.combineAll(parts.map((p) => p.stats), (a, b) {
-      if (!a.isProvided && !b.isProvided) return StatSpread.notProvided;
-      final aLow = a.primary ?? 0, aHigh = a.secondary ?? a.primary ?? 0;
-      final bLow = b.primary ?? 0, bHigh = b.secondary ?? b.primary ?? 0;
-      final low = aLow + bLow, high = aHigh + bHigh;
-      return low == high ? StatSpread.single(low) : StatSpread.dual(low, high);
-    });
-  }
+  StatBlock combine(List<BeybladePart> parts) =>
+      StatBlock.sum(parts.map((p) => p.stats));
 
   double totalMass(List<BeybladePart> parts) =>
       parts.fold(0, (sum, p) => sum + p.mass);
+
+  /// What each part adds to [key], in build order -- for a combo's breakdown.
+  List<(BeybladePart, StatValue)> contributions(
+          List<BeybladePart> parts, StatKey key) =>
+      [for (final p in parts) if (p.stats[key].isProvided) (p, p.stats[key])];
 }

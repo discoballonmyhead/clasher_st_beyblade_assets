@@ -2,10 +2,12 @@ import 'package:clasher_st/core/responsive/responsive_provider.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/loyalty_badge.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/stats/holo_stat_panel.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/stats/stat_graph_page.dart';
 import 'package:flutter/material.dart';
 
-/// A part at a glance: picture, name, type, legality, mass, edition and
-/// stats. Every text wraps or shortens instead of overflowing, whatever
+/// A part at a glance: picture, name, type, legality, mass, edition, its
+/// description and the stat radar. Every text wraps or shortens instead of overflowing, whatever
 /// the name / edition length or screen width.
 ///
 /// [onOpenDetails] adds the arrow (and a "Full details" button) that opens
@@ -22,7 +24,7 @@ class PartDetailSheet extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final rc = ResponsiveProvider.config(context);
     final tt = Theme.of(context).textTheme;
-    final stats = _statsOf(part);
+    final stats = part.stats;
     final type = displayLabelForPartType(partTypeKeyFor(part));
 
     return Padding(
@@ -81,16 +83,24 @@ class PartDetailSheet extends StatelessWidget {
           if ((part.variantLabel ?? '').trim().isNotEmpty)
             _row(context, 'Variant', part.variantLabel!.trim()),
           _row(context, 'Maker', part.manufacturer),
-          if (stats != null && stats.providedKeys.isNotEmpty) ...[
-            SizedBox(height: rc.xs),
+          if (part.description != null) ...[
+            SizedBox(height: rc.sm),
+            Text(part.description!,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: tt.bodySmall?.copyWith(height: 1.4)),
+          ],
+          if (!stats.isEmpty) ...[
+            SizedBox(height: rc.sm),
             Divider(color: cs.outlineVariant),
-            SizedBox(height: rc.xs),
-            for (final key in stats.providedKeys)
-              _row(
-                context,
-                _label(key),
-                stats[key].values.map((v) => v.toStringAsFixed(0)).join(' – '),
-              ),
+            SizedBox(height: rc.sm),
+            HoloStatPanel(
+              stats: stats,
+              compact: true,
+              card: false,
+              onOpenDetailed: () =>
+                  StatGraphPage.open(context, StatGraphPage.part(part)),
+            ),
           ],
           if (onOpenDetails != null) ...[
             SizedBox(height: rc.md),
@@ -104,26 +114,6 @@ class PartDetailSheet extends StatelessWidget {
       ),
     );
   }
-
-  StatBlock? _statsOf(BeybladePart p) => switch (p) {
-        Blade b => b.stats,
-        Ratchet r => r.stats,
-        Bit b => b.stats,
-        LockChip l => l.stats,
-        OverBlade o => o.stats,
-        MetalBlade m => m.stats,
-        MainBlade m => m.stats,
-        AssistBlade a => a.stats,
-        _ => null,
-      };
-
-  String _label(StatKey key) => switch (key) {
-        StatKey.attack => 'Attack',
-        StatKey.defense => 'Defense',
-        StatKey.stamina => 'Stamina',
-        StatKey.dash => 'Dash',
-        StatKey.burstResistance => 'Burst Resistance',
-      };
 
   /// Label left, value right; a long value wraps under itself instead of
   /// pushing past the edge.

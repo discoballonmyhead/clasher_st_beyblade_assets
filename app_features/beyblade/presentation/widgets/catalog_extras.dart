@@ -1,6 +1,9 @@
 import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/core/widgets/holow_components.dart';
+import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
+import 'package:clasher_st/features/beyblade/domain/usecases/usecases.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/stats/stat_graph_page.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
 import 'package:clasher_st/features/contributions/contributions_routes.dart';
 import 'package:clasher_st/features/contributions/domain/entities.dart';
@@ -63,7 +66,8 @@ class Model3dButton extends StatelessWidget {
 
 // ── STOCK COMBO ACTIONS ──────────────────────────────────────────────────────
 
-/// "Open in builder" (the combo's parts, ready to save or tweak) and "View in 3D" when it has a model.
+/// "Stats" (the combo's radar in a mini dialog), "Open in builder" (the combo's parts, ready to save or tweak)
+/// and "View in 3D" when it has a model.
 class StockComboActions extends StatelessWidget {
   const StockComboActions({super.key, required this.combo, this.builderRoute});
 
@@ -79,6 +83,7 @@ class StockComboActions extends StatelessWidget {
       spacing: rc.sm,
       runSpacing: rc.sm,
       children: [
+        _ComboStatsButton(combo: combo),
         if (builderRoute != null)
           HoloActionButton(
             label: 'Open in builder',
@@ -92,6 +97,42 @@ class StockComboActions extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Resolves the combo's parts (ResolveBeybladeUseCase) and shows its stats.
+class _ComboStatsButton extends StatefulWidget {
+  const _ComboStatsButton({required this.combo});
+  final StockCombo combo;
+
+  @override
+  State<_ComboStatsButton> createState() => _ComboStatsButtonState();
+}
+
+class _ComboStatsButtonState extends State<_ComboStatsButton> {
+  bool _busy = false;
+
+  Future<void> _open() async {
+    setState(() => _busy = true);
+    final bey = await sl<ResolveBeybladeUseCase>()(widget.combo.loadout);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (bey == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Some of this combo\'s parts aren\'t in the catalog on this device yet.')));
+      return;
+    }
+    await showComboStats(context, bey, title: widget.combo.name);
+  }
+
+  @override
+  Widget build(BuildContext context) => HoloActionButton(
+        label: 'Stats',
+        icon: Icons.radar,
+        variant: HoloButtonVariant.tonal,
+        dense: true,
+        isLoading: _busy,
+        onPressed: _busy ? null : _open,
+      );
 }
 
 // ── BLADERS ──────────────────────────────────────────────────────────────────
