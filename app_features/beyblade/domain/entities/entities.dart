@@ -68,81 +68,264 @@ enum BeybladeArchetype {
   }
 }
 
-// ── STAT KEY / SPREAD / BLOCK ───────────────────────────────────
-enum StatKey { attack, defense, stamina, dash, burstResistance }
+// ── STATS ───────────────────────────────────────────────────────
+/// The six stats every Beyblade X part reports (blank in the sheet = 0).
+/// Weight is not a stat here: it is [BeybladePart.mass], shown on its own.
+/// The order is the order of the radar's axes, clockwise from the top.
+enum StatKey {
+  attack,
+  defense,
+  stamina,
+  height,
+  dash,
+  burstResistance;
 
-/// A single stat's value(s) — most parts report one number, two-stat
-/// bits report a pair (e.g. "30-55").
-class StatSpread extends Equatable {
-  const StatSpread._(this.primary, this.secondary);
+  /// The packaged JSON column.
+  String get column => switch (this) {
+        StatKey.attack => 'attack',
+        StatKey.defense => 'defense',
+        StatKey.stamina => 'stamina',
+        StatKey.height => 'height',
+        StatKey.dash => 'dash',
+        StatKey.burstResistance => 'burstRes',
+      };
 
-  static const StatSpread notProvided = StatSpread._(null, null);
-  factory StatSpread.single(double value) => StatSpread._(value, null);
-  factory StatSpread.dual(double a, double b) => StatSpread._(a, b);
+  String get label => switch (this) {
+        StatKey.attack => 'Attack',
+        StatKey.defense => 'Defense',
+        StatKey.stamina => 'Stamina',
+        StatKey.height => 'Height',
+        StatKey.dash => 'Dash',
+        StatKey.burstResistance => 'Burst Resistance',
+      };
 
-  final double? primary;
-  final double? secondary;
+  /// For a graph's axis: [label], with Burst Resistance shortened.
+  String get axisLabel =>
+      this == StatKey.burstResistance ? 'Burst Res.' : label;
 
-  bool get isProvided => primary != null;
-  bool get isTwoStat => isProvided && secondary != null;
-  List<double> get values =>
-      isProvided ? [primary!, if (secondary != null) secondary!] : const [];
-
-  static StatSpread parse(dynamic raw) {
-    if (raw == null) return notProvided;
-    final s = raw.toString().trim();
-    if (s.isEmpty) return notProvided;
-    if (s.contains('-')) {
-      final parts = s.split('-');
-      if (parts.length == 2) {
-        final a = double.tryParse(parts[0].trim());
-        final b = double.tryParse(parts[1].trim());
-        if (a != null && b != null) return StatSpread.dual(a, b);
-      }
-    }
-    final v = double.tryParse(s);
-    return v == null ? notProvided : StatSpread.single(v);
-  }
-
-  @override
-  List<Object?> get props => [primary, secondary];
+  /// Three letters, for the radar's axes and tight rows.
+  String get shortLabel => switch (this) {
+        StatKey.attack => 'ATK',
+        StatKey.defense => 'DEF',
+        StatKey.stamina => 'STA',
+        StatKey.height => 'HGT',
+        StatKey.dash => 'DSH',
+        StatKey.burstResistance => 'BUR',
+      };
 }
 
+/// How a stat holds its number(s).
+enum StatMode {
+  /// One number.
+  single,
+
+  /// Changes during the battle: from [StatValue.first] to [StatValue.second]
+  /// (a gimmick). Stored as "25/55"; the row's `dynamicStat` flag is 1.
+  dynamic,
+
+  /// The part switches between two modes: [StatValue.first] in one,
+  /// [StatValue.second] in the other. Stored as "25-55"; the row's `twoStat`
+  /// flag is 1.
+  dualMode,
+}
+
+/// One stat: a number, a dynamic pair or a dual-mode pair -- or nothing at
+/// all ([none], which reads as 0 everywhere a number is needed).
+class StatValue extends Equatable {
+  const StatValue._(this.mode, this.first, this.second);
+
+  /// Blank in the sheet. [value] is 0.
+  static const StatValue none = StatValue._(StatMode.single, null, null);
+
+  factory StatValue.single(double value) =>
+      StatValue._(StatMode.single, value, null);
+
+  /// Changes mid-battle from [from] to [to] ("25/55").
+  factory StatValue.dynamic(double from, double to) =>
+      StatValue._(StatMode.dynamic, from, to);
+
+  /// One number per mode ("25-55").
+  factory StatValue.dualMode(double a, double b) =>
+      StatValue._(StatMode.dualMode, a, b);
+
+  final StatMode mode;
+
+  /// The only number, the starting number (dynamic) or the first mode's.
+  final double? first;
+
+  /// The ending number (dynamic) or the second mode's; null for one number.
+  final double? second;
+
+  bool get isProvided => first != null;
+  bool get hasTwo => second != null;
+  bool get isDynamic => hasTwo && mode == StatMode.dynamic;
+  bool get isDualMode => hasTwo && mode == StatMode.dualMode;
+
+  /// The number to plot when only one is wanted: [first], 0 when blank.
+  double get value => first ?? 0;
+
+  /// The second number, or [value] when there is only one.
+  double get secondValue => second ?? value;
+
+  double get low => hasTwo ? (first! < second! ? first! : second!) : value;
+  double get high => hasTwo ? (first! > second! ? first! : second!) : value;
+  double get average => hasTwo ? (first! + second!) / 2 : value;
+
+  List<double> get values =>
+      isProvided ? [first!, if (second != null) second!] : const [];
+
+  static String _n(double v, [int fractionDigits = 1]) => v == v.roundToDouble()
+      ? v.toStringAsFixed(0)
+      : v.toStringAsFixed(fractionDigits);
+
+  /// "55", "25 › 55" (dynamic) or "25 | 55" (dual mode); [blank] when blank.
+  /// (› rather than → : every font the app may use has it.)
+  String format({int fractionDigits = 1, String blank = '—'}) {
+    if (!isProvided) return blank;
+    final a = _n(first!, fractionDigits);
+    if (!hasTwo) return a;
+    final b = _n(second!, fractionDigits);
+    return mode == StatMode.dynamic ? '$a › $b' : '$a | $b';
+  }
+
+  /// Plain-words explanation of a two-number stat, for tooltips and popups.
+  String? get explanation {
+    if (!hasTwo) return null;
+    final a = _n(first!), b = _n(second!);
+    return mode == StatMode.dynamic
+        ? 'Changes during the battle: starts at $a and becomes $b.'
+        : 'Two modes: $a in one, $b in the other.';
+  }
+
+  /// Adds two stats for a combo. Blank counts as 0; a pair stays a pair
+  /// (first + first, second + second), keeping whichever two-number mode it
+  /// had (dual mode wins when two parts disagree).
+  StatValue operator +(StatValue other) {
+    if (!isProvided && !other.isProvided) return none;
+    if (!hasTwo && !other.hasTwo) return StatValue.single(value + other.value);
+    final mode = isDualMode || other.isDualMode
+        ? StatMode.dualMode
+        : StatMode.dynamic;
+    return StatValue._(
+        mode, value + other.value, secondValue + other.secondValue);
+  }
+
+  /// Reads a stat cell. Two numbers are dynamic or dual mode: the row's flags
+  /// decide when exactly one is set, otherwise the delimiter does ("/", ">",
+  /// "→" dynamic; "-" dual mode). Unreadable text is [none].
+  static StatValue parse(dynamic raw,
+      {bool dynamicFlag = false, bool dualModeFlag = false}) {
+    if (raw == null || raw is bool) return none;
+    if (raw is num) return StatValue.single(raw.toDouble());
+    final s = raw.toString().trim();
+    if (s.isEmpty) return none;
+    final one = double.tryParse(s);
+    if (one != null) return StatValue.single(one);
+    final m = _pair.firstMatch(s);
+    if (m == null) return none;
+    final a = double.parse(m.group(1)!), b = double.parse(m.group(3)!);
+    final byDelimiter = _dualDelimiters.contains(m.group(2)!.trim())
+        ? StatMode.dualMode
+        : StatMode.dynamic;
+    final mode = dynamicFlag != dualModeFlag
+        ? (dynamicFlag ? StatMode.dynamic : StatMode.dualMode)
+        : byDelimiter;
+    return StatValue._(mode, a, b);
+  }
+
+  static final _pair = RegExp(
+      r'^\s*(\d+(?:\.\d+)?)\s*(/|>|→|›|->|=>|»|-|–|—|~)\s*(\d+(?:\.\d+)?)\s*$');
+  static const _dualDelimiters = {'-', '–', '—', '~'};
+
+  @override
+  List<Object?> get props => [mode, first, second];
+
+  @override
+  String toString() => 'StatValue(${format()})';
+}
+
+/// Kept so older call sites compile; use [StatValue].
+@Deprecated('Use StatValue')
+typedef StatSpread = StatValue;
+
+/// A part's (or a combo's) six stats.
 class StatBlock extends Equatable {
-  const StatBlock(Map<StatKey, StatSpread> values) : _values = values;
+  const StatBlock(Map<StatKey, StatValue> values) : _values = values;
   const StatBlock.empty() : _values = const {};
 
-  final Map<StatKey, StatSpread> _values;
+  /// Reads the six stat columns and the two flags of a packaged row.
+  factory StatBlock.fromRow(dynamic Function(String column) read,
+      {bool dynamicFlag = false, bool dualModeFlag = false}) {
+    return StatBlock({
+      for (final k in StatKey.values)
+        k: StatValue.parse(read(k.column),
+            dynamicFlag: dynamicFlag, dualModeFlag: dualModeFlag),
+    });
+  }
 
-  StatSpread operator [](StatKey key) => _values[key] ?? StatSpread.notProvided;
+  final Map<StatKey, StatValue> _values;
 
-  StatBlock copyWithStat(StatKey key, StatSpread value) {
-    final next = Map<StatKey, StatSpread>.from(_values);
+  StatValue operator [](StatKey key) => _values[key] ?? StatValue.none;
+
+  /// The plotted number of [key], 0 when blank.
+  double value(StatKey key) => this[key].value;
+
+  StatBlock copyWithStat(StatKey key, StatValue value) {
+    final next = Map<StatKey, StatValue>.from(_values);
     next[key] = value;
     return StatBlock(next);
   }
 
-  /// Merges blocks key-by-key using [combine] (defaulting absent sides
-  /// to notProvided). Used to sum an arbitrary number of stat-bearing
-  /// parts — see BeybladeStatsCalculator.
+  /// Key-by-key [combine] over any number of blocks (blank sides are
+  /// [StatValue.none]).
   static StatBlock combineAll(Iterable<StatBlock> blocks,
-      StatSpread Function(StatSpread a, StatSpread b) combine) {
+      StatValue Function(StatValue a, StatValue b) combine) {
     var result = const StatBlock.empty();
     for (final block in blocks) {
-      final merged = <StatKey, StatSpread>{};
-      for (final key in StatKey.values) {
-        merged[key] = combine(result[key], block[key]);
-      }
-      result = StatBlock(merged);
+      result = StatBlock({
+        for (final key in StatKey.values) key: combine(result[key], block[key]),
+      });
     }
     return result;
   }
 
+  /// A combo's stats: every part's stats added up (blank = 0).
+  static StatBlock sum(Iterable<StatBlock> blocks) =>
+      combineAll(blocks, (a, b) => a + b);
+
   Iterable<StatKey> get providedKeys =>
       StatKey.values.where((k) => this[k].isProvided);
 
+  bool get isEmpty => providedKeys.isEmpty;
+  bool get hasDynamic => StatKey.values.any((k) => this[k].isDynamic);
+  bool get hasDualMode => StatKey.values.any((k) => this[k].isDualMode);
+  bool get hasTwo => hasDynamic || hasDualMode;
+
+  /// Every stat's first number (single values stay): the start of the battle,
+  /// or the first mode.
+  StatBlock get firstOnly => StatBlock({
+        for (final k in StatKey.values)
+          k: this[k].isProvided ? StatValue.single(this[k].value) : StatValue.none,
+      });
+
+  /// Every stat's second number (single values stay): the end of the battle,
+  /// or the second mode.
+  StatBlock get secondOnly => StatBlock({
+        for (final k in StatKey.values)
+          k: this[k].isProvided
+              ? StatValue.single(this[k].secondValue)
+              : StatValue.none,
+      });
+
+  /// The highest number on any axis (both numbers of a pair count).
+  double get peak => StatKey.values
+      .map((k) => this[k].high)
+      .fold(0.0, (a, b) => a > b ? a : b);
+
   @override
-  List<Object?> get props => [_values];
+  List<Object?> get props => [
+        for (final k in StatKey.values) this[k],
+      ];
 }
 
 // ── BEYBLADE PART (base) ────────────────────────────────────────
@@ -170,6 +353,7 @@ abstract class BeybladePart extends Equatable {
     this.model3dHash,
     this.bladerIds = const [],
     this.credits,
+    this.description,
     required this.mass,
     required this.legality,
     required this.isIncomplete,
@@ -230,6 +414,10 @@ abstract class BeybladePart extends Equatable {
   /// "@kai_photos (picture)"). Null when nobody is credited. Shown on the detail page.
   final String? credits;
 
+  /// A short description of the part (sheet column `description`; the
+  /// scraper takes it from the wiki page's lead paragraph). Null when unknown.
+  final String? description;
+
   final double mass;
   final WboLegality legality;
 
@@ -239,6 +427,12 @@ abstract class BeybladePart extends Equatable {
   final bool isIncomplete;
 
   StatBlock get stats;
+
+  /// A stat changes during the battle ("25/55", flag `dynamicStat`).
+  bool get isDynamicStat => stats.hasDynamic;
+
+  /// A stat has two modes ("25-55", flag `twoStat`).
+  bool get isDualMode => stats.hasDualMode;
 
   List<Object?> get baseProps => [
         dataId,
@@ -258,6 +452,7 @@ abstract class BeybladePart extends Equatable {
         model3dHash,
         bladerIds,
         credits,
+        description,
         mass,
         legality,
         isIncomplete,
@@ -284,6 +479,7 @@ class Blade extends BeybladePart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -335,6 +531,7 @@ class Ratchet extends BeybladePart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -379,6 +576,7 @@ class Bit extends BeybladePart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -428,6 +626,7 @@ class LockChip extends BeybladePart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -463,6 +662,7 @@ abstract class _TypedStatPart extends BeybladePart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -501,6 +701,7 @@ class OverBlade extends _TypedStatPart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -533,6 +734,7 @@ class MetalBlade extends _TypedStatPart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -567,6 +769,7 @@ class MainBlade extends _TypedStatPart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -601,6 +804,7 @@ class AssistBlade extends _TypedStatPart {
     super.model3dHash,
     super.bladerIds,
     super.credits,
+    super.description,
     required super.mass,
     required super.legality,
     required super.isIncomplete,
@@ -1144,11 +1348,16 @@ class StockCombo extends Equatable {
   /// (part sheet key, dataId) of every part in the combo, top to bottom.
   List<(String, String)> get partRefs => [
         if (loadout.bladeDataId != null) ('blades', loadout.bladeDataId!),
-        if (loadout.lockChipDataId != null) ('lockChips', loadout.lockChipDataId!),
-        if (loadout.overBladeDataId != null) ('overBlades', loadout.overBladeDataId!),
-        if (loadout.metalBladeDataId != null) ('metalBlades', loadout.metalBladeDataId!),
-        if (loadout.mainBladeDataId != null) ('mainBlades', loadout.mainBladeDataId!),
-        if (loadout.assistBladeDataId != null) ('assistBlades', loadout.assistBladeDataId!),
+        if (loadout.lockChipDataId != null)
+          ('lockChips', loadout.lockChipDataId!),
+        if (loadout.overBladeDataId != null)
+          ('overBlades', loadout.overBladeDataId!),
+        if (loadout.metalBladeDataId != null)
+          ('metalBlades', loadout.metalBladeDataId!),
+        if (loadout.mainBladeDataId != null)
+          ('mainBlades', loadout.mainBladeDataId!),
+        if (loadout.assistBladeDataId != null)
+          ('assistBlades', loadout.assistBladeDataId!),
         if (loadout.ratchetDataId != null) ('ratchets', loadout.ratchetDataId!),
         ('bits', loadout.bitDataId),
       ];
@@ -1219,7 +1428,11 @@ class Blader extends Equatable {
   final bool isIncomplete;
 
   /// Best picture for a small avatar: the small portrait, then the portrait, then the full body.
-  String? get avatarUrl => minifiedImageUrl ?? imageUrl ?? minifiedFullBodyImageUrl ?? fullBodyImageUrl;
+  String? get avatarUrl =>
+      minifiedImageUrl ??
+      imageUrl ??
+      minifiedFullBodyImageUrl ??
+      fullBodyImageUrl;
 
   @override
   List<Object?> get props => [
@@ -1447,6 +1660,16 @@ class DeckEntry extends Equatable {
     );
   }
 
+  /// A combo was edited: the deck shows its new name and parts.
+  DeckEntry withCombo(Combo combo) {
+    if (!combos.any((c) => c.id == combo.id)) return this;
+    return DeckEntry(
+      deck: deck,
+      combos: [for (final c in combos) c.id == combo.id ? combo : c],
+      missing: missing,
+    );
+  }
+
   @override
   List<Object?> get props => [deck, combos, missing];
 }
@@ -1464,7 +1687,13 @@ abstract class CombosDecksRepository {
 
   Future<void> deleteCombo(String id);
 
+  /// Same id, new name and / or parts.
+  Future<Combo> updateCombo(Combo combo);
+
   Future<Deck> createDeck(String name, List<String> comboIds);
 
   Future<void> deleteDeck(String id);
+
+  /// Same id, new name and / or combos (3 or more).
+  Future<Deck> updateDeck(Deck deck);
 }

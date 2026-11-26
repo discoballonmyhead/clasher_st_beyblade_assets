@@ -29,8 +29,10 @@ class HiveBeybladeExtrasLocalDataSource
 
   final String boxName;
 
-  Future<Box> _box() async =>
-      Hive.isBoxOpen(boxName) ? Hive.box(boxName) : Hive.openBox(boxName);
+  Future<Box> _box() async {
+    if (Hive.isBoxOpen(boxName)) return Hive.box(boxName);
+    return Hive.openBox(boxName);
+  }
 
   @override
   Future<void> replaceAll({
@@ -38,10 +40,12 @@ class HiveBeybladeExtrasLocalDataSource
     required Iterable<Map<String, dynamic>> bladers,
   }) async {
     final box = await _box();
-    final combos = _valid(stockCombos, StockComboModel.fromSheetJson, 'stock combo');
+    final combos =
+        _valid(stockCombos, StockComboModel.fromSheetJson, 'stock combo');
     final people = _valid(bladers, BladerModel.fromSheetJson, 'blader');
     await box.putAll({_stockCombosKey: combos, _bladersKey: people});
-    dev.log('Stored ${combos.length} stock combo(s), ${people.length} blader(s)',
+    dev.log(
+        'Stored ${combos.length} stock combo(s), ${people.length} blader(s)',
         name: _logName);
   }
 

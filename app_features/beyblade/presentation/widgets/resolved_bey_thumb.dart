@@ -1,5 +1,6 @@
 import 'dart:developer' as dev;
 
+import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/core/widgets/app_beyblade_loading_indicator.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:clasher_st/features/beyblade/domain/usecases/usecases.dart';
@@ -48,6 +49,7 @@ class _ResolvedBeyBuilderState extends State<ResolvedBeyBuilder> {
 
   @override
   Widget build(BuildContext context) {
+    final rc = ResponsiveProvider.config(context);
     return FutureBuilder<Beyblade?>(
       future: _future,
       builder: (context, snapshot) {

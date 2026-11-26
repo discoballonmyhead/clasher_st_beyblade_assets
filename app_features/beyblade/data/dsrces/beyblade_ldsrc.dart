@@ -1,4 +1,5 @@
 import 'dart:developer' as dev;
+
 import 'package:clasher_st/core/constants/app_constants.dart';
 import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/core/utils/sheet_row_parsing.dart';
@@ -146,7 +147,8 @@ class BeybladeDataLocalDatasourceImpl implements BeybladeDataLocalDatasource {
       // existed simply has none.
       for (final sheet in kBeybladeExtraSheets) {
         try {
-          final text = await rootBundle.loadString('$assetBasePath/$sheet.json');
+          final text =
+              await rootBundle.loadString('$assetBasePath/$sheet.json');
           sheetResults.add(MapEntry(sheet, text));
         } catch (_) {
           dev.log('No bundled $sheet.json (optional)', name: _logName);

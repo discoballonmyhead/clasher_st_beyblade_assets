@@ -3,16 +3,20 @@
 App features kept here so the data tools and the clasher_st app stay in step. This folder replaces the old
 `flutter_integration/` folder. Each feature folder is a drop-in for `lib/features/`:
 
-* `beyblade/`: the app's beyblade feature. It now reads 3D models, stock combos, bladers and credits; see below.
+* `beyblade/`: the app's beyblade feature (your updated version: deck / combo editing, part lists, inspect sheets).
+  It reads 3D models, stock combos, bladers, credits, descriptions and the six stats, and shows stats as an
+  animated radar; see *Stats* below.
+* `beyblade_tcg/`: the card game catalog, as you sent it (unchanged).
 * `contributions/`: new. **Settings → Help complete the catalog**: people see what the catalog is missing, fill in
   what they know or send pictures, with their username and an optional credit. See *Contributions* below.
 
 ```bash
-cp -r app_features/beyblade app_features/contributions <app>/lib/features/
+cp -r app_features/beyblade app_features/beyblade_tcg app_features/contributions <app>/lib/features/
 cp -r app_features/test/. <app>/test/        # optional: the tests and their fixtures
 ```
 
-The beyblade feature needs nothing outside `lib/features/beyblade`. `AppConstants.trackedBeyBladeData`, the app's
+The beyblade feature needs nothing new outside `lib/features/beyblade` (the stat widgets use the app's existing
+Holo widgets and theme). `AppConstants.trackedBeyBladeData`, the app's
 Hive setup and the pubspec stay as they are. Contributions needs three small additions (below).
 
 ## What this version adds (all optional data)
@@ -67,6 +71,47 @@ chips, but the field is on every part.
 or accessory page shows it as a "Credits" row in the specs, and a blader's sheet shows it under the picture. Clasher
 Studio adds a contributor's credit to the row when it applies a picture they sent. You can also type credits by hand
 in any workbook.
+
+## Stats: six stats, a radar everywhere
+
+**Model** (`domain/entities/entities.dart`):
+* `StatKey`: attack, defense, stamina, height, dash, burstResistance. A blank stat counts as 0; weight is `mass`.
+* `StatValue`: one number, a **dynamic** pair (`25/55`, changes during the battle) or a **dual-mode** pair (`25-55`,
+  two modes). `StatValue.parse` reads the packaged value; when exactly one of the row's `dynamicStat` / `twoStat`
+  flags is set it decides, otherwise the delimiter does. Older spellings (`25 > 55`) still read. Shown as
+  `25 › 55` (dynamic) and `25 | 55` (dual mode).
+* `StatBlock`: the six values. `sum` adds parts up for a combo (pairs stay pairs: start + start, end + end);
+  `firstOnly` / `secondOnly` give either number; `hasDynamic` / `hasDualMode`; `peak`.
+* Parts: `stats`, `isDynamicStat`, `isDualMode` and `description`. `parseStats(row)` in models.dart is the one
+  parser every part model uses. `BeybladeStatsCalculator.combine` sums parts; `contributions` gives each part's share.
+  `StatSpread` is a deprecated alias of `StatValue`.
+
+**Widgets** (`presentation/widgets/stats/`), in the Holo style (chamfer shapes, 800-weight labels, the brand
+gradient as the shape's fill):
+* `HoloStatRadar`: the spider graph. It grows outward from the centre axis by axis and eases to a new shape when the
+  stats change (e.g. swapping a part in the builder); reduced-motion settings skip the animation. Two-number
+  stats draw a second, dashed shape. It sizes itself from its constraints (96 px thumbnail to a 520 px web hero).
+  Tapping an axis highlights that stat, and screen readers get every value.
+* `HoloStatRows`: one bar per stat; a pair fills to its first number and outlines to its second.
+  `HoloStatModeBadges`: the "Changes mid-battle" / "Two modes" pills, each explained on tap.
+* `HoloStatPanel`: radar + rows in a HoloCard, side by side when it is 560 px or wider (web), stacked otherwise;
+  a Both / Start / End (or Mode 1 / Mode 2) toggle for pairs; "Detailed graph" action.
+* `StatGraphPage`: the graph alone, full screen (`.part` / `.combo`). For a combo it adds "What each part adds",
+  with each part's small radar and its share of every stat; two columns on wide screens.
+  `showComboStats` / `showPartStats`: the mini dialog (minified combo or part, compact panel, "Detailed graph").
+  `ComboStatsStrip`: one line for lists.
+* `StatStyle` / `StatScale`: one colour and icon per stat; the graph scales to a round number above the highest
+  stat (`StatScale.fixed(100)` to compare on one footing).
+
+**Where they are used:**
+* Part page: an "About" card (the description, opens in full) and the Performance panel, replacing the bars.
+* Part sheet: the description and the compact panel.
+* Builder and display page: `CombinedStatsPanel`, a collapsible card with a thumbnail radar.
+* Combo sheet (`showComboSheet`): the minified combo, the compact panel and "Detailed graph"; deck sheets show
+  `ComboStatsStrip` for each combo.
+* Stock combos (part and product pages): a "Stats" button that resolves the combo and opens the mini dialog.
+* Product page: an "About this product" card; declared stock combos show their description.
+* `stat_bar_row.dart` is gone. Nothing outside the feature used it or the old stat classes.
 
 ## Contributions (Settings → Help complete the catalog)
 
@@ -156,6 +201,17 @@ register your own `ContributorIdentity` before `ContributionsDependencies.init()
 * `b_routes/beyblade_routes.dart`: the builder accepts a starting loadout.
 
 ## Checked
+* `test/stats_test.dart` (13 tests) covers:
+  * every stat spelling and the flags, on real catalog rows (ScorpioSpear `25 > 55`, HellsNether `50 - 70`,
+    Turbo's dual-mode bit) in `test/fixtures/stats/`;
+  * combo sums and the scale;
+  * the radar (animation, semantics, axis taps), the panel (toggle, wide layout), the mini dialog and the graph
+    page.
+
+  It ran with the real Holo widget files from the app, plus stand-ins for `app_theme.dart` and the translation
+  helpers. The feature's domain and data layers compile there without errors. The presentation files add no
+  analyzer errors compared with the uploaded version; their only errors are imports of app features that aren't
+  in this repo.
 * `test/contributions_test.dart` (10 tests) covers:
   * the client: the request body, the redirect, the username as the default credit, errors;
   * the checks before sending;

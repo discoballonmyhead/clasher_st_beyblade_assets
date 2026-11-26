@@ -45,6 +45,10 @@ abstract class BeybladeDataRepo {
 
   Future<void> deleteCombo(String id);
 
+  /// Saves a new name and / or parts for an existing combo (same id, so
+  /// decks that use it follow). Returns what was saved.
+  Future<Combo> updateCombo(Combo combo);
+
 //DECK AND DECKSLOTS
 
   Future<List<Deck>> getAllDecks();
@@ -58,6 +62,10 @@ abstract class BeybladeDataRepo {
   Future<Deck> createDeck(String name, List<String> comboIds);
 
   Future<void> deleteDeck(String id);
+
+  /// Saves a new name and / or combos for an existing deck. Same rule as
+  /// [createDeck]: throws ArgumentError below 3 unique combos.
+  Future<Deck> updateDeck(Deck deck);
 
   /// Always returns exactly [DeckSlotsLocalDataSource.slotCount] entries,
 

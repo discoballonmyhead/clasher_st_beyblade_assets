@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:clasher_st/features/beyblade/presentation/pages/beyblade_home.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/ad_slot_placeholder.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 

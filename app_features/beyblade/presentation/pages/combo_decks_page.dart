@@ -12,7 +12,6 @@ import 'package:clasher_st/features/beyblade/presentation/widgets/resolved_bey_t
 import 'package:clasher_st/features/beyblade/presentation/widgets/resolved_minified_bey_tile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:get_it/get_it.dart';
 
 /// The account's decks and combos, a page at a time, each tab searchable.
 /// Reads come from the account (or the phone's copy when offline / while
@@ -26,22 +25,17 @@ class CombosDecksPage extends StatefulWidget {
 class _CombosDecksPageState extends State<CombosDecksPage>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
-  late final CombosPageCubit _combosCubit;
-  late final DecksPageCubit _decksCubit;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _combosCubit = GetIt.instance<CombosPageCubit>()..load();
-    _decksCubit = GetIt.instance<DecksPageCubit>()..load();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
-    _combosCubit.close();
-    _decksCubit.close();
+
     super.dispose();
   }
 
@@ -49,57 +43,51 @@ class _CombosDecksPageState extends State<CombosDecksPage>
   Widget build(BuildContext context) {
     final rc = ResponsiveProvider.config(context);
     final cs = Theme.of(context).colorScheme;
-    return MultiBlocProvider(
-      providers: [
-        BlocProvider.value(value: _combosCubit),
-        BlocProvider.value(value: _decksCubit),
-      ],
-      child: ResponsiveScaffold(
-        backgroundColor: cs.surface,
-        appBar: AppBar(
-          title: Text(TrTokens.decksCombosCardTitle.tr),
-          actions: [
-            // One add button in the app bar: it creates whatever the open
-            // tab holds. Builder: the cubits are provided below this
-            // State's own context.
-            Builder(
-              builder: (context) => AnimatedBuilder(
-                animation: _tabController,
-                builder: (context, _) {
-                  final onDecks = _tabController.index == 0;
-                  return IconButton(
-                    icon: const Icon(Icons.add),
-                    tooltip: onDecks
-                        ? TrTokens.createDeckTxt.tr
-                        : TrTokens.createComboTxt.tr,
-                    onPressed: () =>
-                        onDecks ? _createDeck(context) : _createCombo(context),
-                  );
-                },
+    return ResponsiveScaffold(
+      backgroundColor: cs.surface,
+      appBar: AppBar(
+        title: Text(TrTokens.decksCombosCardTitle.tr),
+        actions: [
+          // One add button in the app bar: it creates whatever the open
+          // tab holds. Builder: the cubits are provided below this
+          // State's own context.
+          Builder(
+            builder: (context) => AnimatedBuilder(
+              animation: _tabController,
+              builder: (context, _) {
+                final onDecks = _tabController.index == 0;
+                return IconButton(
+                  icon: const Icon(Icons.add),
+                  tooltip: onDecks
+                      ? TrTokens.createDeckTxt.tr
+                      : TrTokens.createComboTxt.tr,
+                  onPressed: () =>
+                      onDecks ? _createDeck(context) : _createCombo(context),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: EdgeInsets.fromLTRB(
+            rc.horizontalPadding, rc.sm, rc.horizontalPadding, rc.sm),
+        child: Column(
+          children: [
+            HoloTabBar(
+              controller: _tabController,
+              tabs: const [
+                HoloTab('Decks', icon: Icons.style_outlined),
+                HoloTab('Combos', icon: Icons.bolt_outlined),
+              ],
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: const [_DecksTab(), _CombosTab()],
               ),
             ),
           ],
-        ),
-        body: Padding(
-          padding: EdgeInsets.fromLTRB(rc.horizontalPadding,
-              rc.horizontalPadding, rc.horizontalPadding, 0),
-          child: Column(
-            children: [
-              HoloTabBar(
-                controller: _tabController,
-                tabs: const [
-                  HoloTab('Decks', icon: Icons.style_outlined),
-                  HoloTab('Combos', icon: Icons.bolt_outlined),
-                ],
-              ),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: const [_DecksTab(), _CombosTab()],
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -108,8 +96,9 @@ class _CombosDecksPageState extends State<CombosDecksPage>
 
 // ── Create ───────────────────────────────────────────────────────────────────
 
-Future<String?> _promptForName(BuildContext context, {required String title}) {
-  final controller = TextEditingController();
+Future<String?> _promptForName(BuildContext context,
+    {required String title, String initial = ''}) {
+  final controller = TextEditingController(text: initial);
   return AppDialogWidget.show<String>(
     context,
     title: title,
@@ -192,6 +181,150 @@ Future<void> _createDeck(BuildContext context) async {
   }
 }
 
+// ── Edit ─────────────────────────────────────────────────────────────────────
+
+/// Renames a combo; decks that use it show the new name.
+Future<void> _renameCombo(BuildContext context, Combo combo) async {
+  final name = await _promptForName(context,
+      title: TrTokens.renameComboTitle.tr, initial: combo.name);
+  if (name == null || name == combo.name || !context.mounted) return;
+  await _saveCombo(
+      context,
+      Combo(
+          id: combo.id,
+          name: name,
+          loadout: combo.loadout,
+          createdAt: combo.createdAt));
+}
+
+/// Opens the builder with the combo's parts; the result replaces them.
+Future<void> _rebuildCombo(BuildContext context, Combo combo) async {
+  final beyblade = await Navigator.push<Beyblade>(
+    context,
+    MaterialPageRoute(
+      builder: (routeContext) => BeyBuilderPage(
+        initialLoadout: combo.loadout,
+        onBuildConfirmed: (result) => Navigator.pop(routeContext, result),
+      ),
+    ),
+  );
+  if (beyblade == null || !context.mounted) return;
+  if (beyblade.loadout == combo.loadout) return;
+  await _saveCombo(
+      context,
+      Combo(
+          id: combo.id,
+          name: combo.name,
+          loadout: beyblade.loadout,
+          createdAt: combo.createdAt));
+}
+
+Future<void> _saveCombo(BuildContext context, Combo combo) async {
+  final decks = context.read<DecksPageCubit>();
+  final saved = await context.read<CombosPageCubit>().update(combo);
+  if (!context.mounted) return;
+  if (saved == null) {
+    _snack(context, TrTokens.couldNotSaveTxt.tr);
+    return;
+  }
+  decks.comboChanged(saved);
+  _snack(context, TrTokens.comboSavedTxt.tr);
+}
+
+/// Renames a deck.
+Future<void> _renameDeck(BuildContext context, DeckEntry entry) async {
+  final deck = entry.deck;
+  final name = await _promptForName(context,
+      title: TrTokens.renameDeckTitle.tr, initial: deck.name);
+  if (name == null || name == deck.name || !context.mounted) return;
+  await _saveDeck(
+      context,
+      Deck(
+          id: deck.id,
+          name: name,
+          comboIds: deck.comboIds,
+          createdAt: deck.createdAt),
+      entry.combos);
+}
+
+/// Opens the picker with the deck's combos ticked; the picks (3 or more,
+/// in the order picked) become the deck.
+Future<void> _changeDeckCombos(BuildContext context, DeckEntry entry) async {
+  final picked = await ComboPickerPage.open(context,
+      minSelected: 3, initial: entry.combos);
+  if (picked == null || picked.length < 3 || !context.mounted) return;
+  final deck = entry.deck;
+  await _saveDeck(
+      context,
+      Deck(
+          id: deck.id,
+          name: deck.name,
+          comboIds: [for (final c in picked) c.id],
+          createdAt: deck.createdAt),
+      picked);
+}
+
+Future<void> _saveDeck(
+    BuildContext context, Deck deck, List<Combo> combos) async {
+  try {
+    await context.read<DecksPageCubit>().update(deck, combos);
+    if (context.mounted) _snack(context, TrTokens.deckSavedTxt.tr);
+  } on ArgumentError catch (e) {
+    if (context.mounted) {
+      _snack(context, e.message?.toString() ?? TrTokens.couldNotSaveTxt.tr);
+    }
+  } catch (_) {
+    if (context.mounted) _snack(context, TrTokens.couldNotSaveTxt.tr);
+  }
+}
+
+/// Edit / delete menu for a combo or a deck card.
+class _EditMenu extends StatelessWidget {
+  const _EditMenu({
+    required this.items,
+    required this.onSelected,
+    this.onDark = false,
+  });
+
+  /// (value, icon, label, danger)
+  final List<(String, IconData, String, bool)> items;
+  final ValueChanged<String> onSelected;
+
+  /// Drawn over a picture (combo tiles): white icon on a dark chip.
+  final bool onDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final danger = HoloTokens.of(context).danger;
+    final button = PopupMenuButton<String>(
+      tooltip: TrTokens.editOrDeleteTooltip.tr,
+      icon: Icon(Icons.more_vert,
+          size: 20, color: onDark ? Colors.white : cs.onSurfaceVariant),
+      shape: const ChamferBorder.tab(cut: 10),
+      onSelected: onSelected,
+      itemBuilder: (_) => [
+        for (final (value, icon, label, isDanger) in items)
+          PopupMenuItem<String>(
+            value: value,
+            child: Row(children: [
+              Icon(icon, size: 18, color: isDanger ? danger : cs.onSurface),
+              const SizedBox(width: 10),
+              Text(label, style: TextStyle(color: isDanger ? danger : null)),
+            ]),
+          ),
+      ],
+    );
+    if (!onDark) return button;
+    return Material(
+      color: Colors.black54,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: button,
+    );
+  }
+}
+
 // ── Combos tab ───────────────────────────────────────────────────────────────
 
 class _CombosTab extends StatelessWidget {
@@ -199,7 +332,6 @@ class _CombosTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final cubit = context.read<CombosPageCubit>();
     return BlocBuilder<CombosPageCubit, PagedState<Combo>>(
       builder: (context, state) => PagedListView<Combo>(
@@ -216,21 +348,52 @@ class _CombosTab extends StatelessWidget {
         ),
         itemBuilder: (context, combo) => Stack(
           children: [
-            ResolvedMinifiedBeyTile(loadout: combo.loadout),
+            // Tap: change the parts.
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _rebuildCombo(context, combo),
+              child: ResolvedMinifiedBeyTile(loadout: combo.loadout),
+            ),
             Positioned(top: 8, left: 8, child: _NameChip(name: combo.name)),
             Positioned(
               top: 4,
               right: 4,
-              child: IconButton(
-                tooltip: TrTokens.deleteComboTxt.tr,
-                icon: Icon(Icons.delete_outline, color: cs.error),
-                onPressed: () async {
-                  final decks = context.read<DecksPageCubit>();
-                  final ok = await cubit.delete(combo.id);
-                  if (ok) {
-                    decks.comboDeleted(combo.id);
-                  } else if (context.mounted) {
-                    _snack(context, TrTokens.couldNotSaveTxt.tr);
+              child: _EditMenu(
+                onDark: true,
+                items: [
+                  (
+                    'rename',
+                    Icons.edit_outlined,
+                    TrTokens.renameComboTitle.tr,
+                    false
+                  ),
+                  (
+                    'parts',
+                    Icons.build_outlined,
+                    TrTokens.changePartsTxt.tr,
+                    false
+                  ),
+                  (
+                    'delete',
+                    Icons.delete_outline,
+                    TrTokens.deleteComboTxt.tr,
+                    true
+                  ),
+                ],
+                onSelected: (v) async {
+                  switch (v) {
+                    case 'rename':
+                      await _renameCombo(context, combo);
+                    case 'parts':
+                      await _rebuildCombo(context, combo);
+                    default:
+                      final decks = context.read<DecksPageCubit>();
+                      final ok = await cubit.delete(combo.id);
+                      if (ok) {
+                        decks.comboDeleted(combo.id);
+                      } else if (context.mounted) {
+                        _snack(context, TrTokens.couldNotSaveTxt.tr);
+                      }
                   }
                 },
               ),
@@ -271,6 +434,8 @@ class _DecksTab extends StatelessWidget {
             ),
             itemBuilder: (context, entry) => _DeckCard(
               entry: entry,
+              onRename: () => _renameDeck(context, entry),
+              onChangeCombos: () => _changeDeckCombos(context, entry),
               onDelete: () async {
                 final ok = await cubit.delete(entry.deck.id);
                 if (!ok && context.mounted) {
@@ -286,10 +451,17 @@ class _DecksTab extends StatelessWidget {
 }
 
 class _DeckCard extends StatelessWidget {
-  const _DeckCard({required this.entry, required this.onDelete});
+  const _DeckCard({
+    required this.entry,
+    required this.onDelete,
+    required this.onRename,
+    required this.onChangeCombos,
+  });
 
   final DeckEntry entry;
   final VoidCallback onDelete;
+  final VoidCallback onRename;
+  final VoidCallback onChangeCombos;
 
   @override
   Widget build(BuildContext context) {
@@ -325,10 +497,37 @@ class _DeckCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                IconButton(
-                  tooltip: TrTokens.deleteDeckTxt.tr,
-                  icon: Icon(Icons.delete_outline, color: cs.error),
-                  onPressed: onDelete,
+                _EditMenu(
+                  items: [
+                    (
+                      'rename',
+                      Icons.edit_outlined,
+                      TrTokens.renameDeckTitle.tr,
+                      false
+                    ),
+                    (
+                      'combos',
+                      Icons.swap_horiz,
+                      TrTokens.changeCombosTxt.tr,
+                      false
+                    ),
+                    (
+                      'delete',
+                      Icons.delete_outline,
+                      TrTokens.deleteDeckTxt.tr,
+                      true
+                    ),
+                  ],
+                  onSelected: (v) {
+                    switch (v) {
+                      case 'rename':
+                        onRename();
+                      case 'combos':
+                        onChangeCombos();
+                      default:
+                        onDelete();
+                    }
+                  },
                 ),
               ]),
               if (entry.combos.isNotEmpty) ...[

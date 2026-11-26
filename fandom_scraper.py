@@ -837,6 +837,58 @@ def pick_infobox(code):
     return None
 
 
+DESCRIPTION_SECTIONS = re.compile(r"(?i)^\s*(description|overview|summary|features?|design|gimmick)\s*$")
+
+
+def _prose(code):
+    """Readable text of wikicode without templates (infoboxes, navboxes), tables, files, refs or comments."""
+    out = []
+    for node in code.nodes:
+        if isinstance(node, (Template, Comment)):
+            continue
+        if isinstance(node, Tag) and str(node.tag).lower() in ("table", "ref", "references", "gallery", "div"):
+            continue
+        out.append(flatten(mwparserfromhell.parse(str(node))))
+    text = re.sub(r"'{2,}", "", "".join(out))
+    text = re.sub(r"(?m)^\s*(\{\||\|[-}+]?|!).*$", "", text)  # leftover table markup
+    return text
+
+
+def _first_paragraph(text, max_len):
+    for para in re.split(r"\n\s*\n", text):
+        p = re.sub(r"\s+", " ", para).strip(" ;:")
+        if len(p) < 40 or not re.search(r"[A-Za-z]{3}", p) or p.startswith(("*", "#", "|")):
+            continue
+        if len(p) <= max_len:
+            return p
+        cut = p[:max_len]
+        end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+        return cut[:end + 1] if end > max_len // 3 else cut.rsplit(" ", 1)[0] + "…"
+    return None
+
+
+def page_description(wikitext, max_len=500):
+    """A part's / product's description from its wiki page: the lead paragraph (the text before the first
+    heading), else the first paragraph of a Description / Overview / Features / Design / Gimmick section.
+    Never the infobox. None when the page has no prose."""
+    code = mwparserfromhell.parse(wikitext or "")
+    secs = code.get_sections(include_lead=True, flat=True)
+    if secs:
+        lead = secs[0]
+        if not lead.filter_headings(recursive=False):
+            hit = _first_paragraph(_prose(lead), max_len)
+            if hit:
+                return hit
+    for sec in code.get_sections(flat=True, include_lead=False):
+        heads = sec.filter_headings(recursive=False)
+        if heads and DESCRIPTION_SECTIONS.match(str(heads[0].title)):
+            body = mwparserfromhell.parse(str(sec)[len(str(heads[0])):])
+            hit = _first_paragraph(_prose(body), max_len)
+            if hit:
+                return hit
+    return None
+
+
 def parse_page(wikitext, image_re):
     """-> (infobox_name, {normalised_field: value}, [image filenames])"""
     code = mwparserfromhell.parse(wikitext or "")
@@ -1140,10 +1192,17 @@ def map_part(gen, key, title, fields, src):
         row["movementStyle"] = norm_type(pick("movementStyle"))
     if "spinDir" in cols:
         row["spinDir"] = norm_spin(pick("spinDir"))
-    for stat in ("attack", "defense", "stamina", "dash", "burstRes"):
+    for stat in S.SIX_STATS:
         if stat in cols:
             v = pick(stat)  # "55\n60 (2.0)" (first mold / version 2.0) -> 55
-            row[stat] = to_number(re.split(r"[;\n]", v)[0].strip()) if v else None
+            first = re.split(r"[;\n]", v)[0].strip() if v else ""
+            kind, a, b = S.parse_stat(re.sub(r"\s*\([^)]*\)\s*", " ", first).strip())
+            # two numbers: "25 → 55" changes mid-battle (dynamic), "25 - 55" has two modes (dual mode)
+            row[stat] = S.format_stat(kind, a, b) if kind else (to_number(first) if first else None)
+            if kind == "dynamic":
+                row[S.DYNAMIC_STAT] = 1
+            elif kind == "dual":
+                row[S.DUAL_MODE] = 1
     if "attack" in cols and row.get("attack") is None:
         nums = NUM_RE.findall(fields.get("stats") or "")  # |stats={{Stats|25|10|25}} -> "25 10 25"
         if len(nums) >= 3:
@@ -1922,6 +1981,8 @@ class Scraper:
         if src.get("exclude_category_regex") and re.search(src["exclude_category_regex"], cats):
             return "filtered (category)"
         row = map_part(gen, key, title, fields, src)
+        if "description" in S.GENERATIONS[gen]["parts"][key]["columns"]:
+            row["description"] = fields.get("description") or page_description(pg.get("wikitext"))
         if "layerComponent" in S.GENERATIONS[gen]["parts"][key]["columns"] and fields.get("classification"):
             row["layerComponent"] = fields["classification"].strip().lower()
         releases = self.page_releases(pg)
@@ -2083,6 +2144,7 @@ class Scraper:
     def handle_product(self, gen, title, pg, infobox, fields, files, imgs, manufacturer_hint=None):
         src = self.cfg["sources"].get(f"products:{gen}", {})
         row, code = map_product(gen, title, fields, src, manufacturer_hint)
+        row["description"] = row.get("description") or page_description(pg.get("wikitext"))
         book = self.book("products")
         prods = book.named_sheet("Products")
         ws, r = self.existing_match("products", title, row)
@@ -2425,7 +2487,9 @@ class Scraper:
                 if r is None:
                     continue
                 info, _ = map_product(gen, link, fields, src, prow["manufacturer"])
-                book.write(prods, {k: info.get(k) for k in ("releaseDate", "itemCost", "currency")}, row=r)
+                info["description"] = info.get("description") or page_description(pg.get("wikitext"))
+                book.write(prods, {k: info.get(k) for k in ("releaseDate", "itemCost", "currency", "description")},
+                           row=r)
                 full, mini = imgs.get(link, (None, None))
                 book.set_image(prods, r, "boxImageUrl", full)
                 book.set_image(prods, r, "minifiedBoxImage", mini, "min")

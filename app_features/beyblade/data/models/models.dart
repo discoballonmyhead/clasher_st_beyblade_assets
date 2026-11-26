@@ -26,6 +26,15 @@ List<String> parseIdList(dynamic raw) {
   return List.unmodifiable(out);
 }
 
+/// The six stats of a packaged part row: numbers, "25/55" (dynamic, flag
+/// `dynamicStat`) or "25-55" (dual mode, flag `twoStat`). Blank = not
+/// provided, plotted as 0. Older spellings ("25 > 55") still read.
+StatBlock parseStats(Map<String, dynamic> row) => StatBlock.fromRow(
+      (column) => ciGet(row, column),
+      dynamicFlag: parseBool(ciGet(row, 'dynamicStat')),
+      dualModeFlag: parseBool(ciGet(row, 'twoStat')),
+    );
+
 /// Parses the fields every part row shares (the identity/variant/
 /// manufacturer/hobby columns plus both image pairs) -- composed into
 /// every part model below rather than duplicated eight times. Mirrors
@@ -49,6 +58,8 @@ class _SharedPartFieldsModel {
         model3dHash = nullableString(ciGet(row, 'model3dHash')),
         bladerIds = parseIdList(ciGet(row, 'bladerIDs')),
         credits = nullableString(ciGet(row, 'credits')),
+        description = nullableString(ciGet(row, 'description')),
+        stats = parseStats(row),
         mass = parseDouble(ciGet(row, 'mass')) ?? 0,
         legalityRaw = requiredString(row, 'wbolegality'),
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
@@ -70,6 +81,10 @@ class _SharedPartFieldsModel {
   final String? model3dHash;
   final List<String> bladerIds;
   final String? credits;
+  final String? description;
+
+  /// The six stats with the row's dynamicStat / twoStat flags applied.
+  final StatBlock stats;
   final double mass;
   final String legalityRaw;
   final bool isIncomplete;
@@ -81,16 +96,12 @@ class BladeModel {
       : _shared = _SharedPartFieldsModel(row),
         archetypeRaw = requiredString(row, 'type'),
         spinDirectionRaw = requiredString(row, 'spinDir'),
-        attack = parseDouble(ciGet(row, 'attack')),
-        defense = parseDouble(ciGet(row, 'defense')),
-        stamina = parseDouble(ciGet(row, 'stamina')),
         hasIntegratedRatchet =
             parseBool(firstOf(row, ['integratedRathet', 'integratedRatchet'])),
         requiresSimpleRatchet = parseBool(ciGet(row, 'requiresSimpleRatchet'));
 
   final _SharedPartFieldsModel _shared;
   final String archetypeRaw, spinDirectionRaw;
-  final double? attack, defense, stamina;
   final bool hasIntegratedRatchet;
   final bool requiresSimpleRatchet;
 
@@ -112,16 +123,13 @@ class BladeModel {
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
         credits: _shared.credits,
+        description: _shared.description,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
         archetype: BeybladeArchetype.parse(archetypeRaw),
         spinDirection: SpinDirection.parse(spinDirectionRaw),
-        stats: StatBlock({
-          StatKey.attack: StatSpread.parse(attack),
-          StatKey.defense: StatSpread.parse(defense),
-          StatKey.stamina: StatSpread.parse(stamina),
-        }),
+        stats: _shared.stats,
         hasIntegratedRatchet: hasIntegratedRatchet,
         requiresSimpleRatchet: requiresSimpleRatchet,
       );
@@ -133,14 +141,11 @@ class RatchetModel {
       : _shared = _SharedPartFieldsModel(row),
         protrusions = parseInt(ciGet(row, 'protrusions')),
         heightMm = parseDouble(ciGet(row, 'heightMm')),
-        attack = parseDouble(ciGet(row, 'attack')),
-        defense = parseDouble(ciGet(row, 'defense')),
-        stamina = parseDouble(ciGet(row, 'stamina')),
         isSimple = parseBool(ciGet(row, 'simpleRatchet'));
 
   final _SharedPartFieldsModel _shared;
   final int? protrusions;
-  final double? heightMm, attack, defense, stamina;
+  final double? heightMm;
   final bool isSimple;
 
   Ratchet toEntity() => Ratchet(
@@ -161,16 +166,13 @@ class RatchetModel {
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
         credits: _shared.credits,
+        description: _shared.description,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
         protrusions: protrusions,
         heightMm: heightMm,
-        stats: StatBlock({
-          StatKey.attack: StatSpread.parse(attack),
-          StatKey.defense: StatSpread.parse(defense),
-          StatKey.stamina: StatSpread.parse(stamina),
-        }),
+        stats: _shared.stats,
         isSimple: isSimple,
       );
 }
@@ -181,18 +183,12 @@ class BitModel {
       : _shared = _SharedPartFieldsModel(row),
         baseName = requiredString(row, 'baseName'),
         movementStyleRaw = requiredString(row, 'movementStyle'),
-        attackRaw = nullableString(ciGet(row, 'attack')),
-        defenseRaw = nullableString(ciGet(row, 'defense')),
-        staminaRaw = nullableString(ciGet(row, 'stamina')),
-        dashRaw = nullableString(ciGet(row, 'dash')),
-        burstResRaw = nullableString(ciGet(row, 'burstRes')),
         isTwoStat = parseBool(ciGet(row, 'twoStat')),
         hasIntegratedRatchet =
             parseBool(firstOf(row, ['integratedRathet', 'integratedRatchet']));
 
   final _SharedPartFieldsModel _shared;
   final String baseName, movementStyleRaw;
-  final String? attackRaw, defenseRaw, staminaRaw, dashRaw, burstResRaw;
   final bool isTwoStat, hasIntegratedRatchet;
 
   Bit toEntity() => Bit(
@@ -214,17 +210,12 @@ class BitModel {
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
         credits: _shared.credits,
+        description: _shared.description,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
         movementStyle: BeybladeArchetype.parse(movementStyleRaw),
-        stats: StatBlock({
-          StatKey.attack: StatSpread.parse(attackRaw),
-          StatKey.defense: StatSpread.parse(defenseRaw),
-          StatKey.stamina: StatSpread.parse(staminaRaw),
-          StatKey.dash: StatSpread.parse(dashRaw),
-          StatKey.burstResistance: StatSpread.parse(burstResRaw),
-        }),
+        stats: _shared.stats,
         isTwoStat: isTwoStat,
         hasIntegratedRatchet: hasIntegratedRatchet,
       );
@@ -256,6 +247,7 @@ class LockChipModel {
         model3dHash: _shared.model3dHash,
         bladerIds: _shared.bladerIds,
         credits: _shared.credits,
+        description: _shared.description,
         mass: _shared.mass,
         legality: WboLegality.parse(_shared.legalityRaw),
         isIncomplete: _shared.isIncomplete,
@@ -263,26 +255,18 @@ class LockChipModel {
 }
 
 /// Shared parsing for OverBlade/MetalBlade/MainBlade/AssistBlade — same
-/// columns (type, spinDir, attack, defense, stamina) beyond the fields
+/// columns (type, spinDir; the six stats are parsed with the shared fields) beyond the fields
 /// _SharedPartFieldsModel already covers.
 class _TypedStatPartModel {
   _TypedStatPartModel(Map<String, dynamic> row)
       : shared = _SharedPartFieldsModel(row),
         typeRaw = requiredString(row, 'type'),
-        spinDirectionRaw = requiredString(row, 'spinDir'),
-        attack = parseDouble(ciGet(row, 'attack')),
-        defense = parseDouble(ciGet(row, 'defense')),
-        stamina = parseDouble(ciGet(row, 'stamina'));
+        spinDirectionRaw = requiredString(row, 'spinDir');
 
   final _SharedPartFieldsModel shared;
   final String typeRaw, spinDirectionRaw;
-  final double? attack, defense, stamina;
 
-  StatBlock get stats => StatBlock({
-        StatKey.attack: StatSpread.parse(attack),
-        StatKey.defense: StatSpread.parse(defense),
-        StatKey.stamina: StatSpread.parse(stamina),
-      });
+  StatBlock get stats => shared.stats;
 }
 
 // ── OVER BLADE MODEL ────────────────────────────────────────────
@@ -309,6 +293,7 @@ class OverBladeModel {
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
         credits: _p.shared.credits,
+        description: _p.shared.description,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -342,6 +327,7 @@ class MetalBladeModel {
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
         credits: _p.shared.credits,
+        description: _p.shared.description,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -375,6 +361,7 @@ class MainBladeModel {
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
         credits: _p.shared.credits,
+        description: _p.shared.description,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -410,6 +397,7 @@ class AssistBladeModel {
         model3dHash: _p.shared.model3dHash,
         bladerIds: _p.shared.bladerIds,
         credits: _p.shared.credits,
+        description: _p.shared.description,
         mass: _p.shared.mass,
         legality: WboLegality.parse(_p.shared.legalityRaw),
         isIncomplete: _p.shared.isIncomplete,
@@ -522,7 +510,12 @@ class StockComboModel {
         isIncomplete = parseBool(ciGet(row, 'incompleteData'));
 
   final String stockComboId, productId, name;
-  final String? hobbyName, hobbyGeneration, model3dUrl, model3dHash, description, credits;
+  final String? hobbyName,
+      hobbyGeneration,
+      model3dUrl,
+      model3dHash,
+      description,
+      credits;
   final BeybladeLoadout loadout;
   final bool isIncomplete;
 

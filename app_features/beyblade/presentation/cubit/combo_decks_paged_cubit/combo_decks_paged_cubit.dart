@@ -153,6 +153,15 @@ abstract class PagedCubit<T> extends Cubit<PagedState<T>> {
     ));
   }
 
+  /// Swaps an item for its edited version, in place. Not in the list
+  /// (another page, filtered out): nothing changes.
+  void replace(T item) {
+    final id = idOf(item);
+    if (!state.items.any((i) => idOf(i) == id)) return;
+    emit(state.copyWith(
+        items: [for (final i in state.items) idOf(i) == id ? item : i]));
+  }
+
   /// Takes an item out right away; returns it (for putting it back).
   T? removeById(String id) {
     T? removed;
@@ -205,6 +214,18 @@ class CombosPageCubit extends PagedCubit<Combo> {
       return false;
     }
   }
+
+  /// New name and / or parts, same combo. Shown at once; null (and the
+  /// list reloaded) if it couldn't be saved.
+  Future<Combo?> update(Combo combo) async {
+    replace(combo);
+    try {
+      return await _repo.updateCombo(combo);
+    } catch (_) {
+      await load();
+      return null;
+    }
+  }
 }
 
 // ── Decks tab ────────────────────────────────────────────────────────────────
@@ -241,6 +262,21 @@ class DecksPageCubit extends PagedCubit<DeckEntry> {
       if (removed != null) await load();
       return false;
     }
+  }
+
+  /// New name and / or combos, same deck. [combos] in the deck's order.
+  /// Throws ArgumentError below 3 combos, or the save error.
+  Future<DeckEntry> update(Deck deck, List<Combo> combos) async {
+    final saved = await _repo.updateDeck(deck);
+    final entry = DeckEntry(deck: saved, combos: combos);
+    replace(entry);
+    return entry;
+  }
+
+  /// A combo was edited on the Combos tab: decks with it show the change.
+  void comboChanged(Combo combo) {
+    emit(state
+        .copyWith(items: [for (final e in state.items) e.withCombo(combo)]));
   }
 
   /// A combo was deleted on the Combos tab: decks drop it, as the server

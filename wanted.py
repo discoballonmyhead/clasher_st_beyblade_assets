@@ -27,9 +27,9 @@ NEVER_ASK = {
     "setName", "incompleteData", "updated_at", "deleted", "wbolegality", "system", "layerComponent",
     "linkedPartType", "linkedPartDataID", "legality", "sku", "region", "currency", "edition", "setCode",
     "cardNumber", "productType", "accessoryType", "subType", S.CREDITS, S.MODEL_3D, S.BLADER_IDS,
-    "integratedRatchet", "requiresSimpleRatchet", "simpleRatchet", "twoStat",
+    "integratedRatchet", "requiresSimpleRatchet", "simpleRatchet", "twoStat", S.DYNAMIC_STAT,
 }
-NUMERIC = {"mass", "attack", "defense", "stamina", "dash", "burstRes", "heightMm", "protrusions", "itemCost",
+NUMERIC = {"mass", "attack", "defense", "stamina", "height", "dash", "burstRes", "heightMm", "protrusions", "itemCost",
            "cardCount", "cost", "power", "battleEdge", "spinStrength"}
 UNITS = {"mass": "g", "heightMm": "mm"}
 DATES = {"releaseDate"}
@@ -74,7 +74,7 @@ def _sheet_targets():
 def _askable(sheet, columns):
     """The columns of a sheet the public may fill: counted by the packaging profile, not NEVER_ASK."""
     import missing_data_tool as M   # the same optional list the missing data tool uses
-    optional = set(M.OPTIONAL)
+    optional = set(M.OPTIONAL) | M.later_stats_optional(sheet)
     for c, rule in S.column_rules(sheet).items():
         if rule.get("criticality") == "optional":
             optional.add(c)

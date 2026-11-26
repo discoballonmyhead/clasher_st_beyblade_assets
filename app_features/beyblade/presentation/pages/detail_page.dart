@@ -9,7 +9,10 @@ import 'package:clasher_st/features/beyblade/domain/repositories/beyblade_data_r
 import 'package:clasher_st/features/beyblade/presentation/widgets/catalog_extras.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/loyalty_badge.dart';
 import 'package:clasher_st/features/beyblade/presentation/widgets/part_image_thumb.dart';
-import 'package:clasher_st/features/beyblade/presentation/widgets/stat_bar_row.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/stats/holo_stat_panel.dart';
+import 'package:clasher_st/features/beyblade/presentation/widgets/stats/stat_graph_page.dart';
+import 'package:clasher_st/features/contributions/domain/entities.dart';
+import 'package:clasher_st/features/contributions/presentation/widgets/contribute_picture_button.dart';
 import 'package:clasher_st/features/user_collection/domain/entities/entities.dart';
 import 'package:clasher_st/features/user_collection/domain/usecases/usecases.dart';
 import 'package:clasher_st/features/user_collection/presentation/cubit/inventory_cubit/inventory_cubit.dart';
@@ -674,26 +677,6 @@ String _spinLabel(SpinDirection s) => switch (s) {
       SpinDirection.unknown => 'Unknown',
     };
 
-/// Attack red, Defense blue, Stamina green, matching the reference
-/// screenshots. Dash and Burst Resistance don't appear there at all
-/// (blades have neither), so those two colours are a choice of mine
-/// rather than sourced from the reference.
-const _statColors = <StatKey, Color>{
-  StatKey.attack: Colors.redAccent,
-  StatKey.defense: Colors.blueAccent,
-  StatKey.stamina: Colors.greenAccent,
-  StatKey.dash: Colors.orangeAccent,
-  StatKey.burstResistance: Colors.purpleAccent,
-};
-
-String _statLabel(StatKey key) => switch (key) {
-      StatKey.attack => 'Attack',
-      StatKey.defense => 'Defense',
-      StatKey.stamina => 'Stamina',
-      StatKey.dash => 'Dash',
-      StatKey.burstResistance => 'Burst Resistance',
-    };
-
 /// Archetype and spin, where the subtype has them. Returned as nullable
 /// pairs so the fact grid can skip a fact rather than print "Unknown".
 (String?, String?) _archetypeAndSpin(BeybladePart part) => switch (part) {
@@ -729,16 +712,10 @@ class _PartSections extends StatelessWidget {
     final tokens = HoloTokens.of(context);
     final stats = part.stats;
 
-    // Only the keys this part actually reports. The old code looped
-    // StatKey.values, so a Ratchet rendered five empty "N/A" bars and
-    // maxValue came out 0.
+    // Parts with no stat at all (lock chips) skip the graph rather than
+    // showing six zeros. A part with some stats shows all six axes; the
+    // blank ones read 0.
     final provided = stats.providedKeys.toList();
-    final averages = provided
-        .map((k) =>
-            stats[k].values.reduce((a, b) => a + b) / stats[k].values.length)
-        .toList();
-    final maxAcrossStats =
-        averages.isEmpty ? 0.0 : averages.reduce((a, b) => a > b ? a : b);
 
     final (archetype, spin) = _archetypeAndSpin(part);
 
@@ -774,36 +751,35 @@ class _PartSections extends StatelessWidget {
           ],
         ),
 
-        // TIER 3 -- performance. Omitted entirely for parts with no stats,
-        // rather than showing a wall of N/A.
+        // About -- the part's description, when the catalog has one.
+        if (part.description != null) ...[
+          SizedBox(height: rc.lg),
+          _AboutCard(text: part.description!),
+        ],
+
+        // TIER 3 -- performance: the six stats as a radar and as rows.
+        // Omitted entirely for parts with no stats.
         if (provided.isNotEmpty) ...[
           SizedBox(height: rc.lg),
           HoloSectionLabel(
             title: 'Performance',
             index: '01',
             info: const InfoChip(
-              title: 'How to read these bars',
+              title: 'How to read the graph',
               details:
-                  'Bars are relative to this part\'s own highest stat, not to '
-                  'every part in the game, so they show the shape of a part '
-                  'rather than its absolute power. A range like "30 – 55" is '
-                  'a two-stat part whose value depends on how it is used.',
+                  'Six stats: attack, defense, stamina, height, dash and burst '
+                  'resistance; a blank one counts as 0. The graph scales to '
+                  'this part\'s highest stat (the ring numbers show what the edge '
+                  'is worth), so it shows the part\'s shape. "25 › 55" changes '
+                  'during the battle; "25 | 55" is two modes -- the dashed shape '
+                  'is the end, or the second mode. Weight is shown separately.',
             ),
           ),
           SizedBox(height: rc.sm),
-          HoloCard(
-            padding: EdgeInsets.symmetric(horizontal: rc.md, vertical: rc.sm),
-            child: Column(
-              children: [
-                for (final key in provided)
-                  StatBarRow(
-                    label: _statLabel(key),
-                    spread: stats[key],
-                    maxValue: maxAcrossStats,
-                    color: _statColors[key],
-                  ),
-              ],
-            ),
+          HoloStatPanel(
+            stats: stats,
+            onOpenDetailed: () =>
+                StatGraphPage.open(context, StatGraphPage.part(part)),
           ),
         ],
 
@@ -873,13 +849,20 @@ class _PartSections extends StatelessWidget {
           ),
         ],
 
-        if (part.has3dModel) ...[
-          SizedBox(height: rc.md),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Model3dButton(url: part.model3dUrl, title: part.name),
-          ),
-        ],
+        SizedBox(height: rc.md),
+        Wrap(
+          spacing: rc.sm,
+          runSpacing: rc.sm,
+          children: [
+            if (part.has3dModel)
+              Model3dButton(url: part.model3dUrl, title: part.name),
+            ContributePictureButton(
+              target: ContributionTarget(
+                  type: partTypeKey, id: part.dataId, name: part.name),
+              hasPicture: part.imageUrl != null,
+            ),
+          ],
+        ),
 
         if (bladers.isNotEmpty) ...[
           SizedBox(height: rc.lg),
@@ -890,6 +873,38 @@ class _PartSections extends StatelessWidget {
           SizedBox(height: rc.lg),
           _StockCombosSection(combos: stockCombos),
         ],
+      ],
+    );
+  }
+}
+
+/// "About": a description, in a card. Long texts are clamped to six lines
+/// and open in full on tap (the HoloDetailSheet popup), so a wiki-length
+/// paragraph never pushes the stats off the screen.
+class _AboutCard extends StatelessWidget {
+  const _AboutCard({required this.text, this.title = 'About'});
+  final String text;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final rc = ResponsiveProvider.config(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        HoloSectionLabel(title: title),
+        SizedBox(height: rc.sm),
+        HoloCard(
+          onTap: () => HoloDetailSheet.show(context,
+              title: title, value: text, icon: Icons.notes_outlined),
+          child: Text(
+            text,
+            maxLines: 6,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 14, height: 1.45, color: cs.onSurface),
+          ),
+        ),
       ],
     );
   }
@@ -1141,6 +1156,13 @@ class _StockComboCard extends StatelessWidget {
               ],
             ),
           ],
+          if (combo.combo?.description != null) ...[
+            SizedBox(height: rc.sm),
+            Text(combo.combo!.description!,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+          ],
           if (combo.combo != null) ...[
             SizedBox(height: rc.sm),
             StockComboActions(
@@ -1253,6 +1275,15 @@ class _AccessorySections extends StatelessWidget {
               ),
           ],
         ),
+        SizedBox(height: rc.md),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ContributePictureButton(
+            target: ContributionTarget(
+                type: 'accessories', id: accessory.dataId, name: accessory.name),
+            hasPicture: accessory.imageUrl != null,
+          ),
+        ),
         SizedBox(height: rc.lg),
         _ProductListSection(
           title: 'Included in',
@@ -1306,6 +1337,10 @@ class _ProductSections extends StatelessWidget {
             ),
           ],
         ),
+        if (product.description != null) ...[
+          SizedBox(height: rc.lg),
+          _AboutCard(text: product.description!, title: 'About this product'),
+        ],
         SizedBox(height: rc.lg),
         _SpecsCard(
           index: '01',
@@ -1334,6 +1369,15 @@ class _ProductSections extends StatelessWidget {
                 details: 'The people who contributed this entry\'s data or pictures.',
               ),
           ],
+        ),
+        SizedBox(height: rc.md),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ContributePictureButton(
+            target: ContributionTarget(
+                type: 'products', id: product.productId, name: product.productName),
+            hasPicture: product.boxImageUrl != null,
+          ),
         ),
         if (stockCombos.isNotEmpty) ...[
           SizedBox(height: rc.lg),
@@ -1427,6 +1471,13 @@ class _DeclaredComboCard extends StatelessWidget {
         children: [
           Text(combo.combo.name,
               style: tt.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+          if (combo.combo.description != null) ...[
+            SizedBox(height: rc.xs),
+            Text(combo.combo.description!,
+                maxLines: 4,
+                overflow: TextOverflow.ellipsis,
+                style: tt.bodySmall),
+          ],
           SizedBox(height: rc.sm),
           Wrap(
             spacing: rc.sm,

@@ -1,3 +1,4 @@
+import 'package:clasher_st/core/responsive/responsive.dart';
 import 'package:clasher_st/features/beyblade/domain/entities/entities.dart';
 import 'package:flutter/material.dart';
 
@@ -14,6 +15,7 @@ class BeyBuilderSheet {
     BuildContext context, {
     BeybladeLoadout? initialLoadout,
   }) async {
+    final rc = ResponsiveProvider.config(context);
     final bey = await showModalBottomSheet<Beyblade>(
       context: context,
       isScrollControlled: true,
@@ -21,9 +23,13 @@ class BeyBuilderSheet {
       showDragHandle: true,
       builder: (sheetContext) => SizedBox(
         height: MediaQuery.sizeOf(sheetContext).height * 0.9,
-        child: BeybladeBuilderContent(
-          initialLoadout: initialLoadout,
-          onConfirm: (b) => Navigator.of(sheetContext).pop(b),
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+              rc.horizontalPadding, rc.md, rc.horizontalPadding, 0),
+          child: BeybladeBuilderContent(
+            initialLoadout: initialLoadout,
+            onConfirm: (b) => Navigator.of(sheetContext).pop(b),
+          ),
         ),
       ),
     );

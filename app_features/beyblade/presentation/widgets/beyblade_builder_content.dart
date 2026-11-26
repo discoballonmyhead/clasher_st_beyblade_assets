@@ -1,5 +1,7 @@
+import 'package:clasher_st/core/constants/trc_constant_tokens.dart';
 import 'package:clasher_st/core/init_injection/injection.dart';
 import 'package:clasher_st/core/responsive/responsive.dart';
+import 'package:clasher_st/core/services/translation/translation_helper.dart';
 import 'package:clasher_st/core/widgets/app_beyblade_loading_indicator.dart';
 import 'package:clasher_st/core/widgets/app_dialog_widget.dart';
 import 'package:clasher_st/core/widgets/holow_components.dart';
@@ -171,7 +173,7 @@ class _BeybladeBuilderContentState extends State<BeybladeBuilderContent> {
     final cs = Theme.of(context).colorScheme;
     await AppDialogWidget.show<void>(
       context,
-      title: 'Blade Type',
+      title: TrTokens.bladeTypeTxt.tr,
       headerColor: cs.primaryContainer,
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -345,70 +347,66 @@ class _BeybladeBuilderContentState extends State<BeybladeBuilderContent> {
           final tiles = _tileSpecs(state);
           final missing = _builderCubit.missingSlots;
           return SingleChildScrollView(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                  rc.horizontalPadding, rc.sm, rc.horizontalPadding, rc.lg),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      const Expanded(child: HoloSectionLabel(title: 'Build')),
-                      SizedBox(width: rc.sm),
-                      IconButton.filledTonal(
-                        tooltip: 'Random build',
-                        icon: _rolling
-                            ? const SizedBox(
-                                width: 20, height: 20, child: BeybladeSpinner())
-                            : const Icon(Icons.casino_outlined),
-                        onPressed:
-                            _rolling || _loadingInitial ? null : _randomize,
-                      ),
-                      IconButton.filledTonal(
-                        tooltip: 'Change blade type',
-                        icon: const Icon(Icons.swap_horiz),
-                        onPressed: () => _pickAssemblyMode(state),
-                      ),
-                    ],
-                  ),
-                  SizedBox(height: rc.md),
-                  if (_loadingInitial)
-                    Padding(
-                      padding: EdgeInsets.symmetric(vertical: rc.xl),
-                      child: const Center(child: BeybladeSpinner()),
-                    )
-                  else
-                    for (var i = 0; i < tiles.length; i++) ...[
-                      _ConnectedTile(spec: tiles[i]),
-                      if (i != tiles.length - 1) const _Connector(),
-                    ],
-                  if (state.resolved != null) ...[
-                    SizedBox(height: rc.lg),
-                    CombinedStatsPanel(beyblade: state.resolved!),
-                  ],
-                  SizedBox(height: rc.lg),
-                  if (missing.isNotEmpty && !_loadingInitial)
-                    Padding(
-                      padding: EdgeInsets.only(bottom: rc.sm),
-                      child: Text(
-                        'Still needed: ${missing.join(', ')}',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: rc.bodySM, color: cs.onSurfaceVariant),
-                      ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(child: HoloSectionLabel(title: 'Build')),
+                    SizedBox(width: rc.sm),
+                    IconButton(
+                      tooltip: 'Random build',
+                      icon: _rolling
+                          ? const SizedBox(
+                              width: 20, height: 20, child: BeybladeSpinner())
+                          : const Icon(Icons.casino_outlined),
+                      onPressed:
+                          _rolling || _loadingInitial ? null : _randomize,
                     ),
-                  HoloActionButton(
-                    label: 'Confirm',
-                    icon: Icons.check,
-                    expand: true,
-                    isLoading: state.resolving,
-                    onPressed: state.resolved == null
-                        ? null
-                        : () => widget.onConfirm(state.resolved!),
-                  ),
+                    IconButton(
+                      tooltip: 'Change blade type',
+                      icon: const Icon(Icons.swap_horiz),
+                      onPressed: () => _pickAssemblyMode(state),
+                    ),
+                  ],
+                ),
+                SizedBox(height: rc.md),
+                if (_loadingInitial)
+                  Padding(
+                    padding: EdgeInsets.symmetric(vertical: rc.xl),
+                    child: const Center(child: BeybladeSpinner()),
+                  )
+                else
+                  for (var i = 0; i < tiles.length; i++) ...[
+                    _ConnectedTile(spec: tiles[i]),
+                    if (i != tiles.length - 1) const _Connector(),
+                  ],
+                if (state.resolved != null) ...[
+                  SizedBox(height: rc.lg),
+                  CombinedStatsPanel(beyblade: state.resolved!),
                 ],
-              ),
+                SizedBox(height: rc.lg),
+                if (missing.isNotEmpty && !_loadingInitial)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: rc.sm),
+                    child: Text(
+                      'Still needed: ${missing.join(', ')}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: rc.bodySM, color: cs.onSurfaceVariant),
+                    ),
+                  ),
+                HoloActionButton(
+                  label: 'Confirm',
+                  icon: Icons.check,
+                  expand: true,
+                  isLoading: state.resolving,
+                  onPressed: state.resolved == null
+                      ? null
+                      : () => widget.onConfirm(state.resolved!),
+                ),
+              ],
             ),
           );
         },
